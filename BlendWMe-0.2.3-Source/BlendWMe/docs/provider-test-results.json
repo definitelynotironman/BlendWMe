@@ -1,0 +1,19 @@
+{
+  "blender": "4.2.17 LTS",
+  "checks": [
+    "model request returns without blocking Blender",
+    "request exits thinking state",
+    "valid HTTP result becomes a preview",
+    "request exits thinking state",
+    "stopped request cannot schedule an action",
+    "stop terminates isolated worker",
+    "cancelled request removes temporary scene JSON",
+    "request exits thinking state",
+    "stale model response discarded after scene edit",
+    "request exits thinking state",
+    "unsafe provider action rejected",
+    "mode change cancels old request"
+  ],
+  "note": "HTTP fixture, not live Nebius/Ollama inference",
+  "passed": 12
+}

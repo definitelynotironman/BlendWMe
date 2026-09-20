@@ -1,0 +1,11 @@
+{
+  "blender": "4.2.17 LTS",
+  "checks": [
+    "Viewport guide card renders without label overlap",
+    "Exact pinned Add-menu circle renders",
+    "Native sidebar renders and remains navigable",
+    "Undo removes the object applied by the autonomous timer",
+    "Undo invalidates active task"
+  ],
+  "passed": 5
+}

@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+id = "blendwme"
+version = "0.2.3"
+name = "BlendWMe"
+tagline = "Learn, build together, and pause a live Blender assistant"
+maintainer = "definitelynotironman"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["3D View", "Modeling"]
+
+[permissions]
+network = "Send prompts and scene summaries to your selected AI provider"
+files = "Exchange temporary JSON with the isolated model request process"
+
