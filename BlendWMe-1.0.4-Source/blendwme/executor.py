@@ -59,6 +59,27 @@ def _undo_push(message):
         pass
 
 
+@contextlib.contextmanager
+def _bwm_importable():
+    """Let `import bwm` and `from bwm import box` work during a step.
+
+    bwm is already a ready-made name in every step, but models often import
+    it first, out of habit. That used to fail with ModuleNotFoundError and the
+    model then wasted turns "testing" whether bwm exists. We register the
+    helpers module under the name bwm for the duration of the step only, so
+    nothing outside BlendWMe ever sees it.
+    """
+    previous = sys.modules.get("bwm")
+    sys.modules["bwm"] = helpers
+    try:
+        yield
+    finally:
+        if previous is None:
+            sys.modules.pop("bwm", None)
+        else:
+            sys.modules["bwm"] = previous
+
+
 def _namespace():
     return {
         "__name__": "blendwme_step",
@@ -184,7 +205,7 @@ def run(code, title="AI step", author="ai"):
     window, area, region = helpers.find_view3d()
     ok, error = True, None
     try:
-        with contextlib.redirect_stdout(stdout):
+        with contextlib.redirect_stdout(stdout), _bwm_importable():
             if window:
                 with bpy.context.temp_override(window=window, area=area, region=region,
                                                screen=window.screen):

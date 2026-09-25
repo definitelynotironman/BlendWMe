@@ -303,6 +303,13 @@ check("blocks importlib", executor.run("import importlib")["ok"] is False)
 check("blocks reaching the add-on", executor.run("import bl_ext.user_default.blendwme.credentials")["ok"] is False)
 check("allows environment textures", executor.run("n = 'ShaderNodeTexEnvironment'")["ok"] is True)
 
+# Fix A1: bwm can be imported like a module, only while a step runs
+r = executor.run("import bwm\nfrom bwm import box, material\nbox('ImportedBox', (1, 1, 1), material=material('ImpMat', (1, 0, 0)))")
+check("import bwm works", r["ok"] and "ImportedBox" in bpy.data.objects, r)
+check("bwm module only exists during a step", "bwm" not in sys.modules)
+r = executor.run("from bwm import made_up_helper")
+check("unknown bwm import caught before running", r["ok"] is False and "made_up_helper" in r["error"], r)
+
 # 7b. Error hints, existing-object notes and the "stuck" guard
 executor.run("bwm.collection('Props')")
 r = executor.run("bwm.move_to('Door', 'prop')")

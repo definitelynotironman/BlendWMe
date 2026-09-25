@@ -233,6 +233,13 @@ def check(code):
                 bm_names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
     problems, seen = _legacy(code), set()
     for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "bwm":
+            # `from bwm import box` works; a name bwm does not have would fail.
+            for alias in node.names:
+                if alias.name != "*" and not hasattr(helpers, alias.name):
+                    problems.append(f"line {node.lineno}: `bwm.{alias.name}` does not exist."
+                                    + _close(alias.name, _public(helpers)))
+            continue
         if isinstance(node, ast.Call):
             issue = _check_keywords(node) or _check_type_strings(node)
             if issue:

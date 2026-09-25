@@ -33,7 +33,7 @@ run_python(title="Stone base", explain="A slab for the house to sit on", part=1,
            code="col = bwm.collection('Cottage')\nbwm.box('Base', (4.4, 3.4, 0.25), (0, 0, 0.125), col, bwm.material('Stone', (0.45, 0.43, 0.4)))")
 
 ## Python rules (code runs in Blender {blender})
-- Available names inside run_python: bpy, bmesh, math, random, Vector, Matrix, Euler, Quaternion, C (context), D (bpy.data) and bwm.
+- Available names inside run_python: bpy, bmesh, math, random, Vector, Matrix, Euler, Quaternion, C (context), D (bpy.data) and bwm. They are already imported (`import bwm` also works). Never spend a step testing whether they exist.
 - bwm helpers (accept objects or names):
   bwm.box(name, size=(x,y,z), location=centre, collection=None, material=None, bevel=0) -> object with real dimensions, scale 1
   bwm.mesh(name, verts, faces, location=(0,0,0), collection=None, material=None) -> object from vertex/face lists
