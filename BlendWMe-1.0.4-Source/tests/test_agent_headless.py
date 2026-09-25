@@ -492,11 +492,14 @@ periodic = [u for u in users if u.startswith("[Art director review after")]
 check("critique converges: at most 3 periodic reviews per task", len(periodic) == 3, len(periodic))
 check("model told once when every plan part is built", sum(u.startswith("[All 2 plan parts are built") for u in users) == 1)
 SCRIPT[:] = ([call("run_python", title=f"W{i}", explain="x", code=f"bwm.box('WU_{i}', (1, 1, 1), ({i * 2}, 20, 0.5))")
-              for i in range(1, 23)] + [call("finish", summary="x"), call("finish", summary="done")])
+              for i in range(1, 23)] + [call("look", question="how is it?"), call("finish", summary="x"),
+                                        call("finish", summary="done")])
 agent.send("No plan, open-ended", dict(cfg_ref, references=[]), new_task=True)
 pump_until(lambda: not agent.is_running())
 users = [m["content"] for m in agent.messages if m["role"] == "user" and isinstance(m["content"], str)]
 check("without a plan, told to wrap up after 20 build steps", sum("Wrap up now" in u for u in users) == 1)
+check("after the wrap-up, look points at finish instead of starting a new polish round",
+      any("you were asked to wrap up" in m["content"] for m in agent.messages if m["role"] == "tool"))
 SCRIPT[:] = [step(i) for i in range(31, 34)] + [call("finish", summary="done")]
 agent.send("Build without a reference again", dict(cfg_ref, references=[]), new_task=True)
 pump_until(lambda: not agent.is_running())

@@ -171,7 +171,7 @@ class Agent:
         """Write the full conversation to a file. Returns the path or ''."""
         if not self.messages:
             return ""
-        info = {"title": self.brief[:60], "version": "1.0.4",
+        info = {"title": self.brief[:60], "version": "1.0.5",
                 "blender": self.config.get("blender_version"), "model": self.config.get("model"),
                 "vision_model": self.config.get("vision_model") or "(auto)",
                 "reasoning": self.config.get("reasoning"), "mode": session.mode, "level": session.level,
@@ -735,6 +735,11 @@ class Agent:
                 "note": "Build them in order and pass part=<number> to run_python."}
 
     def _tool_look(self, args, client):
+        if session.mode == "AUTO" and self.plan_done_noted:
+            # After the wrap-up note, a fresh critique only starts another polish round
+            # (live runs rebuilt the same cottage six times this way). Point at the finish.
+            return {"note": "The build is complete enough: you were asked to wrap up. Do not start new polish "
+                            "rounds. Add only brief items that are still missing, delete leftovers, then call finish."}
         if not self.config.get("vision_enabled", True):
             return {"error": "Vision is switched off. Check facts with get_scene_info (bounds, sizes)."}
         if self.vision_broken:
