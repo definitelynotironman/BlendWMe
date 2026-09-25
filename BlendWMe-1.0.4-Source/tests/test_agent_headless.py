@@ -14,6 +14,10 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# Blender buffers stdout when it is piped, and os._exit() at the end skips the
+# flush, so print each line straight away.
+sys.stdout.reconfigure(line_buffering=True)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
