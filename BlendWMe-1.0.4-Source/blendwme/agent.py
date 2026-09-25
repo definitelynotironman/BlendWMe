@@ -14,6 +14,7 @@ The conversation is kept between messages, so a follow-up like
 
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -29,6 +30,15 @@ CONTEXT_BUDGET = 110_000  # characters before older results are compacted
 REVIEW_FIRST = 3          # successful build steps before the first art director review
 REVIEW_FIRST_WITH_REF = 1  # ... when the user gave reference images (match them early)
 REVIEW_EVERY = 4          # successful build steps between reviews
+STUCK_FAILS = 4           # failures of the SAME step before handing the wheel to the user
+STUCK_PRECHECK = 6        # pre-check rejections (nothing ran) of the same step before that
+
+# Steps that only probe the environment ("is bwm available?") instead of building.
+_PROBE_CODE = re.compile(r"dir\(\s*(bwm|bpy|bmesh|bpy\.ops)\s*\)|hasattr\(\s*(bwm|bpy|bmesh)\s*,"
+                         r"|sys\.modules|except\s+\(?\s*(ImportError|ModuleNotFoundError)|globals\(\)|locals\(\)")
+_PROBE_TITLE = re.compile(r"\b(test|testing|availab|probe|debug|explore|environment)", re.I)
+_BUILDS = re.compile(r"\bbwm\.(?!bounds|top\b|obj\b|col\b|mat\b)\w+\(|bpy\.ops\.|\.new\(|\.link\(|from_pydata|"
+                     r"\.location|\.scale|\.rotation|modifiers|default_value")
 
 
 _SEES_IMAGES = {}   # model id -> True/False, filled from the provider's model list
@@ -61,6 +71,8 @@ class Agent:
         self.vision_broken = ""
         self.vision_retried = False
         self.trace = []          # timing and events for the full log
+        self.step_fails = {}     # step key -> failures that ran and broke
+        self.step_rejects = {}   # step key -> pre-check rejections (nothing ran)
         self.retry_entry = None  # the quiet "fixing a code error" log line
         self.rescued = 0         # Python calls sent as tools and rescued
         self.bad_tool_calls = 0
@@ -100,6 +112,7 @@ class Agent:
             # Keep the old snapshot: edits you made between messages get reported.
             self.messages.append({"role": "user", "content": text})
         self.budget_start = session.tool_steps
+        self.step_fails, self.step_rejects = {}, {}
         self.final_reviewed = False
         self.finished = False
         self.fail_streak = 0
@@ -568,6 +581,13 @@ class Agent:
         code = str(args.get("code") or "")
         part = args.get("part")
         part = int(part) if isinstance(part, (int, float)) or str(part).isdigit() else None
+        if _is_probe(title, code):
+            # Do not run (or count) environment tests. Answer the question they were asking.
+            self._trace("probe_refused", title=title)
+            return {"skipped": "Not run: this step only tests the environment. Everything is ready: bpy, bmesh, "
+                               "math, Vector, C, D and bwm are already defined in every step (import bwm also "
+                               "works). bwm has: " + ", ".join(_bwm_names()) + ". Build the next part of the "
+                               "plan now."}
         session.set_card({"kind": "work", "title": title, "text": explain,
                           "step": len(session.steps) + 1, **self._plan_progress()})
         result = bridge.call(executor.run, code, title)
@@ -576,6 +596,7 @@ class Agent:
         if result.get("auto_repaired"):
             self._trace("auto_repaired", title=title, fixes=result["auto_repaired"][:6])
         self.last_snapshot = bridge.call(scene_info.snapshot)
+        key = _step_key(title, part)
         if result["ok"]:
             if self.fail_streak and self.retry_entry is not None:
                 # Quietly close the earlier "fixing" note instead of leaving red errors around.
@@ -584,39 +605,14 @@ class Agent:
                 session.changed_flag = True
             self.retry_entry = None
             self.fail_streak = 0
+            self.step_fails.pop(key, None)
+            self.step_rejects.pop(key, None)
             self.ok_steps += 1
             session.add("step", title, detail=explain, ok=True)
             if part:
                 session.tick_plan(part)
         else:
-            self.fail_streak += 1
-            short = result.get("error", "").strip().splitlines()[-1][:160]
-            self._trace("step_failed", title=title, error=result.get("error", "")[:600])
-            if self.fail_streak <= 2:
-                text = f"{title}: fixing a code error"
-                if self.retry_entry is None:
-                    self.retry_entry = session.add("retry", text, detail=short)
-                else:
-                    self.retry_entry.update(text=text + f" (try {self.fail_streak + 1})", detail=short)
-                    session.changed_flag = True
-            else:
-                session.add("error", f"{title} keeps failing: {short}")
-            if self.fail_streak == 2:
-                result["stuck_hint"] = ("This failed twice in a row. Change approach: split it into smaller "
-                                        "steps, use bwm.box / bwm.mesh instead of custom code, or call inspect_api "
-                                        "to check names before trying again.")
-            elif self.fail_streak >= 4:
-                # Do not burn tokens on a loop. Hand the wheel to the user.
-                session.add("info", "I'm stuck on this step, so I paused. Fix it yourself or press Resume "
-                                    "and I will try a different way.")
-                session.pause_flag.set()
-                self._wait_if_paused({"kind": "ask", "title": f"I'm stuck: {title}",
-                                      "text": "This step failed 4 times. Error: " + short
-                                              + "  Edit the scene or tell me what to do, then press Resume."})
-                self.fail_streak = 0
-                self.retry_entry = None
-                result["user"] = ("You failed 4 times and were paused. The user has now resumed. Any message "
-                                  "or scene change they made follows. Try a clearly different approach.")
+            self._step_failed(result, title, key)
         targets = (changed.get("added", []) + changed.get("modified", []))[:6]
         if mode in ("WATCH", "TEACH") and result["ok"]:
             session.set_pointers([{"object": n} for n in targets])
@@ -634,6 +630,51 @@ class Agent:
         if self.plan_needed() and result["ok"]:
             result["reminder"] = "Call plan first so the user can follow the build."
         return result
+
+    def _step_failed(self, result, title, key):
+        """Count a failure for THIS step, give sharper hints, and pause only when truly stuck."""
+        error = result.get("error", "")
+        short = error.strip().splitlines()[-1][:160] if error.strip() else "unknown error"
+        rejected = error.startswith("Pre-check found")     # nothing ran: cheap, not counted as a failure
+        counts = self.step_rejects if rejected else self.step_fails
+        counts[key] = counts.get(key, 0) + 1
+        n = counts[key]
+        self.fail_streak = self.step_fails.get(key, 0) + self.step_rejects.get(key, 0)
+        self._trace("step_failed", title=title, error=error[:600], rejected=rejected, count=n)
+        previous = getattr(self, "_last_error", {}).get(key)
+        self._last_error = dict(getattr(self, "_last_error", {}), **{key: short})
+        text = f"{title}: fixing a code error"
+        if self.retry_entry is None:
+            self.retry_entry = session.add("retry", text, detail=short)
+        else:
+            self.retry_entry.update(text=text + f" (try {self.fail_streak + 1})", detail=short)
+            session.changed_flag = True
+        limit = STUCK_PRECHECK if rejected else STUCK_FAILS
+        if n == 2 or (rejected and n == 3):
+            hint = ("This step failed twice. Change approach: split it into smaller steps, build it with bwm "
+                    "(box, cylinder, cone, sphere, loft, extrude_profile, gable_roof, window, door...) instead of "
+                    "bmesh or operators, or call inspect_api('bwm.<name>') to read a helper's arguments.")
+            if previous and previous == short:
+                hint = f"Same error again ({short}). That exact line is wrong; do not repeat it. " + hint
+            result["stuck_hint"] = hint
+        elif n == limit - 1:
+            result["stuck_hint"] = ("Last try before BlendWMe hands control to the user. Rebuild this part in the "
+                                    "simplest way with bwm (for example a few bwm.box / bwm.cylinder parts), even "
+                                    "if it is less detailed. Do not reuse the code that failed.")
+        elif n >= limit:
+            # Do not burn tokens on a loop. Hand the wheel to the user.
+            session.add("error", f"{title} keeps failing: {short}")
+            session.add("info", "I'm stuck on this step, so I paused. Fix it yourself or press Resume "
+                                "and I will try a different way.")
+            session.pause_flag.set()
+            self._wait_if_paused({"kind": "ask", "title": f"I'm stuck: {title}",
+                                  "text": f"This step failed {n} times. Error: " + short
+                                          + "  Edit the scene or tell me what to do, then press Resume."})
+            counts[key] = 0
+            self.fail_streak = 0
+            self.retry_entry = None
+            result["user"] = (f"You failed {n} times and were paused. The user has now resumed. Any message "
+                              "or scene change they made follows. Try a clearly different approach.")
 
     def _plan_progress(self):
         if not session.plan:
@@ -916,6 +957,25 @@ class Agent:
         session.set_status(DONE)
         self.finished = True
         return {"ok": True}
+
+
+def _step_key(title, part):
+    """Which plan step an attempt belongs to, so failures are counted per step."""
+    if part:
+        return f"part {part}"
+    title = (title or "").strip().lower()
+    return title if title and title != "step" else "(untitled)"
+
+
+def _is_probe(title, code):
+    """True for steps that only test the environment instead of building something."""
+    if _PROBE_CODE.search(code):
+        return not _BUILDS.search(_PROBE_CODE.sub("", code)) or "sys.modules" in code
+    return bool(_PROBE_TITLE.search(title or "")) and not _BUILDS.search(code)
+
+
+def _bwm_names():
+    return helpers.public_names()
 
 
 def _coerce_types(name, args):

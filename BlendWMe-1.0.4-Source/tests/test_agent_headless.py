@@ -331,6 +331,43 @@ session.pause_flag.clear(); session.wake()
 pump_until(lambda: not agent.is_running())
 check("continues after resume", session.status == state.DONE)
 
+# Fix A6: smarter stuck guard
+probe = call("run_python", title="Test bwm availability", explain="x", code="print(dir(bwm))\nprint(hasattr(bpy, 'ops'))")
+SCRIPT[:] = [probe] * 5 + [call("run_python", title="Real part", explain="x", code="bwm.box('AfterProbe', (1, 1, 1))"),
+                          call("finish", summary="ok")]
+steps_before = len(session.steps)
+agent.send("Probe test", CONFIG)
+pump_until(lambda: not agent.is_running())
+check("environment test steps are refused, not run", session.status == state.DONE and "AfterProbe" in bpy.data.objects
+      and len(session.steps) == steps_before + 1)
+check("refused probe gets the facts it was looking for", any("bwm has:" in m["content"] and "cylinder" in m["content"]
+                                                              for m in agent.messages if m["role"] == "tool"))
+
+reject = call("run_python", title="Roof", explain="x", code="bpy.ops.mesh.primitive_cube_add()\nr = bpy.not_a_thing")
+SCRIPT[:] = [reject] * 5 + [call("run_python", title="Roof", explain="x", code="bwm.box('RoofOK', (1, 1, 1))"),
+                           call("finish", summary="ok")]
+agent.send("Pre-check test", CONFIG)
+pump_until(lambda: not agent.is_running() or session.status == state.PAUSED)
+check("pre-check rejections (nothing ran) do not trigger the stuck pause", session.status == state.DONE
+      and "RoofOK" in bpy.data.objects, session.status)
+
+fail_a = call("run_python", title="Door", explain="x", code="bwm.box('FA', (1, 1, 1))\nmissing_a()")
+fail_b = call("run_python", title="Window", explain="x", code="bwm.box('FB', (1, 1, 1))\nmissing_b()")
+SCRIPT[:] = [fail_a, fail_b] * 3 + [call("run_python", title="Door", explain="x", code="bwm.box('DoorOK', (1, 1, 1))"),
+                                   call("finish", summary="ok")]
+agent.send("Per-step test", CONFIG)
+pump_until(lambda: not agent.is_running() or session.status == state.PAUSED)
+check("failures are counted per step (3 + 3 different failures do not pause)", session.status == state.DONE, session.status)
+check("repeated identical error is named in the hint", any("Same error again" in m["content"]
+                                                            for m in agent.messages if m["role"] == "tool"))
+
+SCRIPT[:] = [reject] * 6 + [call("finish", summary="ok")]
+agent.send("Endless pre-check loop", CONFIG)
+pump_until(lambda: session.status == state.PAUSED)
+check("an endless pre-check loop still hands control to the user", "stuck" in session.card["title"].lower())
+session.pause_flag.clear(); session.wake()
+pump_until(lambda: not agent.is_running())
+
 # 7c. Vision: a missing model is replaced automatically; total failure never stops the task
 import tempfile  # noqa: E402
 from blendwme import look as look_mod, logs  # noqa: E402

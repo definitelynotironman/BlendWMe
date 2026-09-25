@@ -373,6 +373,20 @@ def frame(*objs):
             pass
 
 
+def public_names():
+    """The bwm functions the model should know about (the kit, without internals)."""
+    hidden = {"begin_step", "end_step", "claim_name", "find_view3d", "view3d", "obj", "col", "mat",
+              "subdivide_mod", "num", "vec", "size3", "axis_name", "public_names", "smooth_by_angle"}
+    package = __name__.rsplit(".", 1)[0]
+    out = []
+    for n, fn in globals().items():
+        if n.startswith("_") or not n[0].islower() or n in hidden or not callable(fn):
+            continue
+        if getattr(fn, "__module__", "").startswith(package):
+            out.append(n)
+    return sorted(out)
+
+
 # ----------------------------------------------------------------------
 # The modelling kit (see shapes.py and furniture.py), all available as bwm.<name>
 # ----------------------------------------------------------------------

@@ -81,11 +81,7 @@ def inspect_api(path):
         if path == "bwm" or path.startswith("bwm."):
             import inspect
             from . import helpers
-            public = [n for n in dir(helpers) if not n.startswith("_") and n[0].islower()
-                      and callable(getattr(helpers, n)) and getattr(getattr(helpers, n), "__module__", "")
-                      .startswith(helpers.__name__.rsplit(".", 1)[0])
-                      and n not in ("begin_step", "end_step", "claim_name", "find_view3d", "view3d",
-                                    "obj", "col", "mat", "subdivide_mod", "num", "vec", "size3", "axis_name")]
+            public = helpers.public_names()
             names = [path[4:]] if path.startswith("bwm.") else public
             out = {}
             for n in names:
