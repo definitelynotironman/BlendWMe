@@ -719,6 +719,24 @@ for card in examples:
     check(f"{card}: builds every named part", not missing, missing)
     check(f"{card}: nothing floats", not floating_objects(), floating_objects())
 
+# 7k. Fix A7: inspect_api covers bmesh and mathutils
+r = knowledge.inspect_api("bmesh")
+check("inspect bmesh module", r.get("module") == "bmesh" and "ops" in r["members"] and "no bm.ops" in r["usage"], r)
+r = knowledge.inspect_api("bmesh.ops")
+check("inspect bmesh.ops lists the ops", "create_cone" in r.get("members", {}) and "extrude_face_region" in r["members"])
+r = knowledge.inspect_api("bmesh.ops.create_cone")
+check("inspect one bmesh op gives its arguments", {"radius1", "radius2", "depth", "segments"} <= set(r.get("arguments", {})), r)
+r = knowledge.inspect_api("bmesh.types.BMVert")
+check("inspect bmesh.types class", r.get("class") == "bmesh.types.BMVert" and "co" in r["members"], r)
+check("inspect BMesh by its bare name", "verts" in knowledge.inspect_api("BMesh").get("members", {}))
+r = knowledge.inspect_api("mathutils.Vector")
+check("inspect mathutils.Vector", "normalized" in r.get("members", {}) and "cross" in r["members"], r)
+check("inspect Vector by its bare name", "lerp" in knowledge.inspect_api("Vector").get("members", {}))
+check("inspect mathutils.geometry", "intersect_line_line" in knowledge.inspect_api("mathutils.geometry").get("members", {}))
+r = knowledge.inspect_api("bmesh.ops.create_cylinder")
+check("unknown bmesh op suggests real ones", "create_circle" in r.get("did_you_mean", []) or "create_cone" in r.get("did_you_mean", []), r)
+check("bpy types still inspected", knowledge.inspect_api("BevelModifier").get("type") == "BevelModifier")
+
 # 8. Key handling: session mode keeps it in memory only, nothing in preferences
 from blendwme import credentials  # noqa: E402
 credentials.set_key("sk-test-" + "a" * 30, "SESSION")

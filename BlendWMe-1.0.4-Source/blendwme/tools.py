@@ -55,7 +55,9 @@ LOOK = _fn(
 INSPECT_API = _fn(
     "inspect_api",
     "Look up the real Blender API in this Blender version: properties of a type "
-    "(e.g. 'BevelModifier', 'Material') or arguments of an operator (e.g. 'bpy.ops.mesh.loopcut_slide').",
+    "(e.g. 'BevelModifier', 'Material'), arguments of an operator (e.g. 'bpy.ops.mesh.loopcut_slide'), "
+    "the bwm kit ('bwm' or 'bwm.gable_roof'), bmesh ('bmesh', 'bmesh.ops', 'bmesh.ops.create_cone', "
+    "'bmesh.types.BMVert') and mathutils ('mathutils.Vector', 'mathutils.geometry').",
     {"path": {"type": "string"}}, ["path"])
 
 LOAD_SKILL = _fn(
