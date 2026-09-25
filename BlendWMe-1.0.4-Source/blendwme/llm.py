@@ -240,6 +240,32 @@ _TOOL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 _FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
 
+_XML_FUNCTION = re.compile(r"<function=([\w.\-]+)>(.*?)</function>", re.S | re.I)
+_XML_PARAM = re.compile(r"<parameter=([\w\-]+)>\n?(.*?)\n?</parameter>", re.S | re.I)
+
+
+def _xml_calls(text):
+    """Calls in the XML style some chat templates use, returned as JSON strings:
+
+        <tool_call><function=run_python><parameter=code>print(1)</parameter></function></tool_call>
+
+    Nemotron 3 Ultra wrote '<FUNCTION=get_scene_info></FUNCTION>' in a live run when the
+    provider did not turn it into a native tool call.
+    """
+    out = []
+    for name, body in _XML_FUNCTION.findall(text):
+        args = {}
+        for key, value in _XML_PARAM.findall(body):
+            try:
+                args[key] = json.loads(value)
+                if not isinstance(args[key], (list, dict, int, float, bool)):
+                    args[key] = value
+            except ValueError:
+                args[key] = value
+        out.append(json.dumps({"name": name, "arguments": args}))
+    return out
+
+
 def _bare_json_calls(text):
     """Tool calls written as plain JSON objects in the text, one after another.
 
@@ -273,7 +299,8 @@ def normalise_message(message):
     content = strip_thinking(message.get("content") or "")
     tool_calls = message.get("tool_calls") or []
     if not tool_calls and content:
-        found = _TOOL_TAG.findall(content) or _FENCED.findall(content) or _bare_json_calls(content)
+        found = (_TOOL_TAG.findall(content) or _FENCED.findall(content) or _bare_json_calls(content)
+                 or _xml_calls(content))
         for raw in found:
             try:
                 obj = json.loads(raw)
@@ -294,7 +321,8 @@ def normalise_message(message):
             content = _FENCED.sub("", content).strip()
             for raw in found:
                 content = content.replace(raw, "")
-            content = content.strip()
+            content = _XML_FUNCTION.sub("", content)
+            content = re.sub(r"</?tool_call>", "", content).strip()
     out = {"role": "assistant", "content": content}
     if tool_calls:
         clean = []

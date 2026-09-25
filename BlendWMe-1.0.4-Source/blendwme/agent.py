@@ -218,6 +218,11 @@ class Agent:
                 calls = message.get("tool_calls") or []
                 if not calls:
                     if finish_reason == "length":
+                        # A cut-off reply is often a repetition loop ("<PARAMS>" x 8000). Keeping it in the
+                        # history primes the model to repeat it, so keep only a short marker.
+                        if len(message.get("content") or "") > 1500:
+                            message["content"] = (message["content"][:300]
+                                                  + " [... reply cut off by the length limit ...]")
                         self.messages.append({"role": "user", "content":
                             "Your reply was cut off by the length limit. Continue with a smaller step."})
                         continue

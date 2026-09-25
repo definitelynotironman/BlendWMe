@@ -79,7 +79,9 @@ class Fake(BaseHTTPRequestHandler):
         reply = SCRIPT.pop(0) if SCRIPT else {"role": "assistant", "content": "All done."}
         if callable(reply):
             reply = reply(body)
-        self._send({"choices": [{"message": reply, "finish_reason": "stop"}],
+        reply = dict(reply)
+        finish = reply.pop("_finish", "stop")
+        self._send({"choices": [{"message": reply, "finish_reason": finish}],
                     "usage": {"total_tokens": 100}})
 
     def _send(self, obj):
@@ -218,6 +220,15 @@ SCRIPT[:] = [
 agent.send("Add a door", CONFIG)
 pump_until(lambda: not agent.is_running())
 check("nudge then text tool call recovered", "Door" in bpy.data.objects)
+
+# A reply cut off by the length limit in a repetition loop is not kept in full (it primes more of it)
+SCRIPT[:] = [{"role": "assistant", "content": "<tool_call>\n" + "<PARAMS>\n" * 3000, "_finish": "length"},
+             call("finish", summary="ok")]
+agent.send("Cut off", CONFIG)
+pump_until(lambda: not agent.is_running())
+check("cut-off repetition is trimmed from the history",
+      max(len(m.get("content") or "") for m in agent.messages if m["role"] == "assistant") < 1000
+      and session.status == state.DONE)
 
 # ----------------------------------------------------------------------
 # 4. Pause mid-task: user edits, model is told, stale plan skipped

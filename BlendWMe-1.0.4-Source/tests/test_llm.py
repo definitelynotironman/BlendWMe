@@ -24,4 +24,12 @@ assert json.loads(m["tool_calls"][0]["function"]["arguments"])["code"] == "d = {
 assert m["content"] == "", m
 m = llm.normalise_message({"content": 'I will use {"a": 1} as a setting.'})
 assert "tool_calls" not in m                                   # plain JSON that is not a tool call stays text
+# XML-style calls (live run): bare and with parameters
+m = llm.normalise_message({"content": "\n<tool_call>\n<FUNCTION=get_scene_info>\n</FUNCTION>\n</tool_call>\n"})
+assert m["tool_calls"][0]["function"]["name"] == "get_scene_info" and m["content"] == "", m
+m = llm.normalise_message({"content": "<tool_call><function=run_python><parameter=title>Body</parameter>"
+                                      "<parameter=code>\nx = {'a': 1}\nprint(x)\n</parameter><parameter=part>2</parameter>"
+                                      "</function></tool_call>"})
+a = json.loads(m["tool_calls"][0]["function"]["arguments"])
+assert a == {"title": "Body", "code": "x = {'a': 1}\nprint(x)", "part": 2}, a
 print("llm helper tests passed")
