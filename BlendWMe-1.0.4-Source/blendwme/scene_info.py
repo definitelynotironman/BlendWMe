@@ -89,7 +89,26 @@ def get_scene_info():
     }
     if len(objs) > MAX_OBJECTS:
         info["note"] = f"Only the first {MAX_OBJECTS} objects are listed."
+    cube = default_startup_cube()
+    if cube:
+        info["default_startup_cube"] = (f"'{cube}' is Blender's untouched default startup cube, not the user's work. "
+                                        "Delete it first if it would get in the way of the build "
+                                        "(D.objects.remove(D.objects['" + cube + "'])).")
     return info
+
+
+def default_startup_cube():
+    """Name of Blender's untouched default cube (2 m, at the origin, 8 vertices), or ''."""
+    o = bpy.data.objects.get("Cube")
+    if o is None or o.type != "MESH" or o.get(AUTHOR_KEY) or o.name not in bpy.context.scene.objects:
+        return ""
+    if len(o.data.vertices) != 8 or o.modifiers or o.parent or o.children:
+        return ""
+    if o.location.length > 1e-4 or any(abs(a) > 1e-4 for a in o.rotation_euler):
+        return ""
+    if any(abs(d - 2.0) > 1e-4 for d in o.dimensions):
+        return ""
+    return o.name
 
 
 def get_object_info(name):

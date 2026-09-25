@@ -719,6 +719,13 @@ for card in examples:
     check(f"{card}: builds every named part", not missing, missing)
     check(f"{card}: nothing floats", not floating_objects(), floating_objects())
 
+# Blender's untouched default cube is flagged so the model can clear it; a moved one is the user's.
+from blendwme import scene_info as si  # noqa: E402
+bpy.ops.wm.read_factory_settings(use_empty=False)
+check("default startup cube flagged", "default startup cube" in si.get_scene_info().get("default_startup_cube", ""))
+bpy.data.objects["Cube"].location.x = 1.0
+check("an edited cube is the user's, not flagged", "default_startup_cube" not in si.get_scene_info())
+
 # 7k. Fix A7: inspect_api covers bmesh and mathutils
 r = knowledge.inspect_api("bmesh")
 check("inspect bmesh module", r.get("module") == "bmesh" and "ops" in r["members"] and "no bm.ops" in r["usage"], r)
