@@ -1,4 +1,4 @@
-# BlendWMe 1.0
+# BlendWMe 1.0.4
 
 An AI Blender artist that lives inside Blender. It can build at full speed, slow down and show you how, or coach you while you do it yourself.
 
@@ -24,11 +24,13 @@ What MCP does not have, and BlendWMe does: it lives in Blender, so you need no o
 ## Install
 
 1. Edit > Preferences > Add-ons. Disable any older BlendWMe. Restart Blender.
-2. Top-right menu > **Install from Disk** > choose `blendwme-1.0.0.zip`.
+2. Top-right menu > **Install from Disk** > choose `blendwme-1.0.4.zip`.
 3. Make sure **Allow Online Access** is on (Preferences > System > Network).
 4. In the 3D Viewport press **N** and open the **BlendWMe** tab.
 5. Open **Connection**. Copy your Nebius key, then press **Paste Key**. Press **Test Connection**. It finds the exact model IDs on your account and checks that tool calling works.
-6. Press **Test Vision**. It finds a vision model on your account that can see the viewport and saves it.
+6. Optional: press **Test Vision**. It lists the models on your account that accept images, tests them and keeps the first that works. If you skip this, BlendWMe picks one by itself the first time it looks.
+
+**Why vision is a separate model:** no Nemotron model on Nebius accepts images. Nemotron is the agent (the brain and hands). A vision model such as Kimi K2.6 or Qwen3.8-27B is its eyes. If vision fails, BlendWMe keeps building from scene data instead of stopping.
 
 ## Your API key
 
@@ -62,6 +64,13 @@ Then try the other modes on the same scene:
 - **Pause and Take Control:** while it works, press Pause. Move or reshape something. Press **Resume**. It is told exactly what you changed and builds around your version.
 - **Teach:** *Teach me to model a simple table.* You do each step. It points at what matters, and the step completes by itself when your scene shows it is done. Press **Show me** if you are stuck.
 
+## Build styles (Auto mode)
+
+- **Piece by Piece** (default): BlendWMe first writes a **plan**, a checklist of parts with sizes, shown in the panel. Then each part lands one at a time with a red pointer, and the checklist ticks off. This is the BlendWMe way: you can follow along, pause at any part and take over.
+- **Full Build**: MCP-style. Few, big steps, as fast as possible. Best when you just want the result.
+
+Watch mode is piece by piece with a Next button and an explanation for every step. Teach mode is you doing each piece.
+
 ## Controls
 
 | Button | What it does |
@@ -78,8 +87,9 @@ Then try the other modes on the same scene:
 
 ## Models
 
-- **Agent:** Nemotron 3 Super by default (native function calling on Nebius). Try **Nemotron 3 Ultra** if your account has it. It is bigger and likely better at long agent work. Kimi K2.6 and any custom ID are also available for comparison.
-- **Vision:** Test Vision tries Nemotron 3 Nano Omni first, then other vision models, and keeps the first that works.
+- **Agent:** **Nemotron 3 Ultra** by default. In a one-shot cottage test it was the fastest (12 s for 154 lines of code). Its mistakes were small API slips, which the pre-check now catches. Nemotron 3 Super also works but is slower and weaker. Nemotron 3.5 Lightning ran out of tokens without finishing, so it is not recommended. **Kimi K2.6** is available too: it can see pictures itself, which is the setup closest to Claude + MCP.
+- **Vision:** picked automatically from models that accept images (Kimi K2.6, Qwen3.8-27B, GLM-5.3-Flash and others). Nebius reports this in its model list, so BlendWMe never guesses. Thinking is switched off for vision calls (about 2 s each). Before this, Kimi sometimes thought so long that it returned an empty answer, which left the agent blind.
+- **Agent sees pictures itself:** if your agent model accepts images (e.g. Kimi K2.6), the picture goes straight to it, like Claude in MCP, instead of being described by a second model.
 - **Reasoning:** Low effort is the default. Use Full for hard briefs and Off for speed.
 
 Do a quick bake-off: give the same house prompt to Super and Ultra and compare the result and the time. Pick the winner for your demo.
@@ -113,6 +123,8 @@ you ─► panel ─► agent thread ──► Nebius (Nemotron, tool calling)
 | `overlay.py` | The Graphite Paper card and red radar pointers |
 | `ui.py`, `prefs.py` | Panel, buttons, settings |
 | `credentials.py` | Keeps your API key in the OS password store, never in Blender files |
+| `precheck.py` | Checks code against the real Blender API before it runs |
+| `logs.py` | Writes the full conversation logs |
 | `bridge.py` | Runs Blender work safely on the main thread |
 
 ### Making it a better artist
@@ -131,9 +143,29 @@ BlendWMe expects mistakes and is built to recover on its own:
 | A step half-changed objects that already existed | It is told exactly which ones, so it can fix them instead of guessing. |
 | Network trouble or the provider is busy | Automatic retry after 3, 8 and 20 seconds. |
 | The conversation gets too long | Older steps are shortened and the request is retried. |
+| The code uses a Blender name that does not exist (like `bpy.active_object` or `bm.new`), an old 2.7-era call (`scene.objects.link`), a renamed shader input (`'Emission'`), or a wrong argument name (`create_cone(radius=...)`) | A pre-check reads the code before it runs, compares it with the real API of your Blender, and sends back the right name. Nothing runs, so nothing needs undoing. |
+| A step fails and gets fixed | Shown as a quiet grey SELF-CORRECTING line ("fixed a code error, 2 tries"), not a red problem. Red is kept for real trouble. |
+| The vision model is missing or fails | Another model that accepts images is found automatically. If none works, BlendWMe keeps building and checks its work with scene data. |
+| The model calls Python as if it were a tool (`bwm.mesh(...)`, `bpy.ops...` as tool calls) | BlendWMe runs those calls together as one real Python step (materials and collections first) and tells the model to use run_python. Unknown tool names get a reply listing the real tools and an example. At most 8 tool calls run per turn. |
+| New objects end up outside the scene (e.g. in a collection that was removed from the scene) | bwm.collection links the collection back into the scene, and any new object that is still not in the scene is reported to the AI. |
 | The model writes a broken tool call | It is recovered when possible, or the model is asked to resend it. |
 | The model only talks and stops working | It is nudged once to carry on. |
 | Something still goes wrong | Press Pause or Stop at any time. Undo AI Step (Ctrl+Z) reverses any step. Copy Log gives a full report to share. |
+
+## Full logs
+
+After every task, BlendWMe saves the whole conversation to **Documents/BlendWMe Logs**:
+
+- a `.md` file you can read: every message, the full code of every step, every result, errors, and a timeline with how long each model call took
+- a `.json` file with the exact messages sent to the model, for debugging
+
+Use **Learn and Debug > Save Full Log** to save at any moment, and **Open Logs Folder** to find them. Turn auto-saving off or pick another folder in Connection. The key is never in the conversation, and any copy of it is replaced with `[API KEY]` before saving.
+
+## What it can do in Blender
+
+Anything Blender can do from Python is in reach: modelling, materials and shader nodes, lighting, cameras, render setup, rigging, keyframe animation, shape keys, geometry nodes, Grease Pencil, physics settings, compositing and the video sequencer. Skill cards currently cover modelling, low-poly scenes, characters, materials, lighting, rigging, animation, sculpting (preparing and teaching), video editing and hard surface. Modelling is the most tested. The other areas work but have not been tuned yet.
+
+Limits: it cannot paint freehand sculpt or texture strokes like a person with a tablet (it prepares the mesh and teaches instead). It judges animation from still frames, not by watching playback. It can point at editors and panels, but not at one exact button.
 
 ## Safety and limits
 
@@ -144,7 +176,7 @@ BlendWMe expects mistakes and is built to recover on its own:
 
 ## Tests
 
-- `tests/test_agent_headless.py` runs the real agent loop in headless Blender against a fake model server: building, error recovery, user-edit detection, pause mid-thought, Watch gating, Teach checks, Stop. (52 checks, including rollback, the stuck guard and key safety.)
+- `tests/test_agent_headless.py` runs the real agent loop in headless Blender against a fake model server: building, error recovery, user-edit detection, pause mid-thought, Watch gating, Teach checks, Stop. (86 checks, including argument type fixing, rescued Python tool calls, hidden collections, the plan checklist, quiet self-correction, rollback, the stuck guard, the pre-check, vision fallback, a seeing agent, logs and key safety.)
 - `tests/test_llm.py` tests the client helpers.
 
 Viewport capture, multi-angle framing and the overlay card were checked in Blender 4.2.3. Live Nebius calls were not run in the build environment. Use Test Connection and Test Vision on your account.
@@ -152,3 +184,12 @@ Viewport capture, multi-angle framing and the overlay card were checked in Blend
 ## Credits
 
 The offscreen capture and multi-angle framing in `look.py` adapt MCP for Blender by Siddharth Ahuja (MIT). See `LICENSE-THIRD-PARTY`.
+
+## Changelog
+
+- **1.0.4**: tool arguments sent as text ("2.0", "[1, 2]", "True") are converted using each tool's schema, like MCP servers do; long-conversation shortening no longer adds a fake code field to non-code tool calls.
+
+- **1.0.3**: rescue Python-as-tool calls; clear "tools vs Python" section in the prompt (Nemotron 3 Ultra then used run_python correctly in 3 of 3 live trials); hidden collections relinked; warning for objects outside the scene; checks for swapped `modifiers.new` arguments and wrong node types; inspect_api lists operator groups and bwm helpers; red "Vision is OFF" warning in the panel; max 8 tool calls per turn.
+- **1.0.2**: plan checklist, Piece by Piece / Full Build, quiet self-correction, vision without thinking, agent sees images itself, legacy API and argument checks, Nemotron 3 Ultra default.
+- **1.0.1**: vision model auto-discovery, never stops on vision errors, pre-check of API names, bwm.box / bwm.mesh, full logs.
+- **1.0.0**: rebuild on the MCP pattern: native tool calling, run_python on the live scene, look, skills, Auto / Watch / Teach, safe key storage, rollback of failed steps.
