@@ -688,6 +688,13 @@ check("kit: chair tucked in front of the desk, facing it",
       abs(abs(D_.objects["Chair"].rotation_euler.z - D_.objects["Desk"].rotation_euler.z) - math.pi) < 0.01
       and D_.objects["Chair"].location.y < D_.objects["Desk"].location.y)
 check("kit: room window goes through the thin wall", abs(D_.objects["RoomWin"].location.y - 2) < 0.01)
+# Live round 2: a window placed right after its wall (same step) stood in the middle of the room
+r = executor.run("bwm.wall('FreshWall', (30, 2), (35, 2), 2.7)\n"
+                 "bwm.window('FreshWin', 1.2, 1.1, (32, 2.0, 1.65), wall='FreshWall')\n"
+                 "bwm.wall('FreshSide', (30, -2), (30, 2), 2.7)\nbwm.shelf('FreshShelf', (0.8, 0.3, 1.6), (30.5, 0, 0), against='FreshSide')")
+check("kit: window right after its wall sits in the wall", r["ok"] and abs(D_.objects["FreshWin"].location.y - 2) < 0.01
+      and abs(D_.objects["FreshWin"].location.x - 32) < 0.01, tuple(D_.objects["FreshWin"].location))
+check("kit: against= a wall made in the same step", abs(bwm_h.bounds("FreshShelf").min.x - 30.085) < 0.03, bwm_h.bounds("FreshShelf"))
 
 SHAPES = """
 c = bwm.cone('IceCone', 0.35, 0.0, 1.2, (-6, 0, 0.6), axis='-Z', material=(0.8, 0.55, 0.25))

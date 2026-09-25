@@ -84,6 +84,7 @@ def _place_root(root, location, rot_deg, against=None):
         return root
     from .shapes import bounds
     wall_obj = _h.obj(against)
+    bpy.context.view_layer.update()      # the wall may have been made a moment ago
     back = bounds(root).max.y            # the piece is still at the origin, unrotated
     p = Vector(vec(location))
     m = wall_obj.matrix_world
@@ -107,6 +108,7 @@ def _place_root(root, location, rot_deg, against=None):
 def _depth_of(host):
     """A desk's front-to-back depth, measured in its own axes."""
     host = _h.obj(host)
+    bpy.context.view_layer.update()
     pts = []
     inv = host.matrix_world.inverted()
     for o in [host] + list(host.children_recursive):
@@ -119,6 +121,7 @@ def _on_top_of(host, local_offset):
     """(location, rot_deg) for a piece on host (desk, table), offset in the host's own axes."""
     from .shapes import bounds
     host = _h.obj(host)
+    bpy.context.view_layer.update()
     rot = host.matrix_world.to_euler()
     off = Vector(vec(local_offset, 2) + (0,))
     off.rotate(rot)
@@ -178,6 +181,7 @@ def _wall_frame(wall_obj, location):
     Solid block (a house body): the point moves onto the NEAREST side face, the
     part sits half in, half out of that face, and the normal is that face's normal.
     """
+    bpy.context.view_layer.update()      # a wall made a moment ago still has a stale world matrix
     p = Vector(vec(location))
     m = wall_obj.matrix_world
     local = m.inverted() @ p
