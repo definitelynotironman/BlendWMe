@@ -327,6 +327,13 @@ check("continues after resume", session.status == state.DONE)
 # 7c. Vision: a missing model is replaced automatically; total failure never stops the task
 import tempfile  # noqa: E402
 from blendwme import look as look_mod, logs  # noqa: E402
+
+# Background Blender has no viewport to draw: look renders the views instead.
+engine_before, cam_before, n_before = bpy.context.scene.render.engine, bpy.context.scene.camera, len(bpy.data.objects)
+shot = look_mod.capture("angles")
+check("look works without a viewport", os.path.isfile(shot.get("path", "")) and shot.get("rendered"), shot)
+check("render look leaves the scene as it was", bpy.context.scene.render.engine == engine_before
+      and bpy.context.scene.camera == cam_before and len(bpy.data.objects) == n_before)
 png = os.path.join(tempfile.gettempdir(), "bwm_fake.png")
 img = bpy.data.images.new("fake", 4, 4); img.filepath_raw = png; img.file_format = "PNG"; img.save()
 look_mod.capture = lambda *a, **k: {"path": png, "mode": "angles", "views": ["front"], "layout": "x"}

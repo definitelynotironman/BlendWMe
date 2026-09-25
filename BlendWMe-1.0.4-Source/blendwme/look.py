@@ -150,11 +150,101 @@ def _save(pixels, path):
     return w, h
 
 
+def _render_view(scene, cam, eye, center, size):
+    """Render one tile with the Workbench engine through a temporary camera."""
+    cam.location = eye
+    cam.rotation_euler = (center - eye).to_track_quat("-Z", "Y").to_euler()
+    scene.render.resolution_x = scene.render.resolution_y = size
+    scene.render.filepath = _out_path("tile")
+    bpy.ops.render.render(write_still=True)
+    img = bpy.data.images.load(scene.render.filepath)
+    try:
+        pixels = np.array(img.pixels[:], dtype=np.float32).reshape(img.size[1], img.size[0], 4)
+    finally:
+        bpy.data.images.remove(img)
+    try:
+        os.remove(scene.render.filepath)
+    except OSError:
+        pass
+    return pixels
+
+
+def _capture_by_render(mode, targets, views, max_size):
+    """Pictures without a 3D Viewport (background Blender, live tests).
+
+    The offscreen viewport draw needs a real viewport. When there is none we
+    render the same views with the fast Workbench engine instead, using
+    material colours so the critic still sees the palette.
+    """
+    scene = bpy.context.scene
+    render, shading = scene.render, scene.display.shading
+    saved = [(scene, "camera", scene.camera), (render, "engine", render.engine),
+             (render, "resolution_x", render.resolution_x), (render, "resolution_y", render.resolution_y),
+             (render, "resolution_percentage", render.resolution_percentage),
+             (render, "filepath", render.filepath), (shading, "color_type", shading.color_type),
+             (shading, "light", shading.light)]
+    cam = None
+    info = {"mode": mode, "rendered": True}
+    try:
+        render.engine = "BLENDER_WORKBENCH"
+        render.resolution_percentage = 100
+        shading.light = "STUDIO"
+        shading.color_type = "MATERIAL"
+        if mode == "camera":
+            if scene.camera is None:
+                return {"error": "The scene has no camera. Use mode='angles' instead."}
+            render.filepath = _out_path("camera")
+            s = max_size / max(render.resolution_x, render.resolution_y)
+            render.resolution_percentage = max(1, min(100, int(s * 100)))
+            bpy.ops.render.render(write_still=True)
+            info.update({"path": render.filepath, "camera": scene.camera.name})
+            return info
+        cam = bpy.data.objects.new("blendwme_look_cam", bpy.data.cameras.new("blendwme_look_cam"))
+        cam.data.angle = FOV
+        scene.collection.objects.link(cam)
+        scene.camera = cam
+        objs = _targets(targets)
+        center, radius = _bounds(objs)
+        if mode == "viewport":      # no viewport to copy: show the classic three-quarter view
+            names = ["three_quarter"]
+        else:
+            names = [v for v in (views or ["front", "right", "top", "three_quarter"]) if v in ANGLES][:6]
+            names = names or ["front", "three_quarter"]
+        cols = 2 if len(names) > 1 else 1
+        tile = max(160, int(max_size / cols))
+        tiles = []
+        for n in names:
+            direction = Vector(ANGLES[n]).normalized()
+            dist = radius / math.sin(FOV / 2) * 1.1
+            cam.data.clip_start = max(dist - radius * 3, dist * 0.01)
+            cam.data.clip_end = dist + radius * 3
+            tiles.append(_render_view(scene, cam, center + direction * dist, center, tile))
+        pixels = _sheet(tiles, cols)
+        path = _out_path(mode)
+        w, h = _save(pixels, path)
+        info.update({"path": path, "width": w, "height": h, "views": names,
+                     "layout": "tiles left-to-right, top-to-bottom in that order",
+                     "target_center": [round(v, 2) for v in center]})
+        return info
+    except Exception as e:
+        return {"error": f"Capture failed: {e}"}
+    finally:
+        for owner, attr, value in reversed(saved):
+            try:
+                setattr(owner, attr, value)
+            except Exception:
+                pass
+        if cam is not None:
+            data = cam.data
+            bpy.data.objects.remove(cam)
+            bpy.data.cameras.remove(data)
+
+
 def capture(mode="viewport", targets=None, views=None, shading=None, max_size=768):
     """Save a picture of the scene. Returns info dict with 'path'."""
     window, area, region = helpers.find_view3d()
-    if area is None:
-        return {"error": "No 3D Viewport is open."}
+    if area is None or bpy.app.background:   # background Blender has layouts but cannot draw them
+        return _capture_by_render(mode, targets, views, max_size)
     space = area.spaces.active
     scene = bpy.context.scene
     saved = []
