@@ -414,6 +414,16 @@ from blendwme import look as look_mod, logs  # noqa: E402
 engine_before, cam_before, n_before = bpy.context.scene.render.engine, bpy.context.scene.camera, len(bpy.data.objects)
 shot = look_mod.capture("angles")
 check("look works without a viewport", os.path.isfile(shot.get("path", "")) and shot.get("rendered"), shot)
+nm = bpy.data.materials.new("NodeOnlyRed")
+nm.use_nodes = True
+next(n for n in nm.node_tree.nodes if n.type == "BSDF_PRINCIPLED").inputs["Base Color"].default_value = (0.9, 0.05, 0.05, 1)
+seen = []
+real_capture = look_mod._capture
+look_mod._capture = lambda *a: seen.append(tuple(nm.diffuse_color)) or {"path": ""}
+look_mod.capture("angles")
+look_mod._capture = real_capture
+check("captures show node materials in their real colour, then restore",
+      seen and seen[0][0] > 0.85 and tuple(nm.diffuse_color)[0] < 0.85, (seen, tuple(nm.diffuse_color)))
 check("render look leaves the scene as it was", bpy.context.scene.render.engine == engine_before
       and bpy.context.scene.camera == cam_before and len(bpy.data.objects) == n_before)
 png = os.path.join(tempfile.gettempdir(), "bwm_fake.png")

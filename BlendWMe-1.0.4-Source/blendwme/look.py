@@ -240,8 +240,39 @@ def _capture_by_render(mode, targets, views, max_size):
             bpy.data.cameras.remove(data)
 
 
+def _true_colours():
+    """Give every node material its Base Color as viewport colour. Returns what to restore.
+
+    Solid view and the Workbench render show Material.diffuse_color, which only bwm.material
+    sets. Materials the model built from nodes looked clay-grey to the critic (seen live).
+    """
+    saved = []
+    for m in bpy.data.materials:
+        if not m.use_nodes or not m.node_tree:
+            continue
+        bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is None or bsdf.inputs["Base Color"].is_linked:
+            continue
+        saved.append((m, tuple(m.diffuse_color)))
+        c = bsdf.inputs["Base Color"].default_value
+        m.diffuse_color = (c[0], c[1], c[2], m.diffuse_color[3])
+    return saved
+
+
 def capture(mode="viewport", targets=None, views=None, shading=None, max_size=768):
     """Save a picture of the scene. Returns info dict with 'path'."""
+    saved = _true_colours()
+    try:
+        return _capture(mode, targets, views, shading, max_size)
+    finally:
+        for m, colour in saved:
+            try:
+                m.diffuse_color = colour
+            except ReferenceError:
+                pass
+
+
+def _capture(mode, targets, views, shading, max_size):
     window, area, region = helpers.find_view3d()
     if area is None or bpy.app.background:   # background Blender has layouts but cannot draw them
         return _capture_by_render(mode, targets, views, max_size)
