@@ -44,6 +44,10 @@ def mat(value):
 def find_view3d():
     """Return (window, area, region) of the biggest 3D viewport, or Nones."""
     best = (None, None, None)
+    if bpy.app.background:
+        # Background Blender keeps screen layouts but cannot draw them. Borrowing
+        # one for an operator crashes Blender in transform macros (extrude + move).
+        return best
     best_size = -1
     wm = bpy.context.window_manager
     for window in wm.windows:

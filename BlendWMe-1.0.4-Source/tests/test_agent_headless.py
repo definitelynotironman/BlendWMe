@@ -478,6 +478,13 @@ for label, code, ok in REPAIRS:
     r = executor.run(code)
     check("repaired: " + label, r["ok"] and r.get("auto_repaired") and ok(), r)
 
+# Background Blender: transform macros used to crash Blender (borrowed viewport)
+r = executor.run("bpy.ops.mesh.primitive_cylinder_add(radius=0.5, depth=1)\nC.active_object.name = 'Macro'\n"
+                 "bpy.ops.object.mode_set(mode='EDIT')\nbpy.ops.mesh.select_all(action='SELECT')\n"
+                 "bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={'value': (0, 0, 1)})\n"
+                 "bpy.ops.object.mode_set(mode='OBJECT')\nbpy.ops.object.duplicate_move()")
+check("extrude and duplicate macros run in background Blender", r["ok"] and "Macro" in bpy.data.objects, r)
+
 r = executor.run("m = bwm.material('RepL', (1, 0, 0))\nm.diffuse_color = (1, 1, 1)\nundefined_after_repair()")
 check("errors after a repair keep the model's line number", r["ok"] is False and "line 3" in r["error"]
       and "undefined_after_repair" in r["error"], r)
