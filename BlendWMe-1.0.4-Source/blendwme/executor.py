@@ -23,7 +23,7 @@ import bpy
 import mathutils
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import helpers, precheck, scene_info
+from . import helpers, precheck, repair, scene_info
 
 _BLOCKED = [
     (r"\bimport\s+(os|sys|subprocess|shutil|socket|ctypes|requests|urllib|http|importlib|builtins|pathlib|io)\b", "system/network modules"),
@@ -88,6 +88,7 @@ def _namespace():
         "Euler": Euler, "Quaternion": Quaternion,
         "C": bpy.context, "D": bpy.data,
         "bwm": helpers,
+        repair.SET_NAME: repair.fit_set,   # forgiving `owner.name = value` (see repair.py)
     }
 
 
@@ -192,11 +193,19 @@ def run(code, title="AI step", author="ai"):
     except SyntaxError as e:
         return {"ok": False, "error": f"SyntaxError line {e.lineno}: {e.msg}. {(e.text or '').strip()}",
                 "rolled_back": "Nothing ran."}
+    # Repair mechanical API slips first; the pre-check only sees what is left.
+    original = code
+    code, repairs = repair.repair(code)
+    compiled = compile(code, "<blendwme>", "exec")
     problems = precheck.check(code)
     if problems:
-        return {"ok": False, "error": "Pre-check found names that do not exist in Blender "
-                                      + bpy.app.version_string + ":\n" + "\n".join(problems),
-                "rolled_back": "Nothing ran. Fix these names and send the whole step again."}
+        result = {"ok": False, "error": "Pre-check found names that do not exist in Blender "
+                                        + bpy.app.version_string + ":\n" + "\n".join(problems),
+                  "rolled_back": "Nothing ran. Fix these names and send the whole step again."}
+        if repairs:
+            result["auto_repaired"] = repairs
+        return result
+    del repair.NOTES[:]
 
     before = scene_info.snapshot()
     before_ids = _id_pointers()
@@ -214,7 +223,8 @@ def run(code, title="AI step", author="ai"):
                 exec(compiled, _namespace())
     except Exception:
         ok = False
-        error = _readable_error(code)
+        error = _readable_error(original)   # same line numbers, the model's own text
+    repairs = repairs + [n for n in repair.NOTES if n not in repairs]
     removed = 0
     if not ok:
         removed = _roll_back(before_ids)
@@ -236,6 +246,11 @@ def run(code, title="AI step", author="ai"):
             result["warning"] = (f"{len(lost)} new object(s) are NOT in the scene, so nobody can see them: "
                                  f"{lost[:8]}. Link them with bwm.collection(name).objects.link(obj) or "
                                  "C.scene.collection.objects.link(obj).")
+    if repairs:
+        result["auto_repaired"] = repairs[:12]
+        result["repair_note"] = ("BlendWMe fixed these small API slips and ran the step"
+                                 + (" successfully" if ok else "")
+                                 + ". Write it the fixed way next time.")
     printed = stdout.getvalue()
     if printed:
         result["printed"] = printed[:MAX_OUTPUT] + ("..." if len(printed) > MAX_OUTPUT else "")

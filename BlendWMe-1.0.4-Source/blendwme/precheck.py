@@ -31,27 +31,10 @@ _BMESH_SEQ = {"verts": bmesh.types.BMVertSeq, "edges": bmesh.types.BMEdgeSeq,
 _MODULES = {"bmesh": bmesh, "math": math, "mathutils": mathutils, "bwm": helpers}
 
 
-# Old (Blender 2.7x / 3.x) API that models still write, with the 4.2 replacement.
-_LEGACY = [
-    (r"scene\.objects\.link\(", "`scene.objects.link()` was removed in 2.8. Use `C.scene.collection.objects.link(obj)` "
-                                "or `bwm.collection(name).objects.link(obj)`."),
-    (r"\.select\s*=\s*(True|False)\b", "`obj.select = True` was removed. Use `obj.select_set(True)`."),
-    (r"scene\.objects\.active\b", "`scene.objects.active` was removed. Use `C.view_layer.objects.active`."),
-    (r"scene\.update\(\)", "`scene.update()` was removed. Use `C.view_layer.update()`."),
-    (r"\.draw_type\b", "`draw_type` is now `display_type`."),
-    (r"\.show_x_ray\b", "`show_x_ray` is now `show_in_front`."),
-    (r"\.uv_textures\b", "`uv_textures` is now `uv_layers`."),
-    (r"material_slots\.(link|append|new|add)\(", "Material slots cannot be added that way. Use "
-                                                  "`obj.data.materials.append(mat)` or `bwm.assign(obj, mat)`."),
-    (r"[\"']BLENDER_EEVEE[\"']", "In Blender 4.2 the EEVEE engine id is 'BLENDER_EEVEE_NEXT'."),
-    (r"inputs\[\s*[\"']Subsurface[\"']\s*\]", "Principled input 'Subsurface' is now 'Subsurface Weight'."),
-    (r"inputs\[\s*[\"']Specular[\"']\s*\]", "Principled input 'Specular' is now 'Specular IOR Level'."),
-    (r"inputs\[\s*[\"']Emission[\"']\s*\]", "Principled input 'Emission' is now 'Emission Color'."),
-    (r"inputs\[\s*[\"']Transmission[\"']\s*\]", "Principled input 'Transmission' is now 'Transmission Weight'."),
-    (r"inputs\[\s*[\"']Clearcoat[\"']\s*\]", "Principled input 'Clearcoat' is now 'Coat Weight'."),
-    (r"inputs\[\s*[\"']Sheen[\"']\s*\]", "Principled input 'Sheen' is now 'Sheen Weight'."),
-    (r"diffuse_color\s*=\s*\(?[^)\n]*\[\s*:\s*3\s*\]", "`material.diffuse_color` needs 4 values (RGBA), not 3."),
-]
+# Old (Blender 2.7x / 3.x) API that models still write. Everything that can be
+# fixed safely is now repaired automatically by repair.py before this check
+# runs, so this list only holds what cannot be repaired. (pattern, message)
+_LEGACY = []
 
 
 def _legacy(code):

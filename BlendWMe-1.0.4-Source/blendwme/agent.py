@@ -553,6 +553,8 @@ class Agent:
         result = bridge.call(executor.run, code, title)
         changed = result.get("_changed", {})
         session.steps.append({"title": title, "explain": explain, "code": code, "ok": result["ok"]})
+        if result.get("auto_repaired"):
+            self._trace("auto_repaired", title=title, fixes=result["auto_repaired"][:6])
         self.last_snapshot = bridge.call(scene_info.snapshot)
         if result["ok"]:
             if self.fail_streak and self.retry_entry is not None:

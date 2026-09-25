@@ -366,8 +366,12 @@ check("work continues after vision failure", any("still building" in m["content"
 check("second look skips quickly", any("unavailable this session" in m["content"] for m in agent.messages if m["role"] == "tool"))
 
 # 7d. Pre-check stops invented API names before anything runs
-r = executor.run("bpy.ops.mesh.primitive_cube_add()\nslab = bpy.active_object")
-check("pre-check catches bpy.active_object", "bpy.context.active_object" in r["error"] and not any(o.name.startswith("Cube") for o in bpy.data.objects), r)
+r = executor.run("bpy.ops.mesh.primitive_cube_add()\nslab = bpy.active_object\nslab.name = 'Slab'")
+check("bpy.active_object repaired, not rejected", r["ok"] and "Slab" in bpy.data.objects
+      and any("bpy.context" in n for n in r.get("auto_repaired", [])), r)
+r = executor.run("bpy.ops.mesh.primitive_cube_add()\nx = bpy.not_a_real_thing")
+check("unrepairable names still caught before running", "does not exist" in r["error"]
+      and not any(o.name.startswith("Cube") for o in bpy.data.objects), r)
 r = executor.run("import bmesh\nbm = bmesh.new()\nbm.new((0,0,0))")
 check("pre-check catches bm.new", "bm.verts.new" in r["error"], r)
 
@@ -395,10 +399,11 @@ check("plan ticks as parts are built", [p["done"] for p in session.plan] == [Tru
 retry_lines = [e for e in run_log if e["who"] == "retry"]
 check("failed try shown as quiet self-correction", len(retry_lines) == 1 and "fixed a code error" in retry_lines[0]["text"], retry_lines)
 check("no red problem for a fixed step", not any(e["who"] == "error" for e in run_log), run_log)
-r = executor.run("o = bwm.box('L', (1,1,1))\nbpy.context.scene.objects.link(o)")
-check("legacy 2.7 API caught before running", "removed in 2.8" in r["error"] and "L" not in bpy.data.objects, r)
-r = executor.run("import bmesh\nbm = bmesh.new()\nbmesh.ops.create_cone(bm, radius=1, depth=1, segments=4)")
-check("wrong bmesh argument caught", "radius1" in r["error"], r)
+r = executor.run("o = D.objects.new('L', D.meshes.new('L'))\nbpy.context.scene.objects.link(o)")
+check("legacy 2.7 link repaired", r["ok"] and "L" in bpy.context.scene.objects, r)
+r = executor.run("import bmesh\nbm = bmesh.new()\nbmesh.ops.create_cone(bm, radius=1, depth=1, segments=4)\n"
+                 "me = D.meshes.new('ConeM')\nbm.to_mesh(me)\nprint(round(max(v.co.x for v in me.vertices), 2))")
+check("create_cone radius repaired to radius1/radius2", r["ok"] and "1.0" in r.get("printed", ""), r)
 
 SCRIPT[:] = [call("look", question="how is it?"), call("finish", summary="seen myself")]
 VISION_SEEN.clear()
@@ -434,7 +439,52 @@ check("hidden collection relinked so work is visible", "H1" in bpy.context.scene
 r = executor.run("o = bwm.box('H2', (1, 1, 1))\nC.scene.collection.objects.unlink(o)")
 check("invisible new objects are reported", "NOT in the scene" in r.get("warning", ""), r)
 r = executor.run("o = bwm.box('H3', (1,1,1))\no.modifiers.new('SOLIDIFY', 'Solidify')")
-check("swapped modifier arguments caught", "swapped" in r["error"] and "H3" not in bpy.data.objects, r)
+check("swapped modifier arguments repaired", r["ok"] and bpy.data.objects["H3"].modifiers[0].type == "SOLIDIFY"
+      and any("swapped" in n for n in r["auto_repaired"]), r)
+
+# Fix A2: more mechanical slips are repaired, run, and reported
+REPAIRS = [
+    ("diffuse_color with 3 values", "m = bwm.material('RepA', (1, 0, 0))\nm.diffuse_color = (0.2, 0.4, 0.6)",
+     lambda: tuple(round(v, 1) for v in bpy.data.materials['RepA'].diffuse_color) == (0.2, 0.4, 0.6, 1.0)),
+    ("socket colour with 3 values", "m = bwm.material('RepB')\nb = next(n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')\n"
+     "b.inputs['Base Color'].default_value = (0.1, 0.2, 0.3)",
+     lambda: round(bpy.data.materials['RepB'].node_tree.nodes['Principled BSDF'].inputs[0].default_value[2], 1) == 0.3),
+    ("renamed Principled input", "m = bwm.material('RepC')\nb = next(n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')\n"
+     "b.inputs['Specular'].default_value = 0.7\nb.inputs['Emission'].default_value = (1, 1, 0, 1)",
+     lambda: round(bpy.data.materials['RepC'].node_tree.nodes['Principled BSDF'].inputs['Specular IOR Level'].default_value, 1) == 0.7),
+    ("removed 2.7x property skipped", "w = C.scene.world or D.worlds.new('W')\nw.light_settings.use_ambient_occlusion = True\n"
+     "bwm.box('AfterSkip', (1, 1, 1))", lambda: "AfterSkip" in bpy.data.objects),
+    ("obj.select = True", "o = bwm.box('Sel', (1, 1, 1))\no.select = True", lambda: bpy.data.objects['Sel'].select_get()),
+    ("engine id from 4.1", "C.scene.render.engine = 'BLENDER_EEVEE'", lambda: C_scene().render.engine == 'BLENDER_EEVEE_NEXT'),
+    ("enum in lower case", "o = bwm.box('Wire', (1, 1, 1))\no.display_type = 'wire'", lambda: bpy.data.objects['Wire'].display_type == 'WIRE'),
+    ("one number for a vector", "o = bwm.box('Sc', (1, 1, 1))\no.scale = 2", lambda: tuple(bpy.data.objects['Sc'].scale) == (2, 2, 2)),
+    ("operator keywords and name", "bpy.ops.mesh.primitive_cylinder_add(radius=0.2, height=3, segments=12, name='Pole')",
+     lambda: "Pole" in bpy.data.objects and round(bpy.data.objects['Pole'].dimensions.z, 1) == 3.0
+     and len(bpy.data.objects['Pole'].data.vertices) == 24),
+    ("modifier with type only, lower case", "o = bwm.box('ModT', (1, 1, 1))\no.modifiers.new(type='bevel')\no.modifiers.new('Subdivision')",
+     lambda: [m.type for m in bpy.data.objects['ModT'].modifiers] == ['BEVEL', 'SUBSURF']),
+    ("node by its label", "m = bwm.material('RepN')\nn = m.node_tree.nodes.new('Principled BSDF')\nn2 = m.node_tree.nodes.new('ShaderNodePrincipledBsdf')",
+     lambda: sum(1 for n in bpy.data.materials['RepN'].node_tree.nodes if n.type == 'BSDF_PRINCIPLED') == 3),
+    ("material_slots.append", "o = bwm.box('Slot', (1, 1, 1))\no.material_slots.append(bwm.material('RepS'))",
+     lambda: bpy.data.objects['Slot'].material_slots[0].material.name == 'RepS'),
+]
+
+
+def C_scene():
+    return bpy.context.scene
+
+
+for label, code, ok in REPAIRS:
+    r = executor.run(code)
+    check("repaired: " + label, r["ok"] and r.get("auto_repaired") and ok(), r)
+
+r = executor.run("m = bwm.material('RepL', (1, 0, 0))\nm.diffuse_color = (1, 1, 1)\nundefined_after_repair()")
+check("errors after a repair keep the model's line number", r["ok"] is False and "line 3" in r["error"]
+      and "undefined_after_repair" in r["error"], r)
+r = executor.run("o = C.scene.objects.get('Nope')\no.location = (1, 2, 3)")
+check("real mistakes are not hidden by repairs", r["ok"] is False and "NoneType" in r["error"], r)
+r = executor.run("o = bwm.box('RO', (1, 1, 1))\no.dimensions = (2, 2, 2)\nprint('dims', tuple(o.dimensions))")
+check("normal property sets are untouched", r["ok"] and "auto_repaired" not in r, r)
 
 # 7h. Values sent as text are converted using the tool schema; compaction never invents a code field
 from blendwme.agent import _coerce_types  # noqa: E402
