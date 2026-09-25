@@ -1,0 +1,843 @@
+"""The agent loop: the heart of BlendWMe.
+
+    you -> brief
+    loop:
+        notice any changes YOU made since the last step
+        ask the model what to do next (it may call several tools)
+        run each tool in Blender, send results back
+        Watch mode: wait for Next.  Teach mode: wait for you.
+    until the model calls finish (or you Stop)
+
+The conversation is kept between messages, so a follow-up like
+"make the roof red" continues the same project with full memory.
+"""
+
+import json
+import os
+import threading
+import time
+import traceback
+
+from . import bridge, coerce, executor, helpers, knowledge, llm, logs, look, prefs, prompts, scene_info, tools
+from .state import (ASKING, DONE, ERROR, IDLE, PAUSED, THINKING, WAIT_NEXT,
+                    WAIT_USER, WORKING, session)
+
+MAX_TOOL_RESULT = 6000
+MAX_CALLS_PER_TURN = 8
+KEEP_RECENT = 14          # newest messages kept in full
+CONTEXT_BUDGET = 110_000  # characters before older results are compacted
+
+
+_SEES_IMAGES = {}   # model id -> True/False, filled from the provider's model list
+
+
+class Stopped(Exception):
+    pass
+
+
+def _dump(obj):
+    text = json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":"))
+    if len(text) > MAX_TOOL_RESULT:
+        text = text[:MAX_TOOL_RESULT] + '..."[truncated]"'
+    return text
+
+
+class Agent:
+    def __init__(self):
+        self.messages = []
+        self.thread = None
+        self.config = {}
+        self.brief = ""
+        self.last_snapshot = None
+        self.mode_in_prompt = None
+        self.show_me_allowed = False
+        self.budget_start = 0
+        self.nudged = False
+        self.finished = False
+        self.fail_streak = 0
+        self.vision_broken = ""
+        self.vision_retried = False
+        self.trace = []          # timing and events for the full log
+        self.retry_entry = None  # the quiet "fixing a code error" log line
+        self.rescued = 0         # Python calls sent as tools and rescued
+        self.bad_tool_calls = 0
+        self.pending_images = []  # images for a vision-capable agent, sent after tool replies
+        self.agent_sees = False
+
+    # ------------------------------------------------------------------
+    # Called from the UI (main thread)
+    # ------------------------------------------------------------------
+    def is_running(self):
+        return self.thread is not None and self.thread.is_alive()
+
+    def send(self, text, config, new_task=False):
+        text = (text or "").strip()
+        if not text:
+            return
+        session.add("you", text)
+        if self.is_running():
+            # The agent reads this between steps (steering or answering a question).
+            session.inbox.put(text)
+            session.wake()
+            return
+        self.config = config
+        session.set_card(None)
+        session.set_pointers([])
+        if new_task or not self.messages:
+            self._new_conversation(text)
+            self.last_snapshot = scene_info.snapshot()
+        else:
+            # Keep the old snapshot: edits you made between messages get reported.
+            self.messages.append({"role": "user", "content": text})
+        self.budget_start = session.tool_steps
+        self.finished = False
+        self.fail_streak = 0
+        self.vision_broken = ""
+        self.vision_retried = False
+        self.retry_entry = None
+        self._trace("user", text=text[:200])
+        session.stop_flag.clear()
+        session.pause_flag.clear()
+        session.signal.clear()
+        self.thread = threading.Thread(target=self._run, name="BlendWMe agent", daemon=True)
+        self.thread.start()
+
+    def reset(self):
+        self.stop()
+        self.messages = []
+        self.brief = ""
+        session.reset_conversation()
+
+    def stop(self):
+        session.stop_flag.set()
+        session.wake()
+
+    def _new_conversation(self, text):
+        self.brief = text
+        self.trace = []
+        self.mode_in_prompt = session.mode
+        scene = scene_info.get_scene_info()
+        refs = [p for p in self.config.get("references", []) if os.path.isfile(p)]
+        intro = text + "\n\n[Current scene]\n" + _dump(scene)
+        if refs:
+            intro += f"\n\n[The user attached {len(refs)} reference image(s). Use look with compare_reference=true to see them.]"
+        self.messages = [
+            {"role": "system", "content": self._system_prompt()},
+            {"role": "user", "content": intro},
+        ]
+
+    def _system_prompt(self):
+        return prompts.build_system(session.mode, session.level,
+                                    self.config.get("blender_version", "4.2"),
+                                    knowledge.skill_index(), session.build_style)
+
+    def _trace(self, kind, **data):
+        self.trace.append(dict({"t": round(time.time(), 2), "type": kind}, **data))
+
+    def save_log(self):
+        """Write the full conversation to a file. Returns the path or ''."""
+        if not self.messages:
+            return ""
+        info = {"title": self.brief[:60], "version": "1.0.4",
+                "blender": self.config.get("blender_version"), "model": self.config.get("model"),
+                "vision_model": self.config.get("vision_model") or "(auto)",
+                "reasoning": self.config.get("reasoning"), "mode": session.mode, "level": session.level,
+                "status": session.status, "model_calls": session.calls, "tokens": session.tokens,
+                "steps": len(session.steps)}
+        try:
+            path = logs.save(self.messages, self.trace, info, self.config.get("log_folder", ""),
+                             self.config.get("api_key", ""))
+            session.last_log = path
+            return path
+        except OSError as e:
+            session.add("error", f"Could not save the log: {e}")
+            return ""
+
+    # ------------------------------------------------------------------
+    # The loop (background thread)
+    # ------------------------------------------------------------------
+    def _run(self):
+        try:
+            self._loop()
+        finally:
+            if self.config.get("auto_save_logs", True):
+                self.save_log()
+
+    def _loop(self):
+        client = llm.Client(self.config.get("api_key"), self.config.get("base_url"))
+        self.agent_sees = self._agent_sees_images(client)
+        try:
+            while not self.finished:
+                self._check_stop()
+                self._wait_if_paused()
+                self._sync_mode()
+                self._notice_user_changes()
+                self._read_inbox()
+                self._check_budget()
+
+                session.set_status(THINKING)
+                message = self._ask_model(client)
+                finish_reason = message.pop("_finish_reason", None)
+                self.messages.append(message)
+                if message.get("content"):
+                    session.add("ai", message["content"])
+
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    if finish_reason == "length":
+                        self.messages.append({"role": "user", "content":
+                            "Your reply was cut off by the length limit. Continue with a smaller step."})
+                        continue
+                    if not self.nudged and session.mode != "TEACH":
+                        # Open models sometimes describe a plan and stop. Nudge once.
+                        self.nudged = True
+                        self.messages.append({"role": "user", "content":
+                            "Continue the work using your tools. Call finish when the brief is "
+                            "complete, or ask_user if you truly need an answer."})
+                        continue
+                    break  # the model is waiting for the user
+                self.nudged = False
+
+                # If you paused while the model was thinking, its plan may be stale.
+                if session.pause_flag.is_set():
+                    self._wait_if_paused()
+                    if self._notice_user_changes(defer=True):
+                        for call in calls:
+                            self._tool_reply(call, {"skipped": "The user paused and edited the scene "
+                                                    "before this ran. Re-plan from the current scene."})
+                        self._flush_deferred()
+                        continue
+
+                calls = self._rescue_python_calls(calls, client)
+                for n, call in enumerate(calls):
+                    self._check_stop()
+                    if n >= MAX_CALLS_PER_TURN:
+                        self._tool_reply(call, {"skipped": f"Too many tool calls at once. Only the first "
+                                                           f"{MAX_CALLS_PER_TURN} ran. Group work into run_python."})
+                        continue
+                    result = self._dispatch(call, client)
+                    self._tool_reply(call, result)
+                    if self.finished:
+                        break
+                self._send_pending_images()
+            if not self.finished and session.status not in (ERROR,):
+                session.set_status(IDLE)
+        except Stopped:
+            session.set_card(None)
+            session.set_pointers([])
+            session.add("info", "Stopped. Everything already built stays in your scene.")
+            session.set_status(IDLE)
+            self._close_open_calls()
+        except llm.LLMError as e:
+            self._trace("error", error=str(e)[:500])
+            session.last_error = str(e)
+            session.add("error", str(e))
+            session.set_status(ERROR)
+            self._close_open_calls()
+        except Exception as e:  # never crash Blender
+            traceback.print_exc()
+            session.last_error = f"{type(e).__name__}: {e}"
+            self._trace("error", error=traceback.format_exc()[-1500:])
+            session.add("error", session.last_error)
+            session.set_status(ERROR)
+            self._close_open_calls()
+
+    # -- model ------------------------------------------------------------
+    def _ask_model(self, client):
+        self._compact()
+        delays = [3, 8, 20]
+        for attempt in range(len(delays) + 1):
+            try:
+                t0 = time.time()
+                message, usage = client.chat(
+                    self.config.get("model"), self.messages, tools.for_mode(session.mode),
+                    temperature=self.config.get("temperature", 0.4),
+                    max_tokens=self.config.get("max_tokens", 8192),
+                    reasoning=self.config.get("reasoning", "LOW"))
+                session.calls += 1
+                session.tokens += int(usage.get("total_tokens") or 0)
+                session.last_latency = round(time.time() - t0, 1)
+                self._trace("model", seconds=session.last_latency,
+                            tokens=int(usage.get("total_tokens") or 0),
+                            finish=message.get("_finish_reason"),
+                            tools=[c["function"]["name"] for c in message.get("tool_calls") or []])
+                return message
+            except llm.LLMError as e:
+                text = str(e).lower()
+                if e.status == 400 and any(w in text for w in ("context", "too long", "maximum", "token")) \
+                        and attempt == 0:
+                    session.add("info", "The conversation got too long. Shortening older steps and retrying.")
+                    self._compact(force=True)
+                    continue
+                retryable = e.status in (None, 429, 500, 502, 503, 504)
+                if not retryable or attempt == len(delays):
+                    raise
+                self._trace("error", error=str(e)[:300])
+                session.add("info", f"Model busy ({e.status or 'network'}). Retrying in {delays[attempt]}s.")
+                self._sleep(delays[attempt])
+
+    def _tool_reply(self, call, result):
+        if isinstance(result, dict):
+            result = {k: v for k, v in result.items() if not k.startswith("_")}
+        self.messages.append({"role": "tool", "tool_call_id": call["id"],
+                              "content": result if isinstance(result, str) else _dump(result)})
+
+    def _close_open_calls(self):
+        """Every tool call needs an answer, or the next request is rejected."""
+        if not self.messages:
+            return
+        last = self.messages[-1]
+        if last.get("role") == "assistant" and last.get("tool_calls"):
+            for call in last["tool_calls"]:
+                self._tool_reply(call, {"skipped": "The task was stopped before this ran."})
+        else:
+            # Calls answered partly: find the last assistant call message.
+            for i in range(len(self.messages) - 1, -1, -1):
+                m = self.messages[i]
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    answered = {x.get("tool_call_id") for x in self.messages[i + 1:]}
+                    for call in m["tool_calls"]:
+                        if call["id"] not in answered:
+                            self._tool_reply(call, {"skipped": "The task was stopped before this ran."})
+                    break
+
+    def _agent_sees_images(self, client):
+        """True when the agent model itself accepts images (then it looks with its own eyes)."""
+        model = (self.config.get("model") or "").lower()
+        if not self.config.get("vision_enabled", True) or not self.config.get("agent_vision", True):
+            return False
+        if model not in _SEES_IMAGES:
+            try:
+                _SEES_IMAGES[model] = any(m["id"].lower() == model and m["vision"]
+                                          for m in client.list_models_detailed())
+            except llm.LLMError:
+                return False
+            if _SEES_IMAGES[model]:
+                session.add("info", "This model can see, so it judges the pictures with its own eyes.")
+        return _SEES_IMAGES[model]
+
+    def _send_pending_images(self):
+        if not self.pending_images:
+            return
+        content = []
+        for item in self.pending_images:
+            content.append({"type": "text", "text": item["caption"]})
+            for path in item["paths"]:
+                content.append({"type": "image_url", "image_url": {"url": llm.image_data_url(path)}})
+        content.append({"type": "text", "text": prompts.SELF_REVIEW.format(brief=self.brief[:600])})
+        self.messages.append({"role": "user", "content": content})
+        self.pending_images = []
+
+    def _drop_old_images(self):
+        """Keep only the newest picture in the conversation. Old ones become a short note."""
+        seen_latest = False
+        for m in reversed(self.messages):
+            if m.get("role") != "user" or not isinstance(m.get("content"), list):
+                continue
+            if not seen_latest:
+                seen_latest = True
+                continue
+            m["content"] = [p if p.get("type") == "text" else {"type": "text", "text": "[earlier image removed]"}
+                            for p in m["content"]]
+
+    @staticmethod
+    def _size(message):
+        content = message.get("content")
+        if isinstance(content, list):
+            return sum(len(p.get("text", "")) for p in content) + 2000 * sum(1 for p in content if p.get("type") == "image_url")
+        return len(json.dumps(message, default=str))
+
+    def _compact(self, force=False):
+        """Keep long sessions inside the model's context window."""
+        self._drop_old_images()
+        total = sum(self._size(m) for m in self.messages)
+        if total < CONTEXT_BUDGET and not force:
+            return
+        cutoff = len(self.messages) - (6 if force else KEEP_RECENT)
+        for m in self.messages[2:max(2, cutoff)]:
+            if m.get("role") == "tool" and len(m.get("content", "")) > 400:
+                m["content"] = m["content"][:400] + '..."[older result shortened]"'
+            if m.get("role") == "assistant":
+                for call in m.get("tool_calls") or []:
+                    fn = call["function"]
+                    if len(fn["arguments"]) > 600:
+                        try:
+                            args = json.loads(fn["arguments"], strict=False)
+                            if "code" in args:   # only shorten real code, never invent a code field
+                                code = str(args["code"])
+                                args["code"] = f"[{code.count(chr(10)) + 1} lines of earlier code omitted]"
+                                fn["arguments"] = json.dumps(args)
+                        except ValueError:
+                            fn["arguments"] = json.dumps({"note": "earlier arguments omitted"})
+
+    # -- user interaction -------------------------------------------------
+    def _check_stop(self):
+        if session.stop_flag.is_set():
+            raise Stopped()
+
+    def _sleep(self, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            self._check_stop()
+            time.sleep(0.2)
+
+    def _wait_if_paused(self, card=None):
+        if not session.pause_flag.is_set():
+            return
+        previous = session.status
+        previous_card = session.card
+        session.set_status(PAUSED)
+        session.set_card(card or {"kind": "pause", "title": "You have control",
+                                  "text": "Edit anything you like. Press Resume and I will continue from your version."})
+        while session.pause_flag.is_set():
+            self._check_stop()
+            session.signal.wait(0.3)
+            session.signal.clear()
+        session.set_card(previous_card)
+        session.set_status(previous if previous != PAUSED else THINKING)
+
+    def _notice_user_changes(self, defer=False):
+        current = bridge.call(scene_info.snapshot)
+        lines, changed = scene_info.diff(self.last_snapshot or {}, current)
+        self.last_snapshot = current
+        if not lines:
+            return False
+        bridge.call(scene_info.tag_author, changed["added"] + changed["modified"], "user")
+        session.add("info", "I noticed your changes: " + "; ".join(lines[:4])
+                    + (" ..." if len(lines) > 4 else ""))
+        note = ("[The user changed the scene themselves. These are intentional creative decisions. "
+                "Keep them and build around them.]\n" + "\n".join(lines[:40]))
+        if defer:
+            self._deferred = note
+        else:
+            self.messages.append({"role": "user", "content": note})
+        return True
+
+    def _flush_deferred(self):
+        note = getattr(self, "_deferred", None)
+        if note:
+            self.messages.append({"role": "user", "content": note})
+            self._deferred = None
+
+    def _read_inbox(self):
+        texts = []
+        while not session.inbox.empty():
+            texts.append(session.inbox.get_nowait())
+        if texts:
+            self.messages.append({"role": "user", "content":
+                "[Message from the user while you work]\n" + "\n".join(texts)})
+
+    def _sync_mode(self):
+        if self.messages:
+            self.messages[0]["content"] = self._system_prompt()
+        if self.mode_in_prompt and self.mode_in_prompt != session.mode:
+            self.messages.append({"role": "user", "content": prompts.mode_switch_note(session.mode)})
+            session.add("info", f"Switched to {session.mode.title()} mode.")
+        self.mode_in_prompt = session.mode
+
+    def _check_budget(self):
+        limit = int(self.config.get("max_steps", 60))
+        if session.tool_steps - self.budget_start >= limit:
+            session.add("info", f"Reached the {limit}-step limit. Press Resume to allow more.")
+            session.pause_flag.set()
+            self._wait_if_paused()
+            self.budget_start = session.tool_steps
+
+    def _wait_signal(self, timeout=None):
+        """Wait for Next/Done/answer. Returns False on timeout."""
+        session.signal.clear()
+        end = None if timeout is None else time.time() + timeout
+        while True:
+            self._check_stop()
+            if session.signal.wait(0.25):
+                session.signal.clear()
+                if session.pause_flag.is_set():
+                    self._wait_if_paused()
+                    continue
+                return True
+            if end is not None and time.time() >= end:
+                return False
+
+    # ------------------------------------------------------------------
+    # Tools
+    # ------------------------------------------------------------------
+    def _rescue_python_calls(self, calls, client):
+        """Run Python-as-tool-calls (bwm.mesh, bpy.ops...) as ONE real step. Returns the other calls."""
+        python = [c for c in calls if coerce.is_python_call(c["function"]["name"])]
+        if not python:
+            return calls
+        parsed = []
+        for c in python:
+            try:
+                parsed.append((c["function"]["name"], llm.parse_arguments(c["function"]["arguments"])))
+            except ValueError:
+                parsed.append((c["function"]["name"], {}))
+        import bpy
+        code, notes = coerce.to_code(parsed, helpers, bpy)
+        self.rescued += len(python)
+        session.add("info", f"The model called {len(python)} Python function(s) as tools. Running them as one step.")
+        self._trace("rescued_calls", count=len(python), names=sorted({n for n, _ in parsed})[:10])
+        result = self._dispatch({"id": python[0]["id"], "function": {
+            "name": "run_python",
+            "arguments": json.dumps({"title": "Converted helper calls", "code": code,
+                                     "explain": "Ran the helper calls the model sent as tools."})}}, client)
+        lesson = ("IMPORTANT: bwm.*, bpy.* and bmesh.* are Python, not tools. BlendWMe ran these "
+                  f"{len(python)} call(s) for you as this Python step:\n{code[:1500]}\n"
+                  "From now on, put Python inside run_python(title, explain, code).")
+        if notes:
+            lesson += "\nNotes: " + "; ".join(notes)
+        if isinstance(result, dict):
+            result = dict(result, lesson=lesson)
+        for i, c in enumerate(python):
+            self._tool_reply(c, result if i == 0 else {"ran_together_with": python[0]["id"]})
+        return [c for c in calls if c not in python]
+
+    def _dispatch(self, call, client):
+        name = call["function"]["name"]
+        try:
+            args = llm.parse_arguments(call["function"]["arguments"])
+        except ValueError as e:
+            return {"error": str(e) + " Send the tool call again with valid JSON arguments."}
+        session.tool_steps += 1
+        args = _coerce_types(name, args)
+        handler = getattr(self, "_tool_" + name, None)
+        available = [t["function"]["name"] for t in tools.for_mode(session.mode)]
+        if handler is None or name not in available:
+            self.bad_tool_calls += 1
+            if handler is None:
+                return {"error": f"There is no tool called {name!r}. The only tools are: {', '.join(available)}. "
+                                 "To run Python, call run_python with your code in its code argument, e.g. "
+                                 "run_python(title='Walls', explain='Main wall block', "
+                                 "code=\"bwm.box('Walls', (4, 3, 2.4), (0, 0, 1.45))\")."}
+            return {"error": f"{name!r} cannot be used in {session.mode} mode. Tools here: {', '.join(available)}."}
+        session.set_status(WORKING)
+        t0 = time.time()
+        try:
+            result = handler(args, client)
+            ok = not (isinstance(result, dict) and (result.get("error") or result.get("ok") is False))
+            self._trace("tool", tool=name, seconds=round(time.time() - t0, 2), ok=ok)
+            return result
+        except Stopped:
+            raise
+        except Exception as e:  # a tool problem goes back to the model; it never ends the task
+            self._trace("tool_error", tool=name, error=f"{type(e).__name__}: {e}")
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    def _tool_get_scene_info(self, args, client):
+        return bridge.call(scene_info.get_scene_info)
+
+    def _tool_get_object_info(self, args, client):
+        return bridge.call(scene_info.get_object_info, str(args.get("name", "")))
+
+    def _tool_inspect_api(self, args, client):
+        return bridge.call(knowledge.inspect_api, str(args.get("path", "")))
+
+    def _tool_load_skill(self, args, client):
+        name = str(args.get("name", ""))
+        session.add("info", f"Reading skill card: {name}")
+        return knowledge.load_skill(name)
+
+    def _tool_run_python(self, args, client):
+        mode = session.mode
+        if mode == "TEACH" and not self.show_me_allowed:
+            return {"error": "In Teach mode the user does the work. Use teach_step. "
+                             "run_python is only allowed right after teach_step returns show_me."}
+        self.show_me_allowed = False
+        title = str(args.get("title") or "Step")[:80]
+        explain = str(args.get("explain") or "")
+        code = str(args.get("code") or "")
+        part = args.get("part")
+        part = int(part) if isinstance(part, (int, float)) or str(part).isdigit() else None
+        session.set_card({"kind": "work", "title": title, "text": explain,
+                          "step": len(session.steps) + 1, **self._plan_progress()})
+        result = bridge.call(executor.run, code, title)
+        changed = result.get("_changed", {})
+        session.steps.append({"title": title, "explain": explain, "code": code, "ok": result["ok"]})
+        self.last_snapshot = bridge.call(scene_info.snapshot)
+        if result["ok"]:
+            if self.fail_streak and self.retry_entry is not None:
+                # Quietly close the earlier "fixing" note instead of leaving red errors around.
+                self.retry_entry["text"] = f"{title}: fixed a code error ({self.fail_streak + 1} tries)"
+                self.retry_entry["detail"] = ""
+                session.changed_flag = True
+            self.retry_entry = None
+            self.fail_streak = 0
+            session.add("step", title, detail=explain, ok=True)
+            if part:
+                session.tick_plan(part)
+        else:
+            self.fail_streak += 1
+            short = result.get("error", "").strip().splitlines()[-1][:160]
+            self._trace("step_failed", title=title, error=result.get("error", "")[:600])
+            if self.fail_streak <= 2:
+                text = f"{title}: fixing a code error"
+                if self.retry_entry is None:
+                    self.retry_entry = session.add("retry", text, detail=short)
+                else:
+                    self.retry_entry.update(text=text + f" (try {self.fail_streak + 1})", detail=short)
+                    session.changed_flag = True
+            else:
+                session.add("error", f"{title} keeps failing: {short}")
+            if self.fail_streak == 2:
+                result["stuck_hint"] = ("This failed twice in a row. Change approach: split it into smaller "
+                                        "steps, use bwm.box / bwm.mesh instead of custom code, or call inspect_api "
+                                        "to check names before trying again.")
+            elif self.fail_streak >= 4:
+                # Do not burn tokens on a loop. Hand the wheel to the user.
+                session.add("info", "I'm stuck on this step, so I paused. Fix it yourself or press Resume "
+                                    "and I will try a different way.")
+                session.pause_flag.set()
+                self._wait_if_paused({"kind": "ask", "title": f"I'm stuck: {title}",
+                                      "text": "This step failed 4 times. Error: " + short
+                                              + "  Edit the scene or tell me what to do, then press Resume."})
+                self.fail_streak = 0
+                self.retry_entry = None
+                result["user"] = ("You failed 4 times and were paused. The user has now resumed. Any message "
+                                  "or scene change they made follows. Try a clearly different approach.")
+        targets = (changed.get("added", []) + changed.get("modified", []))[:6]
+        if mode in ("WATCH", "TEACH") and result["ok"]:
+            session.set_pointers([{"object": n} for n in targets])
+            session.set_card({"kind": "watch", "title": title, "text": explain,
+                              "step": len(session.steps), **self._plan_progress()})
+            session.set_status(WAIT_NEXT)
+            self._wait_signal(timeout=session.watch_auto or None)
+            session.set_pointers([])
+            result["user"] = "The user watched this step and pressed Next."
+        elif mode == "AUTO" and session.build_style == "PIECE" and result["ok"] and targets:
+            # Let the new part "land" visibly before the next one.
+            session.set_pointers([{"object": n} for n in targets[:3]])
+            self._sleep(0.9)
+            session.set_pointers([])
+        if self.plan_needed() and result["ok"]:
+            result["reminder"] = "Call plan first so the user can follow the build."
+        return result
+
+    def _plan_progress(self):
+        if not session.plan:
+            return {}
+        done = sum(1 for p in session.plan if p["done"])
+        return {"progress": f"PART {min(done + 1, len(session.plan))} OF {len(session.plan)}"}
+
+    def plan_needed(self):
+        return session.mode == "AUTO" and not session.plan and len(session.steps) == 1
+
+    def _tool_plan(self, args, client):
+        parts = [str(p) for p in (args.get("parts") or []) if str(p).strip()]
+        if not parts:
+            return {"error": "Give the parts as a list of short strings."}
+        session.set_plan(parts)
+        session.add("plan", "Plan: " + "; ".join(p.split(",")[0][:40] for p in parts[:12]))
+        return {"ok": True, "parts": len(parts),
+                "note": "Build them in order and pass part=<number> to run_python."}
+
+    def _tool_look(self, args, client):
+        if not self.config.get("vision_enabled", True):
+            return {"error": "Vision is switched off. Check facts with get_scene_info (bounds, sizes)."}
+        if self.vision_broken:
+            return {"error": "Vision is unavailable this session (" + self.vision_broken + "). "
+                             "Check contact, gaps and sizes with get_scene_info bounds instead."}
+        mode = args.get("mode") or "angles"
+        info = bridge.call(look.capture, mode, args.get("targets"), args.get("views"),
+                           args.get("shading"))
+        if info.get("error"):
+            return info
+        session.last_capture = info["path"]
+        images = [info["path"]]
+        refs = []
+        if args.get("compare_reference"):
+            refs = [p for p in self.config.get("references", []) if os.path.isfile(p)][:2]
+            images += refs
+        layout = ""
+        if mode == "angles":
+            layout = ("It is a contact sheet of views (" + ", ".join(info.get("views", []))
+                      + "), " + info.get("layout", "") + ". Front looks along +Y, right looks along -X.")
+        ref_text = (f"The next {len(refs)} image(s) are the user's REFERENCE. Compare the scene to them."
+                    if refs else "")
+        prompt = prompts.VISION.format(layout=layout, refs=ref_text, brief=self.brief[:1500],
+                                       question=args.get("question", "Judge the result."))
+        session.add("look", f"Looking at the scene ({mode})")
+        if self.agent_sees:
+            caption = (f"Picture from look ({mode}: " + ", ".join(info.get("views") or [mode]) + "). " + layout
+                       + (" " + ref_text if refs else "") + " Question: " + str(args.get("question", "")))
+            self.pending_images.append({"caption": caption, "paths": images})
+            return {"view": mode, "views": info.get("views"),
+                    "image": "The picture is attached in the next message. Judge it yourself."}
+        model = self._vision_model(client)
+        if not model:
+            return {"error": "No vision model is available on this account. "
+                             "Check contact, gaps and sizes with get_scene_info bounds instead."}
+        t0 = time.time()
+        try:
+            description = client.describe_image(model, prompt, images)
+        except llm.LLMError as e:
+            if e.status in (400, 404) and not self.vision_retried:
+                # The saved model does not exist or rejects images: find another one once.
+                self.vision_retried = True
+                self.config["vision_model"] = ""
+                model = self._vision_model(client, exclude=model)
+                if model:
+                    try:
+                        description = client.describe_image(model, prompt, images)
+                    except llm.LLMError as e2:
+                        return self._vision_failed(e2)
+                else:
+                    return self._vision_failed(e)
+            else:
+                return self._vision_failed(e)
+        if not description and not self.vision_retried:
+            self.vision_retried = True
+            self.config["vision_model"] = ""
+            other = self._vision_model(client, exclude=model)
+            if other:
+                try:
+                    description, model = client.describe_image(other, prompt, images), other
+                except llm.LLMError as e:
+                    return self._vision_failed(e)
+        self._trace("vision", model=model, seconds=round(time.time() - t0, 1))
+        return {"view": mode, "views": info.get("views"), "vision_model": model,
+                "vision_report": description or "(the vision model returned nothing)"}
+
+    def _vision_model(self, client, exclude=""):
+        """The configured vision model, or one discovered from the account's catalogue."""
+        current = self.config.get("vision_model", "")
+        if current and current != exclude and "nemotron" not in current.lower():
+            return current
+        try:
+            models = client.list_models_detailed()
+        except llm.LLMError:
+            return ""
+        models = [m for m in models if m["id"] != exclude]
+        chosen = llm.pick_vision_model(models)
+        if chosen:
+            self.config["vision_model"] = chosen
+            session.add("info", f"Using {chosen} as BlendWMe's eyes.")
+
+            def save():
+                p = prefs.addon_prefs()
+                if p:
+                    p.vision_model = chosen
+            try:
+                bridge.call(save)
+            except Exception:
+                pass
+        return chosen
+
+    def _vision_failed(self, error):
+        """Vision trouble must never stop the build. Carry on without eyes."""
+        self.vision_broken = str(error)[:120]
+        session.add("error", "Vision failed, continuing without it: " + str(error)[:160])
+        return {"error": "Vision is unavailable (" + str(error)[:160] + "). Continue the work. "
+                         "Check contact, gaps and sizes with get_scene_info bounds instead."}
+
+    def _tool_point_at(self, args, client):
+        pointer = {k: args[k] for k in ("object", "location", "editor", "region", "label") if args.get(k)}
+        session.set_pointers([pointer] if pointer else [])
+        return {"ok": True}
+
+    def _tool_teach_step(self, args, client):
+        title = str(args.get("title") or "Your turn")
+        session.set_card({"kind": "teach", "title": title,
+                          "text": str(args.get("instruction") or ""),
+                          "why": str(args.get("why") or "")})
+        pointers = []
+        if args.get("point_object"):
+            pointers.append({"object": args["point_object"]})
+        if args.get("point_editor"):
+            pointers.append({"editor": args["point_editor"], "region": args.get("point_region") or "WINDOW"})
+        session.set_pointers(pointers)
+        session.add("step", "Your turn: " + title, detail=args.get("instruction", ""))
+        session.teach_choice = None
+        session.set_status(WAIT_USER)
+        check = str(args.get("check") or "").strip()
+        passes = 0
+        outcome = None
+        while outcome is None:
+            if self._wait_signal(timeout=0.5):
+                outcome = {"done": "user_said_done", "show_me": "show_me",
+                           "skip": "skipped"}.get(session.teach_choice, "user_said_done")
+                break
+            if check:
+                ok = bridge.call(_eval_check, check)
+                passes = passes + 1 if ok else 0
+                if passes >= 2:   # stable for about a second
+                    outcome = "completed"
+        session.set_pointers([])
+        current = bridge.call(scene_info.snapshot)
+        lines, changed = scene_info.diff(self.last_snapshot or {}, current)
+        bridge.call(scene_info.tag_author, changed["added"] + changed["modified"], "user")
+        self.last_snapshot = current
+        if outcome == "show_me":
+            self.show_me_allowed = True
+        label = {"completed": "Nice, step done.", "user_said_done": "Marked done.",
+                 "show_me": "Showing you how.", "skipped": "Skipped."}[outcome]
+        session.add("info", label)
+        result = {"result": outcome, "user_changes": lines[:30] or ["(no object-level changes)"]}
+        if check:
+            result["check_passed"] = bool(bridge.call(_eval_check, check))
+        return result
+
+    def _tool_ask_user(self, args, client):
+        question = str(args.get("question") or "")
+        session.add("ai", question)
+        session.set_card({"kind": "ask", "title": "Question", "text": question})
+        session.set_status(ASKING)
+        while session.inbox.empty():
+            self._wait_signal()
+        answers = []
+        while not session.inbox.empty():
+            answers.append(session.inbox.get_nowait())
+        session.set_card(None)
+        return {"answer": "\n".join(answers)}
+
+    def _tool_finish(self, args, client):
+        summary = str(args.get("summary") or "Done.")
+        session.add("ai", summary)
+        session.set_card({"kind": "done", "title": "Done", "text": summary})
+        session.set_pointers([])
+        session.set_status(DONE)
+        self.finished = True
+        return {"ok": True}
+
+
+def _coerce_types(name, args):
+    """Fix values sent as text ("2.0", "[1, 2]", "true") using the tool's schema.
+
+    MCP servers get this for free from their schema validation. Open models on
+    OpenAI-style endpoints sometimes send every value as a string.
+    """
+    schema = next((t["function"]["parameters"]["properties"] for t in tools.ALL
+                   if t["function"]["name"] == name), None)
+    if not schema or not isinstance(args, dict):
+        return args
+    fixed = dict(args)
+    for key, value in args.items():
+        want = (schema.get(key) or {}).get("type")
+        if not isinstance(value, str) or want in (None, "string"):
+            continue
+        try:
+            if want == "integer":
+                fixed[key] = int(float(value))
+            elif want == "number":
+                fixed[key] = float(value)
+            elif want == "boolean":
+                fixed[key] = value.strip().lower() in ("true", "1", "yes")
+            elif want in ("array", "object"):
+                fixed[key] = json.loads(value)
+        except (ValueError, TypeError):
+            pass
+    return fixed
+
+
+def _eval_check(expression):
+    import bpy
+    try:
+        return bool(eval(expression, {"bpy": bpy, "C": bpy.context, "D": bpy.data,
+                                      "__builtins__": {"any": any, "all": all, "len": len,
+                                                       "abs": abs, "round": round, "min": min,
+                                                       "max": max, "sum": sum, "next": next,
+                                                       "True": True, "False": False}}))
+    except Exception:
+        return False
+
+
+agent = Agent()
