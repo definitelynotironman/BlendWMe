@@ -30,6 +30,7 @@ CONTEXT_BUDGET = 110_000  # characters before older results are compacted
 REVIEW_FIRST = 3          # successful build steps before the first art director review
 REVIEW_FIRST_WITH_REF = 1  # ... when the user gave reference images (match them early)
 REVIEW_EVERY = 4          # successful build steps between reviews
+REVIEW_MAX = 3            # periodic reviews per task (plus one final check): critique must converge
 STUCK_FAILS = 4           # failures of the SAME step before handing the wheel to the user
 STUCK_PRECHECK = 6        # pre-check rejections (nothing ran) of the same step before that
 
@@ -85,6 +86,7 @@ class Agent:
         self.final_reviewed = False
         self.ref_spec = ""
         self.spec_pending = False
+        self.plan_done_noted = False
 
     # ------------------------------------------------------------------
     # Called from the UI (main thread)
@@ -150,6 +152,7 @@ class Agent:
             {"role": "user", "content": intro},
         ]
         self.ok_steps = self.reviewed_at = self.reviews = 0
+        self.plan_done_noted = False
         self.ref_spec = ""
         self.spec_pending = bool(refs)
 
@@ -251,6 +254,7 @@ class Agent:
                         break
                 if not self.finished:
                     self._maybe_review(client)
+                    self._maybe_wrap_up()
                 self._send_pending_images()
             if not self.finished and session.status not in (ERROR,):
                 session.set_status(IDLE)
@@ -687,9 +691,10 @@ class Agent:
         return session.mode == "AUTO" and not session.plan and len(session.steps) == 1
 
     def _tool_plan(self, args, client):
-        parts = [str(p) for p in (args.get("parts") or []) if str(p).strip()]
+        parts = _plan_parts(args)
         if not parts:
-            return {"error": "Give the parts as a list of short strings."}
+            return {"error": "Give the parts as a list of short strings, e.g. "
+                             "plan(parts=[\"<part> <size> m on <host>\", \"<next part> ...\"])."}
         session.set_plan(parts)
         session.add("plan", "Plan: " + "; ".join(p.split(",")[0][:40] for p in parts[:12]))
         return {"ok": True, "parts": len(parts),
@@ -814,7 +819,19 @@ class Agent:
             return
         if self.reviews > 0 and self.ok_steps - self.reviewed_at < REVIEW_EVERY:
             return
+        if self.reviews >= REVIEW_MAX:
+            return          # enough critique; the final check before finish still happens
         self._review(client, f"after {self.ok_steps} build steps")
+
+    def _maybe_wrap_up(self):
+        """Once every plan part is built, say so plainly, so the model finishes instead of polishing forever."""
+        if session.mode != "AUTO" or self.plan_done_noted or not session.plan:
+            return
+        if all(p["done"] for p in session.plan):
+            self.plan_done_noted = True
+            self.messages.append({"role": "user", "content":
+                f"[All {len(session.plan)} plan parts are built. Fix only clear problems from the latest review "
+                "(missing parts, floating or intersecting parts), then call finish. Do not start new polish rounds.]"})
 
     def _review(self, client, when):
         """Capture the scene from several angles and add an art director review. Returns its text."""
@@ -959,6 +976,36 @@ class Agent:
         session.set_status(DONE)
         self.finished = True
         return {"ok": True}
+
+
+def _plan_parts(args):
+    """The plan's parts, however the model sent them.
+
+    Nemotron sent plan(title=..., style=..., steps="[\\"...\\", ...]") 15 times in one run and was
+    rejected every time. parts, steps, items or plan are accepted, as a list, a JSON string
+    or one part per line; dicts become their text.
+    """
+    value = None
+    for key in ("parts", "steps", "items", "plan", "tasks"):
+        if args.get(key):
+            value = args[key]
+            break
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            value = json.loads(text)
+        except ValueError:
+            value = [line.strip(" -*0123456789.)\t") for line in text.splitlines()]
+    if isinstance(value, dict):
+        value = list(value.values())
+    out = []
+    for p in value or []:
+        if isinstance(p, dict):
+            p = p.get("name") or p.get("part") or p.get("title") or " ".join(str(v) for v in p.values())
+        p = str(p).strip()
+        if p:
+            out.append(p)
+    return out
 
 
 def _step_key(title, part):

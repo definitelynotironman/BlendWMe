@@ -432,6 +432,18 @@ users = [m["content"] for m in agent.messages if m["role"] == "user" and isinsta
 check("without references the first review comes after 3 steps",
       any(u.startswith("[Art director review after 3 build steps") for u in users)
       and not any("[Reference spec" in u for u in users))
+SCRIPT[:] = ([call("plan", parts=["A", "B"])] + [call("run_python", title=f"P{i}", explain="x", part=min(i, 2),
+                                                       code=f"bwm.box('CV_{i}', (1, 1, 1), ({i * 2}, 9, 0.5))") for i in range(1, 21)]
+             + [call("finish", summary="x"), call("finish", summary="done")])
+agent.send("Converge", dict(cfg_ref, references=[]), new_task=True)
+pump_until(lambda: not agent.is_running())
+users = [m["content"] for m in agent.messages if m["role"] == "user" and isinstance(m["content"], str)]
+periodic = [u for u in users if u.startswith("[Art director review after")]
+check("critique converges: at most 3 periodic reviews per task", len(periodic) == 3, len(periodic))
+check("model told once when every plan part is built", sum(u.startswith("[All 2 plan parts are built") for u in users) == 1)
+SCRIPT[:] = [step(i) for i in range(31, 34)] + [call("finish", summary="done")]
+agent.send("Build without a reference again", dict(cfg_ref, references=[]), new_task=True)
+pump_until(lambda: not agent.is_running())
 check("no extra final check when nothing changed since the last review", session.status == state.DONE
       and not any("not_finished_yet" in m["content"] for m in agent.messages if m["role"] == "tool"))
 
@@ -567,6 +579,12 @@ check("normal property sets are untouched", r["ok"] and "auto_repaired" not in r
 
 # 7h. Values sent as text are converted using the tool schema; compaction never invents a code field
 from blendwme.agent import _coerce_types  # noqa: E402
+from blendwme.agent import _plan_parts  # noqa: E402
+check("plan accepts steps= as a JSON string (live round 1: rejected 15 times)",
+      _plan_parts({"title": "x", "steps": '["Ground plane", "Walls"]'}) == ["Ground plane", "Walls"])
+check("plan accepts one part per line and dict parts",
+      _plan_parts({"parts": "1. Base\n2. Roof"}) == ["Base", "Roof"]
+      and _plan_parts({"parts": [{"name": "Body", "size": "2 m"}]}) == ["Body"])
 fixed = _coerce_types("plan", {"parts": '["Base", "Walls"]'})
 check("array sent as text is converted", fixed["parts"] == ["Base", "Walls"])
 fixed = _coerce_types("run_python", {"title": "x", "code": "print(1)", "part": "3"})
@@ -617,6 +635,11 @@ r = executor.run(HOUSE, "house again")
 check("kit: re-running a step replaces the AI's earlier objects",
       r["ok"] and not [o.name for o in D_.objects if ".00" in o.name or ".replaced" in o.name]
       and any("Replaced" in n for n in r.get("helper_notes", [])), r)
+r = executor.run(HOUSE, "house a third time")
+check("kit: a replaced object is tagged as the AI's, so later re-runs replace it again",
+      r["ok"] and D_.objects["Walls"].get("blendwme_author") == "ai"
+      and not [o.name for o in D_.objects if ".00" in o.name or ".replaced" in o.name],
+      [o.name for o in D_.objects if ".00" in o.name])
 D_.objects["Base"]["blendwme_author"] = "user"           # the user takes ownership of the base
 r = executor.run("bwm.box('Base', (1, 1, 1))\nbwm.box('Walls', (1, 1, 1))\nraise RuntimeError('late failure')")
 check("kit: failed step restores the replaced objects", r["ok"] is False and tuple(round(v, 2) for v in D_.objects["Walls"].dimensions) == (4, 3, 2.4))

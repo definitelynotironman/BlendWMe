@@ -237,7 +237,10 @@ def run(code, title="AI step", author="ai"):
         pass
     after = scene_info.snapshot()
     lines, changed = scene_info.diff(before, after)
-    scene_info.tag_author(changed["added"], author)
+    # Tag every object this step created, by identity: a replaced object keeps its old name,
+    # so a name-based diff would see it as "modified" and leave it untagged.
+    new_names = [o.name for o in bpy.data.objects if o.as_pointer() not in before_ids["objects"]]
+    scene_info.tag_author(new_names, author)
     _undo_push(f"BlendWMe: {title}")
 
     result = {"ok": ok}
