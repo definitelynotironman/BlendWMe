@@ -491,6 +491,12 @@ users = [m["content"] for m in agent.messages if m["role"] == "user" and isinsta
 periodic = [u for u in users if u.startswith("[Art director review after")]
 check("critique converges: at most 3 periodic reviews per task", len(periodic) == 3, len(periodic))
 check("model told once when every plan part is built", sum(u.startswith("[All 2 plan parts are built") for u in users) == 1)
+SCRIPT[:] = ([call("run_python", title=f"W{i}", explain="x", code=f"bwm.box('WU_{i}', (1, 1, 1), ({i * 2}, 20, 0.5))")
+              for i in range(1, 23)] + [call("finish", summary="x"), call("finish", summary="done")])
+agent.send("No plan, open-ended", dict(cfg_ref, references=[]), new_task=True)
+pump_until(lambda: not agent.is_running())
+users = [m["content"] for m in agent.messages if m["role"] == "user" and isinstance(m["content"], str)]
+check("without a plan, told to wrap up after 20 build steps", sum("Wrap up now" in u for u in users) == 1)
 SCRIPT[:] = [step(i) for i in range(31, 34)] + [call("finish", summary="done")]
 agent.send("Build without a reference again", dict(cfg_ref, references=[]), new_task=True)
 pump_until(lambda: not agent.is_running())
@@ -698,6 +704,13 @@ check("kit: a replaced object is tagged as the AI's, so later re-runs replace it
       r["ok"] and D_.objects["Walls"].get("blendwme_author") == "ai"
       and not [o.name for o in D_.objects if ".00" in o.name or ".replaced" in o.name],
       [o.name for o in D_.objects if ".00" in o.name])
+# Live round 4: replacing an object outside the active view layer failed the whole step
+hidden_col = D_.collections.new("NotInLayer")              # not linked to the scene: not in the view layer
+D_.objects["Chimney"].users_collection[0].objects.unlink(D_.objects["Chimney"])
+hidden_col.objects.link(D_.objects["Chimney"])
+r = executor.run("bwm.box('Chimney', (0.5, 0.5, 1.2), (1.2, 0.6, 4))")
+check("kit: replacing an object outside the view layer works", r["ok"] and "Chimney" in D_.objects
+      and D_.objects["Chimney"].get("blendwme_author") == "ai", r)
 D_.objects["Base"]["blendwme_author"] = "user"           # the user takes ownership of the base
 r = executor.run("bwm.box('Base', (1, 1, 1))\nbwm.box('Walls', (1, 1, 1))\nraise RuntimeError('late failure')")
 check("kit: failed step restores the replaced objects", r["ok"] is False and tuple(round(v, 2) for v in D_.objects["Walls"].dimensions) == (4, 3, 2.4))

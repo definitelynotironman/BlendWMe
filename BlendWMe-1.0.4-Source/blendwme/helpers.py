@@ -97,8 +97,11 @@ def end_step(ok):
                 _delete_tree(old)
             else:
                 old.name = name
-                old.hide_set(False)
                 old.hide_viewport = False
+                try:
+                    old.hide_set(False)
+                except RuntimeError:
+                    pass
         except ReferenceError:
             pass
     _REPLACED.clear()
@@ -135,7 +138,10 @@ def claim_name(name):
         return
     _REPLACED.append((old, name))
     old.name = name + ".replaced"
-    old.hide_set(True)
+    try:
+        old.hide_set(True)      # fails for objects outside the active view layer (seen live)
+    except RuntimeError:
+        pass
     old.hide_viewport = True
     note = f"Replaced your earlier {name!r} with the new one."
     if note not in NOTES:

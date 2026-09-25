@@ -31,6 +31,7 @@ REVIEW_FIRST = 3          # successful build steps before the first art director
 REVIEW_FIRST_WITH_REF = 1  # ... when the user gave reference images (match them early)
 REVIEW_EVERY = 4          # successful build steps between reviews
 REVIEW_MAX = 3            # periodic reviews per task (plus one final check): critique must converge
+WRAP_UP_STEPS = 20        # successful build steps before a "time to finish" note (when there is no plan)
 STUCK_FAILS = 4           # failures of the SAME step before handing the wheel to the user
 STUCK_PRECHECK = 6        # pre-check rejections (nothing ran) of the same step before that
 
@@ -154,6 +155,7 @@ class Agent:
         ]
         self.ok_steps = self.reviewed_at = self.reviews = 0
         self.plan_done_noted = False
+        session.set_plan([])      # a new task never inherits the last task's checklist
         self.ref_spec = ""
         self.spec_pending = bool(refs)
 
@@ -857,7 +859,15 @@ class Agent:
 
     def _maybe_wrap_up(self):
         """Once every plan part is built, say so plainly, so the model finishes instead of polishing forever."""
-        if session.mode != "AUTO" or self.plan_done_noted or not session.plan:
+        if session.mode != "AUTO" or self.plan_done_noted:
+            return
+        if not session.plan or not all(p["done"] for p in session.plan):
+            if self.ok_steps >= WRAP_UP_STEPS:
+                # No plan to tick off (or it was never ticked): stop open-ended polishing.
+                self.plan_done_noted = True
+                self.messages.append({"role": "user", "content":
+                    f"[You have made {self.ok_steps} successful build steps. Wrap up now: add only items from the "
+                    "brief that are still missing, delete leftovers, then call finish.]"})
             return
         if all(p["done"] for p in session.plan):
             self.plan_done_noted = True
