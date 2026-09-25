@@ -881,18 +881,26 @@ class Agent:
         header = (f"[Art director review {when}. BlendWMe captured the scene from several angles"
                   + (" next to the user's reference" if refs else "") + " and judged it against the brief. "
                   + "THE BRIEF IS: \"" + self.brief[:400] + "\". Everything you build must serve this brief.]")
+        stock = bridge.call(scene_info.inventory)
+        stock_text = ("\nObjects you made (exact sizes):\n" + "\n".join(stock)
+                      + "\nDelete anything left over from an earlier attempt that is not part of the final design."
+                      if stock else "")
         if self.agent_sees:
-            self.pending_images.append({"caption": header + " " + layout + " " + ref_text,
+            self.pending_images.append({"caption": header + " " + layout + " " + ref_text + stock_text,
                                         "paths": [info["path"]] + refs})
             self._trace("review", when=when, by="agent")
             return "attached"
         prompt = prompts.REVIEW.format(layout=layout, refs=ref_text, brief=self.brief[:1200],
                                        spec=("Reference spec: " + self.ref_spec[:1500]) if self.ref_spec else "",
                                        ref_word=" and reference" if refs else "")
+        if stock:
+            # The critic also gets the true names and sizes, so a huge leftover does not hide the real subject.
+            prompt += ("\nThe objects in the scene, with exact sizes (use this to tell parts apart and to spot "
+                       "leftovers or wrong scale):\n" + "\n".join(stock))
         text = self._ask_vision(client, prompt, [info["path"]] + refs)
         if not text:
             return ""
-        self.messages.append({"role": "user", "content": header + "\n" + text[:2500]
+        self.messages.append({"role": "user", "content": header + "\n" + text[:2500] + stock_text
                               + "\nFix the most important problems first, then continue the plan."})
         self._trace("review", when=when, by="vision", chars=len(text))
         return text

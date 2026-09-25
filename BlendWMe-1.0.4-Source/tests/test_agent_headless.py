@@ -461,6 +461,8 @@ gate = [json.loads(m["content"]) for m in agent.messages if m["role"] == "tool" 
 check("final check before the first finish, then finish is accepted",
       len(gate) == 1 and any("before finishing" in r for r in reviews) and session.status == state.DONE)
 check("reviews compare against the reference image", len(VISION_SEEN) >= 4)
+check("reviews list every object the AI made with its exact size (spots leftovers)",
+      all("Objects you made" in r and "AD_1: 1.00 x 1.00 x 1.00 m" in r for r in reviews), reviews[-1][-400:])
 check("reviews restate the brief (pulls a drifting model back)", all('THE BRIEF IS: "Build from my reference"' in r for r in reviews))
 
 SCRIPT[:] = [step(i) for i in range(11, 14)] + [call("finish", summary="done")]

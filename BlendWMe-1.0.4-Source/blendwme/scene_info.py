@@ -97,6 +97,33 @@ def get_scene_info():
     return info
 
 
+def inventory(limit=30):
+    """One line per top-level object the AI made: size, position and materials.
+
+    Shown with every art director review. A leftover from an abandoned first
+    attempt (a 1.5 m sphere next to a 12 cm ice cream) is obvious in a list even
+    when it dominates the picture (seen live).
+    """
+    from . import helpers
+    lines = []
+    for o in bpy.context.scene.objects:
+        if o.parent is not None or o.type in {"CAMERA", "LIGHT"} or o.get(AUTHOR_KEY) != "ai":
+            continue
+        try:
+            b = helpers.bounds(o)
+        except Exception:
+            continue
+        mats = sorted({s.material.name for c in [o] + list(o.children_recursive)
+                       for s in getattr(c, "material_slots", []) if s.material})
+        lines.append(f"- {o.name}: {b.size.x:.2f} x {b.size.y:.2f} x {b.size.z:.2f} m, centre "
+                     f"({b.center.x:.2f}, {b.center.y:.2f}, {b.center.z:.2f}), "
+                     + (f"materials {', '.join(mats[:4])}" if mats else "NO MATERIAL"))
+        if len(lines) >= limit:
+            lines.append("- ...")
+            break
+    return lines
+
+
 def default_startup_cube():
     """Name of Blender's untouched default cube (2 m, at the origin, 8 vertices), or ''."""
     o = bpy.data.objects.get("Cube")
