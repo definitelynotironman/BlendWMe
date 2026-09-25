@@ -35,6 +35,7 @@ SCRIPT = []
 SEEN = []
 VISION_SEEN = []
 VISION_OK = {"Qwen/Qwen3.8-27B"}
+REJECT_REQUIRED = False
 
 
 def call(_tool, **args):
@@ -65,6 +66,11 @@ class Fake(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"detail":"model does not exist"}')
                 return
             self._send({"choices": [{"message": {"content": "WHAT I SEE: a cottage. PROBLEMS: none."}}]})
+            return
+        if REJECT_REQUIRED and body.get("tool_choice") == "required":
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'{"detail":"tool_choice required is not supported"}')
             return
         SEEN.append(body)
         # Every tool call must have an answer before the next request.
@@ -195,6 +201,7 @@ check("system prompt has skills", "low-poly-stylised-scenes" in SEEN[0]["message
 check("tools sent natively", any(t["function"]["name"] == "run_python" for t in SEEN[0]["tools"]))
 check("nemotron reasoning kwargs sent", SEEN[0].get("chat_template_kwargs", {}).get("low_effort") is True)
 check("steps recorded", len(session.steps) == 3)
+check("auto mode requires a tool call every turn (live fix)", all(b.get("tool_choice") == "required" for b in SEEN))
 
 # ----------------------------------------------------------------------
 # 2. Follow-up remembers the conversation and notices user edits
@@ -220,6 +227,25 @@ SCRIPT[:] = [
 agent.send("Add a door", CONFIG)
 pump_until(lambda: not agent.is_running())
 check("nudge then text tool call recovered", "Door" in bpy.data.objects)
+
+# Code written in the message text instead of a tool call is run as a step (live round 3)
+SCRIPT[:] = [{"role": "assistant", "content": "I'll build it now.\n```python\nbwm.box('FromText', (1, 1, 1))\n```"},
+             {"role": "assistant", "content": "Thinking about it."}, {"role": "assistant", "content": "Still thinking."},
+             call("finish", summary="ok")]
+agent.send("Text code", CONFIG)
+pump_until(lambda: not agent.is_running())
+check("code written as text is run as a step", "FromText" in bpy.data.objects)
+check("two nudges in a row before giving up", session.status == state.DONE, session.status)
+
+# A provider that refuses tool_choice="required" falls back to "auto", and it is remembered
+REJECT_REQUIRED = True
+SCRIPT[:] = [call("run_python", title="x", explain="x", code="bwm.box('NoRequired', (1, 1, 1))"), call("finish", summary="ok")]
+seen_before = len(SEEN)
+agent.send("Provider without required", dict(CONFIG, model="other/model-x"))
+pump_until(lambda: not agent.is_running())
+check("tool_choice=required refused: falls back to auto and remembers",
+      "NoRequired" in bpy.data.objects and all(b.get("tool_choice") == "auto" for b in SEEN[seen_before:]))
+REJECT_REQUIRED = False
 
 # A reply cut off by the length limit in a repetition loop is not kept in full (it primes more of it)
 SCRIPT[:] = [{"role": "assistant", "content": "<tool_call>\n" + "<PARAMS>\n" * 3000, "_finish": "length"},
@@ -271,6 +297,7 @@ check("watch really waits", session.status == state.WAIT_NEXT)
 session.wake()
 pump_until(lambda: not agent.is_running())
 check("watch continues after Next", session.status == state.DONE)
+check("watch mode lets the model talk (tool_choice auto)", SEEN[-1].get("tool_choice") == "auto")
 check("mode switch announced", any("WATCH mode" in (m.get("content") or "") for m in agent.messages))
 
 session.mode = "TEACH"
@@ -564,6 +591,10 @@ REPAIRS = [
      lambda: [m.type for m in bpy.data.objects['ModT'].modifiers] == ['BEVEL', 'SUBSURF']),
     ("node by its label", "m = bwm.material('RepN')\nn = m.node_tree.nodes.new('Principled BSDF')\nn2 = m.node_tree.nodes.new('ShaderNodePrincipledBsdf')",
      lambda: sum(1 for n in bpy.data.materials['RepN'].node_tree.nodes if n.type == 'BSDF_PRINCIPLED') == 3),
+    ("D used as bpy / bpy.context (live round 3)",
+     "D.ops.mesh.primitive_cone_add(vertices=8)\nD.objects.active.name = 'DCone'\nm = D.data.materials.new('DMat')\n"
+     "D.objects['DCone'].select_set(True)\nprint(D.scene.name)",
+     lambda: "DCone" in bpy.data.objects and "DMat" in bpy.data.materials),
     ("material_slots.append", "o = bwm.box('Slot', (1, 1, 1))\no.material_slots.append(bwm.material('RepS'))",
      lambda: bpy.data.objects['Slot'].material_slots[0].material.name == 'RepS'),
 ]

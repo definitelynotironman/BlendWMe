@@ -89,13 +89,20 @@ class Client:
     # Chat with tools
     # ------------------------------------------------------------------
     def chat(self, model, messages, tools=None, temperature=0.4, max_tokens=8192,
-             reasoning="LOW"):
+             reasoning="LOW", tool_choice="auto"):
         """One model turn. Returns (message_dict, usage_dict).
 
         reasoning: DEFAULT (send nothing extra), LOW, ON or OFF. These map
         to NVIDIA Nemotron chat template switches. If the provider rejects
         them (HTTP 400) we retry once without them, so other models still work.
+
+        tool_choice "required" makes every turn a well-formed tool call. With
+        BlendWMe's long prompt, Nemotron 3 Ultra on "auto" often answered in
+        text or wrote tool calls as broken text (live tests); on "required" it
+        made native calls 6 of 6 times. If the provider rejects "required",
+        we retry with "auto" and say so in message["_required_rejected"].
         """
+        rejected = False
         body = {
             "model": model,
             "messages": messages,
@@ -104,18 +111,26 @@ class Client:
         }
         if tools:
             body["tools"] = tools
-            body["tool_choice"] = "auto"
+            body["tool_choice"] = tool_choice
         extra = reasoning_kwargs(model, reasoning)
         if extra:
             body["chat_template_kwargs"] = extra
         try:
             data = self._request("/chat/completions", body)
         except LLMError as e:
-            if e.status == 400 and extra:
-                body.pop("chat_template_kwargs", None)
-                data = self._request("/chat/completions", body)
-            else:
+            if e.status != 400 or not (extra or body.get("tool_choice") not in (None, "auto")):
                 raise
+            if body.get("tool_choice") not in (None, "auto") and "tool_choice" in str(e):
+                body["tool_choice"], rejected = "auto", True
+            else:
+                body.pop("chat_template_kwargs", None)
+            try:
+                data = self._request("/chat/completions", body)
+            except LLMError as e2:
+                if e2.status != 400 or body.get("tool_choice") in (None, "auto"):
+                    raise
+                body["tool_choice"], rejected = "auto", True
+                data = self._request("/chat/completions", body)
         choices = data.get("choices") or []
         if not choices:
             raise LLMError("The model returned no answer: " + json.dumps(data)[:400])
@@ -123,6 +138,8 @@ class Client:
         finish = choices[0].get("finish_reason")
         message = normalise_message(message)
         message["_finish_reason"] = finish
+        if rejected:
+            message["_required_rejected"] = True
         return message, data.get("usage") or {}
 
     def describe_image(self, model, prompt, image_paths, max_tokens=2500):
@@ -266,6 +283,58 @@ def _xml_calls(text):
     return out
 
 
+_YAML_NAME = re.compile(r"^\s*-?\s*name:\s*['\"]?([\w.\-]+)['\"]?\s*$", re.M)
+_YAML_BLOCK = re.compile(r"^(\s*)(code|python|script):\s*\|[-+]?\s*\n((?:\1[ \t]+.*\n?|[ \t]*\n)*)", re.M)
+
+
+def _yaml_calls(text):
+    """Calls written YAML style (live run, Nemotron 3 Ultra):
+
+        function_calls:
+        - name: execute_blender_python
+          arguments:
+            code: |
+                import bpy
+                ...
+    """
+    import textwrap
+    names = _YAML_NAME.findall(text)
+    blocks = _YAML_BLOCK.findall(text)
+    if not names or not blocks:
+        return []
+    out = []
+    for i, name in enumerate(names):
+        if i >= len(blocks):
+            break
+        code = textwrap.dedent(blocks[i][2]).rstrip()
+        out.append(json.dumps({"name": name, "arguments": {"code": code}}))
+    return out
+
+
+def _function_marker_calls(text):
+    """'<tool_call>\\nFUNCTION\\n<python>' chunks (a broken template seen live) -> one run_python call.
+
+    Only chunks that compile are kept: a reply cut off by the length limit ends mid-line.
+    """
+    if "<tool_call>" not in text or "FUNCTION" not in text:
+        return []
+    chunks = re.split(r"<tool_call>\s*FUNCTION[^\n]*\n", text)[1:]
+    good = []
+    for chunk in chunks:
+        chunk = chunk.split("</tool_call>")[0].strip()
+        if not chunk:
+            continue
+        try:
+            compile(chunk, "<chunk>", "exec")
+        except SyntaxError:
+            continue
+        good.append(chunk)
+    if not good:
+        return []
+    return [json.dumps({"name": "run_python", "arguments": {
+        "title": "Step", "explain": "", "code": "\n".join(good)}})]
+
+
 def _bare_json_calls(text):
     """Tool calls written as plain JSON objects in the text, one after another.
 
@@ -300,7 +369,7 @@ def normalise_message(message):
     tool_calls = message.get("tool_calls") or []
     if not tool_calls and content:
         found = (_TOOL_TAG.findall(content) or _FENCED.findall(content) or _bare_json_calls(content)
-                 or _xml_calls(content))
+                 or _xml_calls(content) or _yaml_calls(content) or _function_marker_calls(content))
         for raw in found:
             try:
                 obj = json.loads(raw)
@@ -316,6 +385,10 @@ def normalise_message(message):
                 "function": {"name": name,
                              "arguments": args if isinstance(args, str) else json.dumps(args)},
             })
+        if tool_calls and "<tool_call>" in content:
+            # Keep only a short lead-in. A broken format left in the history gets imitated
+            # by the model on every later turn (seen live), so the history shows the clean call.
+            content = content.split("<tool_call>")[0].strip()[:400]
         if tool_calls:
             content = _TOOL_TAG.sub("", content)
             content = _FENCED.sub("", content).strip()

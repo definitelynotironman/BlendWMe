@@ -59,6 +59,13 @@ _TEXT_RULES = [
      "scene.update() -> bpy.context.view_layer.update()"),
     (r"\bbpy\.(" + "|".join(_CONTEXT_NAMES) + r")\b", r"bpy.context.\1",
      "bpy.<name> -> bpy.context.<name>"),
+    # D is bpy.data; models mix it up with bpy and bpy.context
+    (r"\bD\.ops\.", "bpy.ops.", "D.ops -> bpy.ops (D is bpy.data)"),
+    (r"\bD\.objects\.active\b", "bpy.context.view_layer.objects.active",
+     "D.objects.active -> bpy.context.view_layer.objects.active"),
+    (r"\bD\.(view_layer|scene|active_object|selected_objects)\b", r"bpy.context.\1",
+     "D.<name> -> bpy.context.<name> (D is bpy.data)"),
+    (r"\bD\.data\.", "D.", "D.data -> D (D is already bpy.data)"),
     (r"\.draw_type\b", ".display_type", "draw_type -> display_type"),
     (r"\.show_x_ray\b", ".show_in_front", "show_x_ray -> show_in_front"),
     (r"\.uv_textures\b", ".uv_layers", "uv_textures -> uv_layers"),

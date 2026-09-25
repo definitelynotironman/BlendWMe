@@ -43,6 +43,7 @@ _BUILDS = re.compile(r"\bbwm\.(?!bounds|top\b|obj\b|col\b|mat\b)\w+\(|bpy\.ops\.
 
 
 _SEES_IMAGES = {}   # model id -> True/False, filled from the provider's model list
+_REQUIRED_REJECTED = set()   # models whose provider refused tool_choice="required"
 
 
 class Stopped(Exception):
@@ -66,7 +67,7 @@ class Agent:
         self.mode_in_prompt = None
         self.show_me_allowed = False
         self.budget_start = 0
-        self.nudged = False
+        self.nudged = 0
         self.finished = False
         self.fail_streak = 0
         self.vision_broken = ""
@@ -211,6 +212,8 @@ class Agent:
                 session.set_status(THINKING)
                 message = self._ask_model(client)
                 finish_reason = message.pop("_finish_reason", None)
+                if message.pop("_required_rejected", False):
+                    _REQUIRED_REJECTED.add(self.config.get("model"))
                 self.messages.append(message)
                 if message.get("content"):
                     session.add("ai", message["content"])
@@ -226,15 +229,28 @@ class Agent:
                         self.messages.append({"role": "user", "content":
                             "Your reply was cut off by the length limit. Continue with a smaller step."})
                         continue
-                    if not self.nudged and session.mode != "TEACH":
-                        # Open models sometimes describe a plan and stop. Nudge once.
-                        self.nudged = True
+                    code = _python_block(message.get("content")) if session.mode in ("AUTO", "WATCH") else ""
+                    if code:
+                        # Last resort: a tool call we could not parse, or code written as text.
+                        # Run the code it wrote as a real step instead of ending the task.
+                        calls = [{"id": "call_text_code_" + str(len(self.messages)), "type": "function",
+                                  "function": {"name": "run_python", "arguments": json.dumps(
+                                      {"title": "Step", "explain": "", "code": code})}}]
+                        message["tool_calls"] = calls
+                        # Keep the clean call, not the code-as-text, so the model does not imitate it.
+                        message["content"] = (message.get("content") or "").split("```")[0].strip()[:400]
+                        self._trace("text_code_run", lines=code.count("\n") + 1)
+                    elif self.nudged < 2 and session.mode != "TEACH":
+                        # Open models sometimes describe a plan and stop. Nudge (twice at most in a row).
+                        self.nudged += 1
                         self.messages.append({"role": "user", "content":
-                            "Continue the work using your tools. Call finish when the brief is "
-                            "complete, or ask_user if you truly need an answer."})
+                            "Continue the work using your tools: call the run_python TOOL with your code "
+                            "(not code in the text). Call finish when the brief is complete, or ask_user if "
+                            "you truly need an answer."})
                         continue
-                    break  # the model is waiting for the user
-                self.nudged = False
+                    else:
+                        break  # the model is waiting for the user
+                self.nudged = 0
 
                 # If you paused while the model was thinking, its plan may be stale.
                 if session.pause_flag.is_set():
@@ -294,7 +310,8 @@ class Agent:
                     self.config.get("model"), self.messages, tools.for_mode(session.mode),
                     temperature=self.config.get("temperature", 0.4),
                     max_tokens=self.config.get("max_tokens", 8192),
-                    reasoning=self.config.get("reasoning", "LOW"))
+                    reasoning=self.config.get("reasoning", "LOW"),
+                    tool_choice=self._tool_choice())
                 session.calls += 1
                 session.tokens += int(usage.get("total_tokens") or 0)
                 session.last_latency = round(time.time() - t0, 1)
@@ -316,6 +333,15 @@ class Agent:
                 self._trace("error", error=str(e)[:300])
                 session.add("info", f"Model busy ({e.status or 'network'}). Retrying in {delays[attempt]}s.")
                 self._sleep(delays[attempt])
+
+    def _tool_choice(self):
+        """Auto mode: every turn must be a tool call (finish, plan, ask_user are tools too).
+
+        Watch and Teach keep "auto": there the model may answer the user in plain words.
+        """
+        if session.mode == "AUTO" and self.config.get("model") not in _REQUIRED_REJECTED:
+            return "required"
+        return "auto"
 
     def _tool_reply(self, call, result):
         if isinstance(result, dict):
@@ -982,6 +1008,17 @@ class Agent:
         session.set_status(DONE)
         self.finished = True
         return {"ok": True}
+
+
+def _python_block(text):
+    """The Python code a model wrote in its message text (```python fences), or ""."""
+    blocks = re.findall(r"```(?:python|py)\s*\n(.*?)```", text or "", re.S)
+    if not blocks:
+        # an unclosed fence at the end of a reply
+        m = re.search(r"```(?:python|py)\s*\n(.*)$", text or "", re.S)
+        blocks = [m.group(1)] if m else []
+    code = "\n\n".join(b.strip("\n") for b in blocks).strip()
+    return code if ("bpy" in code or "bwm" in code) else ""
 
 
 def _code_tool_alias(name, args):

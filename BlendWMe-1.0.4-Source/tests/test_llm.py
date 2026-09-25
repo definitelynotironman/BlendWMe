@@ -32,4 +32,18 @@ m = llm.normalise_message({"content": "<tool_call><function=run_python><paramete
                                       "</function></tool_call>"})
 a = json.loads(m["tool_calls"][0]["function"]["arguments"])
 assert a == {"title": "Body", "code": "x = {'a': 1}\nprint(x)", "part": 2}, a
+# YAML-style calls (live run round 3)
+text = ("I'll build it.\n<tool_call>\nFUNCTION\nfunction_calls:\n- name: execute_blender_python\n  arguments:\n"
+        "    code: |\n        import bpy\n\n        for i in range(2):\n            print(i)\n")
+m = llm.normalise_message({"content": text})
+a = json.loads(m["tool_calls"][0]["function"]["arguments"])
+assert m["tool_calls"][0]["function"]["name"] == "execute_blender_python", m
+assert a["code"] == "import bpy\n\nfor i in range(2):\n    print(i)", repr(a["code"])
+# '<tool_call> FUNCTION <python>' chunks (live round 3), cut off mid-line at the end
+text = ("I'll build it.\n<tool_call>\nFUNCTION\nD.objects.remove(D.objects['Cube'])\n<tool_call>\nFUNCTION\n"
+        "bpy.ops.mesh.primitive_cone_add(vertices=32)\n<tool_call>\nFUNCTION\nbpy.ops.mesh.primitive_uv_sphere_add(radi")
+m = llm.normalise_message({"content": text})
+a = json.loads(m["tool_calls"][0]["function"]["arguments"])
+assert a["code"] == "D.objects.remove(D.objects['Cube'])\nbpy.ops.mesh.primitive_cone_add(vertices=32)", a
+assert m["content"] == "I'll build it.", m          # the broken format is not kept in the history
 print("llm helper tests passed")
