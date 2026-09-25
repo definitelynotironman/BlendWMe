@@ -16,6 +16,9 @@ fighting bmesh and operator details. Everything here:
 All of it is exposed inside run_python as bwm.<name>.
 """
 
+import difflib
+import functools
+import inspect
 import math
 from collections import namedtuple
 
@@ -115,15 +118,15 @@ def _finish(name, bm, location=(0, 0, 0), collection=None, material=None, smooth
     return obj
 
 
-def cylinder(name, radius=0.5, depth=1.0, location=(0, 0, 0), segments=24, axis="Z",
-             collection=None, material=None, smooth=True, caps=True, bevel=0.0):
+def cylinder(name, radius=0.5, depth=1.0, location=(0, 0, 0), collection=None, material=None,
+             segments=24, axis="Z", smooth=True, caps=True, bevel=0.0):
     """A cylinder centred on location. axis is the long direction: 'X', 'Y' or 'Z'."""
-    return cone(name, num(radius, 0.5), num(radius, 0.5), depth, location, segments, axis,
-                collection, material, smooth, caps, bevel)
+    return cone(name, num(radius, 0.5), num(radius, 0.5), depth, location, collection, material,
+                segments=segments, axis=axis, smooth=smooth, caps=caps, bevel=bevel)
 
 
-def cone(name, radius_bottom=0.5, radius_top=0.0, depth=1.0, location=(0, 0, 0), segments=24, axis="Z",
-         collection=None, material=None, smooth=True, caps=True, bevel=0.0):
+def cone(name, radius_bottom=0.5, radius_top=0.0, depth=1.0, location=(0, 0, 0), collection=None,
+         material=None, segments=24, axis="Z", smooth=True, caps=True, bevel=0.0):
     """A cone or frustum centred on location. radius_top=0 makes a point.
 
     axis 'Z' stands it up (bottom at location.z - depth/2). Use axis='-Z' to flip it
@@ -143,8 +146,8 @@ def cone(name, radius_bottom=0.5, radius_top=0.0, depth=1.0, location=(0, 0, 0),
     return obj
 
 
-def sphere(name, radius=0.5, location=(0, 0, 0), segments=32, rings=16, collection=None,
-           material=None, smooth=True):
+def sphere(name, radius=0.5, location=(0, 0, 0), collection=None, material=None, segments=32, rings=16,
+           smooth=True):
     """A UV sphere. radius can be (rx, ry, rz) for an ellipsoid (egg, head, scoop)."""
     bm = bmesh.new()
     bmesh.ops.create_uvsphere(bm, u_segments=max(3, int(num(segments, 32))),
@@ -154,8 +157,8 @@ def sphere(name, radius=0.5, location=(0, 0, 0), segments=32, rings=16, collecti
     return _finish(name, bm, location, collection, material, smooth, auto_smooth=0)
 
 
-def torus(name, major_radius=1.0, minor_radius=0.25, location=(0, 0, 0), segments=32, ring_segments=12,
-          axis="Z", collection=None, material=None, smooth=True):
+def torus(name, major_radius=1.0, minor_radius=0.25, location=(0, 0, 0), collection=None, material=None,
+          segments=32, ring_segments=12, axis="Z", smooth=True):
     """A ring (donut, tyre, rim). axis is the hole's direction."""
     R, r = num(major_radius, 1.0), num(minor_radius, 0.25)
     n, m = max(3, int(num(segments, 32))), max(3, int(num(ring_segments, 12)))
@@ -177,8 +180,8 @@ def torus(name, major_radius=1.0, minor_radius=0.25, location=(0, 0, 0), segment
     return _finish(name, bm, location, collection, material, smooth, auto_smooth=0)
 
 
-def extrude_profile(name, points, depth=1.0, location=(0, 0, 0), axis="Y", collection=None,
-                    material=None, bevel=0.0, smooth=False):
+def extrude_profile(name, points, depth=1.0, location=(0, 0, 0), collection=None, material=None,
+                    axis="Y", bevel=0.0, smooth=False):
     """A solid from a 2D outline, pushed `depth` along `axis` (centred on location).
 
     points are 2D in the plane across the axis:
@@ -214,7 +217,7 @@ def extrude_profile(name, points, depth=1.0, location=(0, 0, 0), axis="Y", colle
     return obj
 
 
-def prism(name, size=(2, 2, 1), location=(0, 0, 0), ridge_axis="X", collection=None, material=None):
+def prism(name, size=(2, 2, 1), location=(0, 0, 0), collection=None, material=None, ridge_axis="X"):
     """A triangular prism (gable end, ridge cap, simple roof block).
 
     size is the bounding box (x, y, z); the ridge runs along ridge_axis at the top.
@@ -222,22 +225,22 @@ def prism(name, size=(2, 2, 1), location=(0, 0, 0), ridge_axis="X", collection=N
     sx, sy, sz = size3(size)
     if axis_name(ridge_axis, "X") == "X":
         pts = [(-sy / 2, -sz / 2), (sy / 2, -sz / 2), (0, sz / 2)]
-        return extrude_profile(name, pts, sx, location, "X", collection, material)
+        return extrude_profile(name, pts, sx, location, collection, material, axis="X")
     pts = [(-sx / 2, -sz / 2), (sx / 2, -sz / 2), (0, sz / 2)]
-    return extrude_profile(name, pts, sy, location, "Y", collection, material)
+    return extrude_profile(name, pts, sy, location, collection, material, axis="Y")
 
 
-def wedge(name, size=(1, 1, 1), location=(0, 0, 0), high_side="+Y", collection=None, material=None):
+def wedge(name, size=(1, 1, 1), location=(0, 0, 0), collection=None, material=None, high_side="+Y"):
     """A ramp: full height on high_side ('+Y', '-Y', '+X', '-X'), zero on the other side."""
     sx, sy, sz = size3(size)
     side = str(high_side).upper()
     if side.endswith("Y"):
         sign = -1 if side.startswith("-") else 1
         pts = [(-sy / 2, -sz / 2), (sy / 2, -sz / 2), (sign * sy / 2, sz / 2)]
-        return extrude_profile(name, pts, sx, location, "X", collection, material)
+        return extrude_profile(name, pts, sx, location, collection, material, axis="X")
     sign = -1 if side.startswith("-") else 1
     pts = [(-sx / 2, -sz / 2), (sx / 2, -sz / 2), (sign * sx / 2, sz / 2)]
-    return extrude_profile(name, pts, sy, location, "Y", collection, material)
+    return extrude_profile(name, pts, sy, location, collection, material, axis="Y")
 
 
 def _roof_tiles(name, W, edge, eave, R, tv, rows, axis, location, collection, material):
@@ -262,8 +265,8 @@ def _roof_tiles(name, W, edge, eave, R, tv, rows, axis, location, collection, ma
     return _finish(name, bm, location, collection, material)
 
 
-def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), overhang=0.3, thickness=0.15,
-               ridge_axis="X", collection=None, material=None, gable=True, gable_material=None, tiles=0):
+def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), collection=None, material=None,
+               overhang=0.3, thickness=0.15, ridge_axis="X", gable=True, gable_material=None, tiles=0):
     """A pitched (gable) roof that sits exactly on walls of width x depth.
 
     location = (x, y, z) where x, y is the centre of the walls and z is the TOP of the walls.
@@ -284,12 +287,13 @@ def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), overh
     eave = -k * o                               # underside height at the eave (relative to wall top)
     chevron = [(-edge, eave), (0, R), (edge, eave), (edge, eave + tv), (0, R + tv), (-edge, eave + tv)]
     axis = axis_name(ridge_axis, "X")
-    roof = extrude_profile(name, chevron, W + 2 * o, (cx, cy, z0), "X" if axis == "X" else "Y",
-                           collection, material if material is not None else _h.material("Roof_Tiles", (0.62, 0.2, 0.12), 0.7))
+    roof = extrude_profile(name, chevron, W + 2 * o, (cx, cy, z0), collection,
+                           material if material is not None else _h.material("Roof_Tiles", (0.62, 0.2, 0.12), 0.7),
+                           axis="X" if axis == "X" else "Y")
     if gable:
         tri = [(-d, 0.0), (d, 0.0), (0, R)]
         mat = gable_material if gable_material is not None else _h.material("Plaster", (0.88, 0.8, 0.66), 0.8)
-        g = extrude_profile(name + "_Gables", tri, W, (cx, cy, z0), "X" if axis == "X" else "Y", collection, mat)
+        g = extrude_profile(name + "_Gables", tri, W, (cx, cy, z0), collection, mat, axis="X" if axis == "X" else "Y")
         parent(g, roof)
     rows = int(num(tiles))
     if rows > 0:
@@ -301,8 +305,8 @@ def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), overh
     return roof
 
 
-def loft(name, sections, location=(0, 0, 0), segments=24, axis="Z", caps=True, collection=None,
-         material=None, smooth=True, subdivide=0):
+def loft(name, sections, location=(0, 0, 0), collection=None, material=None, segments=24, axis="Z",
+         caps=True, smooth=True, subdivide=0):
     """A smooth body through cross-sections (bottle, torso, limb, scoop, vase, boat hull...).
 
     Each section is one of:
@@ -367,18 +371,18 @@ def loft(name, sections, location=(0, 0, 0), segments=24, axis="Z", caps=True, c
     return obj
 
 
-def lathe(name, profile, location=(0, 0, 0), segments=32, axis="Z", collection=None, material=None,
+def lathe(name, profile, location=(0, 0, 0), collection=None, material=None, segments=32, axis="Z",
           smooth=True, caps=True):
     """Spin a side profile around the axis (vase, cup, cone, bottle, lamp shade, scoop).
 
     profile is a list of (radius, height) points from bottom to top. Radius 0 makes a point.
     """
-    return loft(name, [(num(h), num(r)) for r, h in (vec(p, 2) for p in profile)], location, segments,
-                axis, caps, collection, material, smooth)
+    return loft(name, [(num(h), num(r)) for r, h in (vec(p, 2) for p in profile)], location, collection,
+                material, segments=segments, axis=axis, caps=caps, smooth=smooth)
 
 
-def tube(name, points, radius=0.05, segments=12, location=(0, 0, 0), closed=False, caps=True,
-         collection=None, material=None, smooth=True):
+def tube(name, points, radius=0.05, location=(0, 0, 0), collection=None, material=None, segments=12,
+         closed=False, caps=True, smooth=True):
     """A round tube along a path of 3D points (pipe, cable, handle, branch, tapered limb).
 
     radius can be one number or one radius per point (taper it for limbs and horns).
@@ -424,8 +428,8 @@ def tube(name, points, radius=0.05, segments=12, location=(0, 0, 0), closed=Fals
     return _finish(name, bm, location, collection, material, smooth, auto_smooth=0)
 
 
-def limb(name, start, end, radius_start=0.08, radius_end=0.05, bend=(0, 0, 0), segments=12,
-         collection=None, material=None):
+def limb(name, start, end, radius_start=0.08, radius_end=0.05, collection=None, material=None,
+         bend=(0, 0, 0), segments=12):
     """A tapered limb from start to end (arm, leg, finger, horn, branch).
 
     bend pushes the middle sideways by that vector (a bent knee or elbow).
@@ -438,7 +442,7 @@ def limb(name, start, end, radius_start=0.08, radius_end=0.05, bend=(0, 0, 0), s
         t = i / steps
         pts.append(a.lerp(b, t) + k * math.sin(math.pi * t))
         radii.append(r1 + (r2 - r1) * t)
-    return tube(name, pts, radii, segments, collection=collection, material=material)
+    return tube(name, pts, radii, collection=collection, material=material, segments=segments)
 
 
 # ----------------------------------------------------------------------
@@ -758,3 +762,82 @@ def group(name, *objs, collection=None):
     for o in objs:
         parent(o, root)
     return root
+
+
+# ----------------------------------------------------------------------
+# Forgiving arguments for every kit function
+# ----------------------------------------------------------------------
+# Words models use for an argument, and the argument they mean. Only used when
+# the function does not have the word itself and does have the meaning.
+ALIASES = {
+    "color": "material", "colour": "material", "mat": "material", "materials": "material",
+    "position": "location", "pos": "location", "loc": "location", "center": "location",
+    "centre": "location", "origin": "location", "at": "location",
+    "coll": "collection", "col": "collection", "parent_collection": "collection",
+    "rotation": "rot_deg", "rot": "rot_deg", "rotation_deg": "rot_deg", "angle": "rot_deg",
+    "dimensions": "size", "dims": "size", "r": "radius", "rad": "radius",
+    "height": "depth", "length": "depth", "radius1": "radius_bottom", "radius2": "radius_top",
+    "bottom_radius": "radius_bottom", "top_radius": "radius_top", "base_radius": "radius_bottom",
+    "vertices": "segments", "sides": "segments", "resolution": "segments", "u_segments": "segments",
+    "v_segments": "rings", "ring_count": "rings", "major": "major_radius", "minor": "minor_radius",
+    "profile": "points", "path": "points", "sections": "points", "thickness": "depth",
+}
+# Per function: what "material" (or "color") means when the piece has no plain material.
+MATERIAL_MEANS = {"window": "frame_material", "bed": "frame_material", "plant": "leaf_material"}
+# Per function aliases that differ from the general ones.
+OWN_ALIASES = {"gable_roof": {"height": "rise", "pitch": "rise", "length": "width"}}
+
+
+def forgiving(fn):
+    """Accept alias names, colours or collections in odd places and unknown extras.
+
+    Every change is reported to the model through bwm notes, so it learns the real names.
+    """
+    params = inspect.signature(fn).parameters
+    names = list(params)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        args = list(args)
+        # Collections or materials passed in a slot meant for something else move to their own.
+        for i in range(len(args) - 1, 0, -1):
+            if i >= len(names):
+                continue
+            a = args[i]
+            for kind, slot in ((bpy.types.Collection, "collection"), (bpy.types.Material, "material")):
+                if isinstance(a, kind) and names[i] != slot and slot in params and slot not in kwargs:
+                    kwargs[slot] = args.pop(i)
+                    _h.NOTES.append(f"bwm.{fn.__name__}: the {slot} was passed in the {names[i]!r} slot; "
+                                    f"order is name, sizes, location, collection, material.")
+                    break
+        filled = set(names[:len(args)])
+        for key in list(kwargs):
+            if key in params:
+                continue
+            value = kwargs.pop(key)
+            target = None
+            if key in ("material", "color", "colour") and fn.__name__ in MATERIAL_MEANS:
+                target = MATERIAL_MEANS[fn.__name__]
+            elif key == "diameter" and "radius" in params:
+                target, value = "radius", num(value) / 2
+            elif OWN_ALIASES.get(fn.__name__, {}).get(key) in params:
+                target = OWN_ALIASES[fn.__name__][key]
+            elif ALIASES.get(key) in params:
+                target = ALIASES[key]
+            else:
+                close = difflib.get_close_matches(key, names, n=1, cutoff=0.8)
+                target = close[0] if close else None
+            if target and target not in kwargs and target not in filled:
+                kwargs[target] = value
+                _h.NOTES.append(f"bwm.{fn.__name__}: read {key!r} as {target!r}.")
+            else:
+                _h.NOTES.append(f"bwm.{fn.__name__}: ignored unknown argument {key!r} "
+                                f"(it takes {', '.join(names[:12])}).")
+        return fn(*args, **kwargs)
+
+    wrapper._forgiving = True
+    return wrapper
+
+
+for _name in __all__:
+    globals()[_name] = forgiving(globals()[_name])

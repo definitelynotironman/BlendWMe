@@ -106,7 +106,10 @@ def _check_keywords(call):
         elif parts[:2] == ["bmesh", "ops"] and len(parts) == 3:
             valid = _bmesh_op_args(getattr(bmesh.ops, parts[2]))
         elif parts[0] == "bwm" and len(parts) == 2:
-            valid = set(inspect.signature(getattr(helpers, parts[1])).parameters)
+            fn = getattr(helpers, parts[1])
+            if getattr(fn, "_forgiving", False):
+                return None      # it maps aliases and drops unknown extras itself, with a note
+            valid = set(inspect.signature(fn).parameters)
     except Exception:
         return None
     if not valid:

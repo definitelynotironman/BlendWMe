@@ -24,7 +24,7 @@ RUN_PYTHON = _fn(
     "Run Blender Python on the live scene to complete ONE meaningful stage. An undo step is "
     "saved first. Returns printed output and a list of scene changes. If it fails you get the line, "
     "the error and a hint, and everything the step created is removed, so fix it and run the whole step again.",
-    {"title": {"type": "string", "description": "Short stage title, 2-6 words, e.g. 'Roof with overhang'"},
+    {"title": {"type": "string", "description": "Short stage title, 2-6 words, naming the plan part it builds"},
      "explain": {"type": "string", "description": "What this step does and why, 1-2 short sentences. In Watch mode include the shortcut or menu a person would use."},
      "code": {"type": "string", "description": "Python code to run"},
      "part": {"type": "integer", "description": "Number of the plan part this step builds (1 = first)"}},
@@ -32,11 +32,11 @@ RUN_PYTHON = _fn(
 
 PLAN = _fn(
     "plan",
-    "Write the build plan BEFORE building: the parts in build order, each with its size and where it "
-    "attaches. The user sees it as a checklist that ticks off as you build. Call again to revise it.",
+    "Write the build plan BEFORE building: the parts of THE USER'S SUBJECT in build order, each with its "
+    "size and where it attaches. The user sees it as a checklist that ticks off as you build. Call again to revise it.",
     {"parts": {"type": "array", "items": {"type": "string"},
-               "description": "e.g. ['Stone base 4.4 x 3.4 x 0.25 m on the ground', 'Walls 4 x 3 x 2.4 m on the base', "
-                              "'Gable roof, ridge along X, 0.35 m overhang, on the walls', ...]"}},
+               "description": "One string per part: what it is, size in metres, what it rests on. "
+                              "Format only: '<part> <w x d x h> m on <other part or the ground>'"}},
     ["parts"])
 
 LOOK = _fn(
@@ -44,7 +44,7 @@ LOOK = _fn(
     "See the scene. A vision model studies the picture and reports what it sees, problems and "
     "fixes. mode 'angles' frames the target from several sides (best for judging form). "
     "'viewport' is what the user sees. 'camera' is through the scene camera.",
-    {"question": {"type": "string", "description": "What you want judged, e.g. 'Does the roof sit on the walls with an even overhang?'"},
+    {"question": {"type": "string", "description": "What you want judged, e.g. 'Do all parts touch where they should?'"},
      "mode": {"type": "string", "enum": ["angles", "viewport", "camera"]},
      "targets": {"type": "array", "items": {"type": "string"}, "description": "Object or collection names to frame (angles mode). Default: everything visible except a big ground plane."},
      "views": {"type": "array", "items": {"type": "string", "enum": ["front", "back", "left", "right", "top", "three_quarter"]}},

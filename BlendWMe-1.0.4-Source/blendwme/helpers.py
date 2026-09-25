@@ -392,3 +392,9 @@ def public_names():
 # ----------------------------------------------------------------------
 from .shapes import *     # noqa: E402,F401,F403
 from .furniture import *  # noqa: E402,F401,F403
+
+from .shapes import forgiving as _forgiving  # noqa: E402
+
+box = _forgiving(box)
+mesh = _forgiving(mesh)
+material = _forgiving(material)

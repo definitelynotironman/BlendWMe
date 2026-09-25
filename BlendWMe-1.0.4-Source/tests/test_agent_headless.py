@@ -423,6 +423,7 @@ gate = [json.loads(m["content"]) for m in agent.messages if m["role"] == "tool" 
 check("final check before the first finish, then finish is accepted",
       len(gate) == 1 and any("before finishing" in r for r in reviews) and session.status == state.DONE)
 check("reviews compare against the reference image", len(VISION_SEEN) >= 4)
+check("reviews restate the brief (pulls a drifting model back)", all('THE BRIEF IS: "Build from my reference"' in r for r in reviews))
 
 SCRIPT[:] = [step(i) for i in range(11, 14)] + [call("finish", summary="done")]
 agent.send("Build without a reference", dict(cfg_ref, references=[]), new_task=True)
@@ -491,14 +492,16 @@ SCRIPT[:] = [
     {"role": "assistant", "content": "", "tool_calls": [
         {"id": "a1", "type": "function", "function": {"name": "bwm.box", "arguments": json.dumps({"name": "R_Base", "size": [4, 3, 0.2], "location": [0, 0, 0.1], "material": "R_Stone", "title": "x"})}},
         {"id": "a2", "type": "function", "function": {"name": "bwm.material", "arguments": json.dumps({"name": "R_Stone", "color": [0.4, 0.4, 0.4]})}},
-        {"id": "a3", "type": "function", "function": {"name": "get_scene_info", "arguments": "{}"}}]},
+        {"id": "a3", "type": "function", "function": {"name": "get_scene_info", "arguments": "{}"}},
+        {"id": "a4", "type": "function", "function": {"name": "bwm_collection", "arguments": json.dumps({"name": "RescuedCol"})}}]},
     call("make_house", size=3),
     call("finish", summary="ok")]
 agent.send("Rescue test", CONFIG, new_task=True)
 pump_until(lambda: not agent.is_running())
 check("python-as-tools rescued into one step", "R_Base" in bpy.data.objects and bpy.data.objects["R_Base"].material_slots[0].name == "R_Stone")
 answered = {m["tool_call_id"] for m in agent.messages if m["role"] == "tool"}
-check("every rescued call answered", {"a1", "a2", "a3"} <= answered)
+check("every rescued call answered", {"a1", "a2", "a3", "a4"} <= answered)
+check("bwm_name tool calls (underscore for dot) are rescued too", "RescuedCol" in bpy.data.collections)
 check("model told to use run_python", any("are Python, not tools" in m["content"] for m in agent.messages if m["role"] == "tool"))
 check("unknown tool lists the real tools", any("There is no tool called 'make_house'" in m["content"] and "run_python" in m["content"]
                                                for m in agent.messages if m["role"] == "tool"))
@@ -675,6 +678,23 @@ check("kit: tolerant arguments", tuple(D_.objects["Tolerant"].dimensions) == (1,
       and abs(D_.objects["Cyl"].dimensions.x - 2) < 0.01)
 check("kit: all meshes valid (no loose or broken geometry)",
       all(not o.data.validate(verbose=False) for o in D_.objects if o.type == "MESH"))
+# Live round 1: calls Nemotron really made, which must now work (with a note, not an error)
+r = executor.run("col = bwm.collection('Live')\nstem = bwm.material('Stem', (0.2, 0.4, 0.1))\n"
+                 "bwm.cylinder('Stem', 0.002, 0.015, (0, 0, 0.342), col, stem, segments=6)")
+check("live: name, sizes, location, collection, material works for every shape", r["ok"] and "Stem" in D_.objects, r)
+r = executor.run("bwm.box('LiveWall', (4, 3, 2.4), (20, 0, 1.2))\n"
+                 "bwm.window('LiveWin', 0.8, 1.0, (20, -1.5, 1.5), wall='LiveWall', material=(1, 1, 1))\n"
+                 "bwm.duplicate('Stem', 'Stem2', collection='Live')\nbwm.box('Red', (1, 1, 1), (25, 0, 0.5), color='red')\n"
+                 "bwm.gable_roof('LiveRoof', 4, 3, height=1.2, location=(20, 0, 2.4))")
+check("live: alias arguments are read, unknown extras ignored with a note", r["ok"]
+      and any("frame_material" in n for n in r.get("helper_notes", []))
+      and any("ignored unknown argument 'collection'" in n for n in r.get("helper_notes", []))
+      and D_.objects["Red"].material_slots[0].material.diffuse_color[0] > 0.5
+      and abs(bwm_h.bounds("LiveRoof_Gables").size.z - 1.2) < 0.01, r)
+from blendwme import prompts as prompts_mod, tools as tools_mod  # noqa: E402
+schema_text = json.dumps(tools_mod.ALL) + prompts_mod.CORE
+check("tool schemas and core prompt carry no subject the model could copy",
+      not any(w in schema_text for w in ("Stone base", "Cottage", "Gable roof", "four windows", "Walls 4 x 3")))
 info = knowledge.inspect_api("bwm")
 check("kit: inspect_api lists the new helpers", all(f"bwm.{n}" in " ".join(info["bwm_helpers"]) for n in ("cylinder", "gable_roof", "bed", "place_on")))
 check("kit: inspect_api gives full help for one helper", "WALL TOP" in str(knowledge.inspect_api("bwm.gable_roof")).upper()

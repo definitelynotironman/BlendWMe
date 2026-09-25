@@ -16,8 +16,15 @@ PY_ROOTS = ("bwm.", "bpy.", "bmesh.", "mathutils.", "math.")
 _FIRST = ("bwm.material", "bwm.collection", "bpy.data.materials", "bpy.data.collections")
 
 
+def normalise_name(name):
+    """bwm_collection -> bwm.collection (Nemotron sometimes swaps the dot for an underscore)."""
+    if isinstance(name, str) and name.startswith("bwm_"):
+        return "bwm." + name[4:]
+    return name
+
+
 def is_python_call(name):
-    return isinstance(name, str) and name.startswith(PY_ROOTS)
+    return isinstance(normalise_name(name), str) and normalise_name(name).startswith(PY_ROOTS)
 
 
 def _filter_kwargs(name, args, helpers_module=None, bpy_module=None):

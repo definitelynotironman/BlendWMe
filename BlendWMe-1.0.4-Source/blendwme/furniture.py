@@ -131,8 +131,8 @@ def _on_top_of(host, local_offset):
 # ----------------------------------------------------------------------
 
 
-def wall(name, start=(0, 0), end=(4, 0), height=2.6, thickness=0.15, base=0.0, collection=None,
-         material=None, bevel=0.0):
+def wall(name, start=(0, 0), end=(4, 0), height=2.6, thickness=0.15, collection=None, material=None,
+         base=0.0, bevel=0.0):
     """A straight wall from start (x, y) to end (x, y) on the floor at height `base`.
 
     The wall's centre line runs from start to end. Returns the wall object.
@@ -149,7 +149,7 @@ def wall(name, start=(0, 0), end=(4, 0), height=2.6, thickness=0.15, base=0.0, c
     return o
 
 
-def floor(name, size=(4, 4), location=(0, 0, 0), thickness=0.1, collection=None, material=None):
+def floor(name, size=(4, 4), location=(0, 0, 0), collection=None, material=None, thickness=0.1):
     """A floor slab whose TOP is at location.z, centred on (x, y)."""
     w, d = vec(size, 2, 4)
     x, y, z = vec(location)
@@ -230,9 +230,9 @@ def opening(target_wall, center, width=1.0, height=1.2, name=None):
     return cutter
 
 
-def window(name, width=1.0, height=1.2, location=(0, 0, 1.5), wall=None, facing=None, frame=0.07,
-           depth=None, bars=True, sill=True, cut=True, collection=None, frame_material=None,
-           glass_material=None):
+def window(name, width=1.0, height=1.2, location=(0, 0, 1.5), wall=None, collection=None,
+           frame_material=None, glass_material=None, facing=None, frame=0.07, depth=None, bars=True,
+           sill=True, cut=True):
     """A window with frame, glass, cross bars and a sill. location is the window's CENTRE.
 
     With wall=..., the window snaps into the wall's thickness, cuts a hole through it
@@ -269,9 +269,9 @@ def window(name, width=1.0, height=1.2, location=(0, 0, 1.5), wall=None, facing=
     return root
 
 
-def door(name, width=0.9, height=2.0, location=(0, 0, 0), wall=None, facing=None, frame=0.08,
-         depth=None, knob=True, planks=4, cut=True, collection=None, material=None, frame_material=None,
-         knob_material=None):
+def door(name, width=0.9, height=2.0, location=(0, 0, 0), wall=None, collection=None, material=None,
+         frame_material=None, knob_material=None, facing=None, frame=0.08, depth=None, knob=True, planks=4,
+         cut=True):
     """A wooden door with frame, plank lines and a knob. location is the BOTTOM CENTRE (on the floor).
 
     With wall=..., it snaps into the wall, cuts the opening and faces away from the scene centre.
@@ -300,7 +300,7 @@ def door(name, width=0.9, height=2.0, location=(0, 0, 0), wall=None, facing=None
         x = -W / 2 + W * i / n
         _part(root, f"Plank_Line{i}", (0.012, 0.01, H * 0.96), (x, -D / 2 + 0.017, H / 2), fm)
     if knob:
-        k = sphere(f"{name}_Knob", 0.035, (W / 2 - 0.12, -D / 2 - 0.01, H * 0.48), 16, 8, material=km)
+        k = sphere(f"{name}_Knob", 0.035, (W / 2 - 0.12, -D / 2 - 0.01, H * 0.48), material=km, segments=16, rings=8)
         _attach(root, k)
     _place_root(root, p, rot)
     if wall_obj is not None and cut:
@@ -308,8 +308,8 @@ def door(name, width=0.9, height=2.0, location=(0, 0, 0), wall=None, facing=None
     return root
 
 
-def path(name, points=((0, -2), (0, -5)), width=0.8, stones=True, thickness=0.04, z=0.0, seed=3,
-         collection=None, material=None):
+def path(name, points=((0, -2), (0, -5)), collection=None, material=None, width=0.8, stones=True,
+         thickness=0.04, z=0.0, seed=3):
     """A garden path along (x, y) points on the ground.
 
     stones=True lays chunky stepping stones (low poly, slightly random); False makes one flat strip.
@@ -330,7 +330,7 @@ def path(name, points=((0, -2), (0, -5)), width=0.8, stones=True, thickness=0.04
             left.append(p + side)
             right.append(p - side)
         outline = [(v.x, v.y) for v in left] + [(v.x, v.y) for v in reversed(right)]
-        strip = extrude_profile(f"{name}_Strip", outline, T, (0, 0, z0 + T / 2), "Z", material=stone)
+        strip = extrude_profile(f"{name}_Strip", outline, T, (0, 0, z0 + T / 2), material=stone, axis="Z")
         _attach(root, strip)
         return root
     rng = random.Random(int(num(seed, 3)))
@@ -356,8 +356,8 @@ def path(name, points=((0, -2), (0, -5)), width=0.8, stones=True, thickness=0.04
 # ----------------------------------------------------------------------
 
 
-def table(name, size=(1.2, 0.7, 0.75), location=(0, 0, 0), rot_deg=0, top=0.04, leg=0.05,
-          collection=None, material=None, leg_material=None, against=None):
+def table(name, size=(1.2, 0.7, 0.75), location=(0, 0, 0), collection=None, material=None, rot_deg=0,
+          against=None, top=0.04, leg=0.05, leg_material=None):
     """A table: top + 4 legs. size = (width, depth, height)."""
     w, d, h = vec(size, 3, 0.75)
     wood = _mat(material, "Wood", (0.55, 0.35, 0.18), 0.6)
@@ -370,10 +370,10 @@ def table(name, size=(1.2, 0.7, 0.75), location=(0, 0, 0), rot_deg=0, top=0.04, 
     return _place_root(root, location, rot_deg, against)
 
 
-def desk(name, size=(1.4, 0.7, 0.75), location=(0, 0, 0), rot_deg=0, drawers=True, collection=None,
-         material=None, against=None):
+def desk(name, size=(1.4, 0.7, 0.75), location=(0, 0, 0), collection=None, material=None, rot_deg=0,
+         against=None, drawers=True):
     """A desk: a table with an optional drawer block on the right."""
-    root = table(name, size, (0, 0, 0), 0, collection=collection, material=material)
+    root = table(name, size, (0, 0, 0), collection, material)
     w, d, h = vec(size, 3, 0.75)
     if drawers:
         wood = root.children[0].active_material
@@ -384,8 +384,8 @@ def desk(name, size=(1.4, 0.7, 0.75), location=(0, 0, 0), rot_deg=0, drawers=Tru
     return _place_root(root, location, rot_deg, against)
 
 
-def chair(name, location=(0, 0, 0), rot_deg=0, seat_height=0.45, size=(0.45, 0.45), back_height=0.45,
-          collection=None, material=None, cushion_material=None, at=None):
+def chair(name, location=(0, 0, 0), collection=None, material=None, rot_deg=0, at=None, seat_height=0.45,
+          size=(0.45, 0.45), back_height=0.45, cushion_material=None):
     """A chair facing -Y (its back is on the +Y side). rot_deg=180 makes it face +Y.
 
     at='Desk' (or a table): ignore location/rot_deg and tuck the chair in front of it, facing it.
@@ -410,8 +410,8 @@ def chair(name, location=(0, 0, 0), rot_deg=0, seat_height=0.45, size=(0.45, 0.4
     return _place_root(root, location, rot_deg)
 
 
-def bed(name, size=(1.6, 2.1), location=(0, 0, 0), rot_deg=0, height=0.5, headboard=1.0, collection=None,
-        frame_material=None, sheet_material=None, blanket_material=None, pillow_material=None, against=None):
+def bed(name, size=(1.6, 2.1), location=(0, 0, 0), collection=None, frame_material=None, rot_deg=0,
+        against=None, height=0.5, headboard=1.0, sheet_material=None, blanket_material=None, pillow_material=None):
     """A bed. size = (width, length) of the mattress. The headboard is on the +Y end
     (against='Wall' puts the headboard on that wall)."""
     w, L = vec(size, 2, 1.6)
@@ -436,8 +436,8 @@ def bed(name, size=(1.6, 2.1), location=(0, 0, 0), rot_deg=0, height=0.5, headbo
     return _place_root(root, location, rot_deg, against)
 
 
-def wardrobe(name, size=(1.2, 0.6, 2.0), location=(0, 0, 0), rot_deg=0, doors=2, collection=None,
-             material=None, handle_material=None, against=None):
+def wardrobe(name, size=(1.2, 0.6, 2.0), location=(0, 0, 0), collection=None, material=None, rot_deg=0,
+             against=None, doors=2, handle_material=None):
     """A wardrobe / closet with doors on the -Y side. size = (width, depth, height)."""
     w, d, h = vec(size, 3, 2.0)
     body = _mat(material, "Wardrobe_Wood", (0.72, 0.58, 0.42), 0.6)
@@ -456,14 +456,15 @@ def wardrobe(name, size=(1.2, 0.6, 2.0), location=(0, 0, 0), rot_deg=0, doors=2,
     return _place_root(root, location, rot_deg, against)
 
 
-def closet(name, size=(1.2, 0.6, 2.0), location=(0, 0, 0), rot_deg=0, doors=2, collection=None,
-           material=None, handle_material=None, against=None):
+def closet(name, size=(1.2, 0.6, 2.0), location=(0, 0, 0), collection=None, material=None, rot_deg=0,
+           against=None, doors=2, handle_material=None):
     """Same as wardrobe."""
-    return wardrobe(name, size, location, rot_deg, doors, collection, material, handle_material, against)
+    return wardrobe(name, size, location, collection, material, rot_deg=rot_deg, against=against, doors=doors,
+                    handle_material=handle_material)
 
 
-def shelf(name, size=(0.8, 0.3, 1.8), location=(0, 0, 0), rot_deg=0, shelves=4, books=True, seed=7,
-          collection=None, material=None, against=None):
+def shelf(name, size=(0.8, 0.3, 1.8), location=(0, 0, 0), collection=None, material=None, rot_deg=0,
+          against=None, shelves=4, books=True, seed=7):
     """An open bookshelf (open side -Y) with optional colourful books."""
     w, d, h = vec(size, 3, 1.8)
     wood = _mat(material, "Wood", (0.55, 0.35, 0.18), 0.6)
@@ -493,8 +494,8 @@ def shelf(name, size=(0.8, 0.3, 1.8), location=(0, 0, 0), rot_deg=0, shelves=4, 
     return _place_root(root, location, rot_deg, against)
 
 
-def monitor(name, location=(0, 0, 0.75), rot_deg=0, size=(0.6, 0.35), collection=None,
-            material=None, screen_material=None, on=None):
+def monitor(name, location=(0, 0, 0.75), collection=None, material=None, rot_deg=0, on=None,
+            size=(0.6, 0.35), screen_material=None):
     """A computer monitor standing on a desk. location = point on the desk under its stand.
 
     on='Desk': ignore location/rot_deg; stand at the back of that desk, facing its front.
@@ -514,8 +515,8 @@ def monitor(name, location=(0, 0, 0.75), rot_deg=0, size=(0.6, 0.35), collection
     return _place_root(root, location, rot_deg)
 
 
-def keyboard(name, location=(0, 0, 0.75), rot_deg=0, size=(0.44, 0.14, 0.025), collection=None, material=None,
-             on=None):
+def keyboard(name, location=(0, 0, 0.75), collection=None, material=None, rot_deg=0, on=None,
+             size=(0.44, 0.14, 0.025)):
     """A keyboard lying on a desk. location = point on the desk under its centre.
 
     on='Desk': ignore location/rot_deg; lie near the front edge of that desk.
@@ -531,8 +532,8 @@ def keyboard(name, location=(0, 0, 0.75), rot_deg=0, size=(0.44, 0.14, 0.025), c
     return _place_root(root, location, rot_deg)
 
 
-def pc_tower(name, location=(0, 0, 0), rot_deg=0, size=(0.2, 0.45, 0.42), glow=True, collection=None,
-             material=None, against=None):
+def pc_tower(name, location=(0, 0, 0), collection=None, material=None, rot_deg=0, against=None,
+             size=(0.2, 0.45, 0.42), glow=True):
     """A PC tower case standing on the floor (or a desk). Front faces -Y."""
     w, d, h = vec(size, 3, 0.42)
     body = _mat(material, "Plastic_Black", (0.03, 0.03, 0.035), 0.4)
@@ -544,30 +545,31 @@ def pc_tower(name, location=(0, 0, 0), rot_deg=0, size=(0.2, 0.45, 0.42), glow=T
     return _place_root(root, location, rot_deg, against)
 
 
-def rug(name, size=(2.0, 1.4), location=(0, 0, 0), thickness=0.012, round_rug=False, collection=None, material=None):
+def rug(name, size=(2.0, 1.4), location=(0, 0, 0), collection=None, material=None, thickness=0.012,
+        round_rug=False):
     """A rug on the floor. round_rug=True makes an oval."""
     w, d = vec(size, 2, 2.0)
     t = num(thickness, 0.012)
     m = _mat(material, "Rug", (0.6, 0.25, 0.2), 0.95)
     x, y, z = vec(location)
     if round_rug:
-        o = cylinder(name, 0.5, t, (x, y, z + t / 2), segments=48, material=m, smooth=False)
+        o = cylinder(name, 0.5, t, (x, y, z + t / 2), collection, m, segments=48, smooth=False)
         o.scale = (w, d, 1)
         return o
     return _h.box(name, (w, d, t), (x, y, z + t / 2), collection, m, 0.004)
 
 
-def lamp(name, location=(0, 0, 0), height=1.6, light=True, power=60, collection=None, material=None,
+def lamp(name, location=(0, 0, 0), collection=None, material=None, height=1.6, light=True, power=60,
          shade_material=None):
     """A floor lamp with a fabric shade (and a real point light inside when light=True)."""
     H = num(height, 1.6)
     metal = _mat(material, "Metal_Dark", (0.12, 0.12, 0.13), 0.35, 1.0)
     shade = _mat(shade_material, "Lamp_Shade", (0.95, 0.88, 0.7), 0.9)
     root = _root(name, collection)
-    _attach(root, cylinder(f"{name}_Base", 0.15, 0.03, (0, 0, 0.015), 24, material=metal))
-    _attach(root, cylinder(f"{name}_Pole", 0.015, H - 0.2, (0, 0, (H - 0.2) / 2 + 0.03), 12, material=metal))
+    _attach(root, cylinder(f"{name}_Base", 0.15, 0.03, (0, 0, 0.015), material=metal, segments=24))
+    _attach(root, cylinder(f"{name}_Pole", 0.015, H - 0.2, (0, 0, (H - 0.2) / 2 + 0.03), material=metal, segments=12))
     from .shapes import cone
-    _attach(root, cone(f"{name}_Shade", 0.22, 0.14, 0.28, (0, 0, H - 0.1), 32, material=shade, caps=False))
+    _attach(root, cone(f"{name}_Shade", 0.22, 0.14, 0.28, (0, 0, H - 0.1), material=shade, segments=32, caps=False))
     if light:
         _h.claim_name(f"{name}_Light")
         data = bpy.data.lights.new(f"{name}_Light", "POINT")
@@ -579,7 +581,7 @@ def lamp(name, location=(0, 0, 0), height=1.6, light=True, power=60, collection=
     return _place_root(root, location, 0)
 
 
-def plant(name, location=(0, 0, 0), height=0.8, seed=5, collection=None, pot_material=None, leaf_material=None):
+def plant(name, location=(0, 0, 0), collection=None, leaf_material=None, height=0.8, seed=5, pot_material=None):
     """A potted plant: a tapered pot and a cluster of low poly leaf blobs."""
     H = num(height, 0.8)
     pot = _mat(pot_material, "Terracotta", (0.7, 0.35, 0.2), 0.8)
@@ -588,12 +590,20 @@ def plant(name, location=(0, 0, 0), height=0.8, seed=5, collection=None, pot_mat
     root = _root(name, collection)
     from .shapes import cone
     ph = H * 0.35
-    _attach(root, cone(f"{name}_Pot", ph * 0.45, ph * 0.6, ph, (0, 0, ph / 2), 16, material=pot, smooth=False))
+    _attach(root, cone(f"{name}_Pot", ph * 0.45, ph * 0.6, ph, (0, 0, ph / 2), material=pot, segments=16, smooth=False))
     for i in range(6):
         a = i * math.pi / 3 + rng.uniform(-0.3, 0.3)
         r = H * rng.uniform(0.12, 0.2)
         dist = H * 0.12 if i else 0.0
         blob = sphere(f"{name}_Leaves{i + 1}", r, (math.cos(a) * dist, math.sin(a) * dist,
-                                                   ph + H * rng.uniform(0.2, 0.45)), 8, 6, material=leaf, smooth=False)
+                                                   ph + H * rng.uniform(0.2, 0.45)), material=leaf, segments=8,
+                      rings=6, smooth=False)
         _attach(root, blob)
     return _place_root(root, location, 0)
+
+
+# Forgiving arguments (aliases, odd slots, unknown extras), like the shapes.
+from .shapes import forgiving  # noqa: E402
+
+for _name in __all__:
+    globals()[_name] = forgiving(globals()[_name])

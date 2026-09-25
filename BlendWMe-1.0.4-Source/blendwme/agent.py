@@ -502,9 +502,10 @@ class Agent:
         parsed = []
         for c in python:
             try:
-                parsed.append((c["function"]["name"], llm.parse_arguments(c["function"]["arguments"])))
+                parsed.append((coerce.normalise_name(c["function"]["name"]),
+                               llm.parse_arguments(c["function"]["arguments"])))
             except ValueError:
-                parsed.append((c["function"]["name"], {}))
+                parsed.append((coerce.normalise_name(c["function"]["name"]), {}))
         import bpy
         code, notes = coerce.to_code(parsed, helpers, bpy)
         self.rescued += len(python)
@@ -540,8 +541,8 @@ class Agent:
             if handler is None:
                 return {"error": f"There is no tool called {name!r}. The only tools are: {', '.join(available)}. "
                                  "To run Python, call run_python with your code in its code argument, e.g. "
-                                 "run_python(title='Walls', explain='Main wall block', "
-                                 "code=\"bwm.box('Walls', (4, 3, 2.4), (0, 0, 1.45))\")."}
+                                 "run_python(title='Main body', explain='The main block', "
+                                 "code=\"bwm.box('Body', (2, 1, 1), (0, 0, 0.5))\")."}
             return {"error": f"{name!r} cannot be used in {session.mode} mode. Tools here: {', '.join(available)}."}
         session.set_status(WORKING)
         t0 = time.time()
@@ -829,7 +830,8 @@ class Agent:
                   + "), " + info.get("layout", "") + ". Front looks along +Y, right looks along -X.")
         ref_text = f"The next {len(refs)} image(s) are the user's REFERENCE." if refs else ""
         header = (f"[Art director review {when}. BlendWMe captured the scene from several angles"
-                  + (" next to the user's reference" if refs else "") + " and judged it against the brief.]")
+                  + (" next to the user's reference" if refs else "") + " and judged it against the brief. "
+                  + "THE BRIEF IS: \"" + self.brief[:400] + "\". Everything you build must serve this brief.]")
         if self.agent_sees:
             self.pending_images.append({"caption": header + " " + layout + " " + ref_text,
                                         "paths": [info["path"]] + refs})
