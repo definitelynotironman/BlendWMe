@@ -537,6 +537,7 @@ class Agent:
         except ValueError as e:
             return {"error": str(e) + " Send the tool call again with valid JSON arguments."}
         session.tool_steps += 1
+        name, args = _code_tool_alias(name, args)
         args = _coerce_types(name, args)
         handler = getattr(self, "_tool_" + name, None)
         available = [t["function"]["name"] for t in tools.for_mode(session.mode)]
@@ -976,6 +977,25 @@ class Agent:
         session.set_status(DONE)
         self.finished = True
         return {"ok": True}
+
+
+def _code_tool_alias(name, args):
+    """Tool names models know from elsewhere that carry Python code -> run_python.
+
+    Nemotron 3 Ultra called 'blender_exec' in three live runs, and MCP for Blender's tool is
+    'execute_blender_code'. Any unknown tool whose arguments hold code is run as run_python.
+    """
+    known = {t["function"]["name"] for t in tools.ALL}
+    if name in known or not isinstance(args, dict):
+        return name, args
+    code = next((args[k] for k in ("code", "python", "script", "source") if isinstance(args.get(k), str)), None)
+    if code is None:
+        return name, args
+    fixed = {"title": str(args.get("title") or "Step"), "explain": str(args.get("explain") or ""),
+             "code": code}
+    if args.get("part") is not None:
+        fixed["part"] = args["part"]
+    return "run_python", fixed
 
 
 def _plan_parts(args):

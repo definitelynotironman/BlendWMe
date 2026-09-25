@@ -240,6 +240,29 @@ _TOOL_TAG = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 _FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
 
+def _bare_json_calls(text):
+    """Tool calls written as plain JSON objects in the text, one after another.
+
+    Nemotron 3 Ultra wrote '{"tool": "blender_exec", "arguments": {...}}' twice in a row with no
+    tags or fences in a live run. Returns the raw JSON strings that look like tool calls.
+    """
+    decoder = json.JSONDecoder()
+    out, i = [], 0
+    while True:
+        i = text.find("{", i)
+        if i < 0:
+            return out
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i += 1
+            continue
+        if isinstance(obj, dict) and (obj.get("name") or obj.get("tool")) and \
+                any(k in obj for k in ("arguments", "args", "parameters")):
+            out.append(text[i:end])
+        i = end
+
+
 def normalise_message(message):
     """Make every reply look like a standard assistant message.
 
@@ -250,7 +273,7 @@ def normalise_message(message):
     content = strip_thinking(message.get("content") or "")
     tool_calls = message.get("tool_calls") or []
     if not tool_calls and content:
-        found = _TOOL_TAG.findall(content) or _FENCED.findall(content)
+        found = _TOOL_TAG.findall(content) or _FENCED.findall(content) or _bare_json_calls(content)
         for raw in found:
             try:
                 obj = json.loads(raw)
@@ -269,6 +292,9 @@ def normalise_message(message):
         if tool_calls:
             content = _TOOL_TAG.sub("", content)
             content = _FENCED.sub("", content).strip()
+            for raw in found:
+                content = content.replace(raw, "")
+            content = content.strip()
     out = {"role": "assistant", "content": content}
     if tool_calls:
         clean = []

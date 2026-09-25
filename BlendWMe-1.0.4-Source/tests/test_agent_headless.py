@@ -507,6 +507,8 @@ SCRIPT[:] = [
         {"id": "a3", "type": "function", "function": {"name": "get_scene_info", "arguments": "{}"}},
         {"id": "a4", "type": "function", "function": {"name": "bwm_collection", "arguments": json.dumps({"name": "RescuedCol"})}}]},
     call("make_house", size=3),
+    call("blender_exec", code="bwm.box('ViaBlenderExec', (1, 1, 1))"),
+    {"role": "assistant", "content": '\n{"tool": "execute_blender_code", "arguments": {"code": "bwm.box(\'ViaBareJson\', (1, 1, 1))"}}'},
     call("finish", summary="ok")]
 agent.send("Rescue test", CONFIG, new_task=True)
 pump_until(lambda: not agent.is_running())
@@ -514,6 +516,8 @@ check("python-as-tools rescued into one step", "R_Base" in bpy.data.objects and 
 answered = {m["tool_call_id"] for m in agent.messages if m["role"] == "tool"}
 check("every rescued call answered", {"a1", "a2", "a3", "a4"} <= answered)
 check("bwm_name tool calls (underscore for dot) are rescued too", "RescuedCol" in bpy.data.collections)
+check("code tools from elsewhere (blender_exec, MCP's execute_blender_code) run as run_python",
+      "ViaBlenderExec" in bpy.data.objects and "ViaBareJson" in bpy.data.objects)
 check("model told to use run_python", any("are Python, not tools" in m["content"] for m in agent.messages if m["role"] == "tool"))
 check("unknown tool lists the real tools", any("There is no tool called 'make_house'" in m["content"] and "run_python" in m["content"]
                                                for m in agent.messages if m["role"] == "tool"))
