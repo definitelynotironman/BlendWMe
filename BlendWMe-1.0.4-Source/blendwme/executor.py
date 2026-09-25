@@ -206,6 +206,7 @@ def run(code, title="AI step", author="ai"):
             result["auto_repaired"] = repairs
         return result
     del repair.NOTES[:]
+    helpers.begin_step()
 
     before = scene_info.snapshot()
     before_ids = _id_pointers()
@@ -228,6 +229,8 @@ def run(code, title="AI step", author="ai"):
     removed = 0
     if not ok:
         removed = _roll_back(before_ids)
+    # Earlier AI objects this step replaced: deleted on success, restored on failure.
+    helpers.end_step(ok)
     try:
         bpy.context.view_layer.update()
     except Exception:
@@ -251,6 +254,8 @@ def run(code, title="AI step", author="ai"):
         result["repair_note"] = ("BlendWMe fixed these small API slips and ran the step"
                                  + (" successfully" if ok else "")
                                  + ". Write it the fixed way next time.")
+    if helpers.NOTES:
+        result["helper_notes"] = list(helpers.NOTES)[:8]
     printed = stdout.getvalue()
     if printed:
         result["printed"] = printed[:MAX_OUTPUT] + ("..." if len(printed) > MAX_OUTPUT else "")

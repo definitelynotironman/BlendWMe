@@ -508,6 +508,109 @@ agent.messages = [{"role": "system", "content": "s"}, {"role": "user", "content"
 agent._compact(force=True)
 check("compaction never adds a fake code field", "code" not in json.loads(agent.messages[2]["tool_calls"][0]["function"]["arguments"]))
 
+# ----------------------------------------------------------------------
+# 7i. Fix A3: the bwm modelling kit (shapes, placement, architecture, furniture)
+# ----------------------------------------------------------------------
+import math  # noqa: E402
+from blendwme import helpers as bwm_h, knowledge  # noqa: E402
+fresh_scene()
+HOUSE = """
+col = bwm.collection('Cottage')
+bwm.box('Base', (4.4, 3.4, 0.25), (0, 0, 0.125), col, 'stone', bevel=0.03)
+walls = bwm.box('Walls', (4, 3, 2.4), (0, 0, 1.45), col, '#e8d6b0')
+roof = bwm.gable_roof('Roof', 4, 3, 1.3, (0, 0, 2.65), collection=col, gable_material='#e8d6b0')
+ch = bwm.box('Chimney', (0.45, 0.45, 1.2), (1.2, 0.6, 4), col, (150, 60, 50))
+bwm.place_on(ch, roof, sink=True)
+bwm.door('Door', 0.9, 2.0, (0, -1.4, 0.25), wall=walls)
+for i, x in enumerate((-1.3, 1.3)):
+    bwm.window(f'Win_F{i}', 0.8, 1.0, (x, -1.2, 1.6), wall=walls)
+    bwm.window(f'Win_B{i}', 0.8, 1.0, (x, 1.7, 1.6), wall='Walls')
+bwm.path('Path', [(0, -1.9), (0.3, -3.5), (-0.2, -5)])
+"""
+r = executor.run(HOUSE, "house")
+check("kit: cottage builds", r["ok"], r)
+D_ = bpy.data
+# Roof top surface under the chimney's low (front) edge: 2.65 + 1.3 - (1.3 / 1.5) * 0.825 + slab = 3.43
+check("kit: chimney sunk into the roof slope", abs(bwm_h.bounds("Chimney").min.z - 3.43) < 0.03,
+      bwm_h.bounds("Chimney"))
+check("kit: windows snap onto the nearest face of a solid house body",
+      abs(D_.objects["Win_F0"].location.y + 1.5) < 0.01 and abs(D_.objects["Win_B0"].location.y - 1.5) < 0.01)
+check("kit: windows face outwards", abs(D_.objects["Win_F0"].rotation_euler.z) < 0.01
+      and abs(abs(D_.objects["Win_B0"].rotation_euler.z) - math.pi) < 0.01)
+check("kit: door and windows cut live holes", sum(1 for m in D_.objects["Walls"].modifiers if m.type == "BOOLEAN") == 5)
+check("kit: gable roof underside meets the wall tops", abs(bwm_h.bounds("Roof_Gables").max.z - 3.95) < 0.01
+      and abs(bwm_h.bounds("Roof_Gables").min.z - 2.65) < 0.01)
+
+r = executor.run(HOUSE, "house again")
+check("kit: re-running a step replaces the AI's earlier objects",
+      r["ok"] and not [o.name for o in D_.objects if ".00" in o.name or ".replaced" in o.name]
+      and any("Replaced" in n for n in r.get("helper_notes", [])), r)
+D_.objects["Base"]["blendwme_author"] = "user"           # the user takes ownership of the base
+r = executor.run("bwm.box('Base', (1, 1, 1))\nbwm.box('Walls', (1, 1, 1))\nraise RuntimeError('late failure')")
+check("kit: failed step restores the replaced objects", r["ok"] is False and tuple(round(v, 2) for v in D_.objects["Walls"].dimensions) == (4, 3, 2.4))
+r = executor.run("bwm.box('Base', (1, 1, 1))")
+check("kit: user objects are never replaced", "Base" in D_.objects and round(D_.objects["Base"].dimensions.x, 1) == 4.4
+      and "Base.001" in D_.objects, [o.name for o in D_.objects if o.name.startswith("Base")])
+
+ROOM = """
+bwm.floor('Floor', (5, 4), (8, 0, 0))
+bwm.wall('Wall_Back', (5.5, 2), (10.5, 2), 2.6)
+bwm.wall('Wall_Left', (5.5, -2), (5.5, 2), 2.6)
+bwm.bed('Bed', (1.6, 2.0), (6.6, 1, 0), against='Wall_Back')
+bwm.desk('Desk', (1.4, 0.7, 0.75), (9.3, 1, 0), against='Wall_Back')
+bwm.monitor('Monitor', on='Desk')
+bwm.keyboard('Keyboard', on='Desk')
+bwm.pc_tower('PC', (10.2, 1.0, 0), against='Wall_Back')
+bwm.chair('Chair', at='Desk')
+bwm.wardrobe('Closet', (1.2, 0.6, 2.0), (6, -1.0, 0), against='Wall_Left')
+bwm.shelf('Shelf', (0.8, 0.3, 1.8), (8.1, 1, 0), against='Wall_Back')
+bwm.rug('Rug', (2, 1.4), (8, 0, 0)); bwm.lamp('Lamp', (10.2, -1.5, 0)); bwm.plant('Plant', (7.5, -1.6, 0))
+bwm.window('RoomWin', 1.2, 1.0, (8, 2, 1.5), wall='Wall_Back')
+"""
+r = executor.run(ROOM, "room")
+check("kit: room with furniture builds", r["ok"], r)
+check("kit: bed headboard against the back wall", abs(bwm_h.bounds("Bed").max.y - 1.915) < 0.03, bwm_h.bounds("Bed"))
+check("kit: closet turned to face the room", abs(math.degrees(D_.objects["Closet"].rotation_euler.z) - 90) < 0.5
+      and abs(bwm_h.bounds("Closet").min.x - 5.585) < 0.04, bwm_h.bounds("Closet"))
+check("kit: monitor stands on the desk", abs(bwm_h.bounds("Monitor").min.z - bwm_h.bounds("Desk").max.z) < 0.02 or
+      abs(D_.objects["Monitor"].location.z - 0.75) < 0.01)
+check("kit: chair tucked in front of the desk, facing it",
+      abs(abs(D_.objects["Chair"].rotation_euler.z - D_.objects["Desk"].rotation_euler.z) - math.pi) < 0.01
+      and D_.objects["Chair"].location.y < D_.objects["Desk"].location.y)
+check("kit: room window goes through the thin wall", abs(D_.objects["RoomWin"].location.y - 2) < 0.01)
+
+SHAPES = """
+c = bwm.cone('IceCone', 0.35, 0.0, 1.2, (-6, 0, 0.6), axis='-Z', material=(0.8, 0.55, 0.25))
+s = bwm.sphere('Scoop', 0.4, ('-6', 0, 1.3), material='pink')
+bwm.place_on(bwm.sphere('Scoop2', (0.36, 0.36, 0.32), (-6, 0, 3)), s, sink=True)
+bwm.lathe('Vase', [(0, 0), (0.3, 0.05), (0.35, 0.4), (0.15, 0.8), (0.2, 1.0)], (-6, 3, 0))
+bwm.torus('Ring', 0.5, 0.1, (-6, -3, 0.1))
+bwm.tube('Pipe', [(-7, -5, 0.2), (-6, -5, 1), (-5, -5, 0.4)], [0.08, 0.05, 0.03])
+bwm.limb('Arm', (-7, 5, 1), (-5, 5, 1), 0.12, 0.06, bend=(0, -0.3, 0))
+b = bwm.loft('Body', [(0, 0.0), (0.2, 0.4, 0.3), (0.8, 0.5, 0.35), (1.4, 0.3), (1.6, 0)], (-9, 0, 0), subdivide=1)
+bwm.mirror(b); bwm.bevel('Ring', 0.01); bwm.array('Pipe', 2, (0, 1, 0)); bwm.solidify('Ring')
+bwm.extrude_profile('Ell', [(0, 0), (1, 0), (1, 0.3), (0.3, 0.3), (0.3, 1), (0, 1)], 0.5, (-9, 4, 0))
+bwm.prism('Prism', (2, 1, 1), (-9, -4, 0.5)); bwm.wedge('Ramp', (1, 2, 0.5), (-9, -6, 0.25))
+g = bwm.group('Treats', 'IceCone', 'Scoop', 'Scoop2'); bwm.rotate(g, 10)
+bwm.duplicate('IceCone', 'Cone2', offset=(0, -1.5, 0))
+bwm.box('Tolerant', '1, 2, 3', ['0', '0', '1.5'], material='#ff0000')
+bwm.cylinder('Cyl', '0.5', '2', (3, 3, 1), axis='x')
+"""
+r = executor.run(SHAPES, "shapes")
+check("kit: every shape builds", r["ok"], r)
+cb = bwm_h.bounds("IceCone")
+check("kit: cone point-down with real size", abs(cb.size.z - 1.2) < 0.01 and abs(cb.size.x - 0.7) < 0.02)
+check("kit: lathe profile becomes a closed body", D_.objects["Vase"].data.polygons and abs(bwm_h.bounds("Vase").size.z - 1.0) < 0.01)
+check("kit: tolerant arguments", tuple(D_.objects["Tolerant"].dimensions) == (1, 2, 3)
+      and D_.objects["Tolerant"].material_slots[0].material.diffuse_color[0] > 0.99
+      and abs(D_.objects["Cyl"].dimensions.x - 2) < 0.01)
+check("kit: all meshes valid (no loose or broken geometry)",
+      all(not o.data.validate(verbose=False) for o in D_.objects if o.type == "MESH"))
+info = knowledge.inspect_api("bwm")
+check("kit: inspect_api lists the new helpers", all(f"bwm.{n}" in " ".join(info["bwm_helpers"]) for n in ("cylinder", "gable_roof", "bed", "place_on")))
+check("kit: inspect_api gives full help for one helper", "WALL TOP" in str(knowledge.inspect_api("bwm.gable_roof")).upper()
+      or "top of the walls" in str(knowledge.inspect_api("bwm.gable_roof")))
+
 # 8. Key handling: session mode keeps it in memory only, nothing in preferences
 from blendwme import credentials  # noqa: E402
 credentials.set_key("sk-test-" + "a" * 30, "SESSION")

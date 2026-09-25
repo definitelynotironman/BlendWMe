@@ -81,14 +81,19 @@ def inspect_api(path):
         if path == "bwm" or path.startswith("bwm."):
             import inspect
             from . import helpers
-            names = [path[4:]] if path.startswith("bwm.") else [
-                n for n in ("box", "mesh", "material", "assign", "collection", "move_to", "select",
-                            "ground", "apply_transforms", "shade_smooth", "frame")]
+            public = [n for n in dir(helpers) if not n.startswith("_") and n[0].islower()
+                      and callable(getattr(helpers, n)) and getattr(getattr(helpers, n), "__module__", "")
+                      .startswith(helpers.__name__.rsplit(".", 1)[0])
+                      and n not in ("begin_step", "end_step", "claim_name", "find_view3d", "view3d",
+                                    "obj", "col", "mat", "subdivide_mod", "num", "vec", "size3", "axis_name")]
+            names = [path[4:]] if path.startswith("bwm.") else public
             out = {}
             for n in names:
                 fn = getattr(helpers, n, None)
                 if fn:
-                    out["bwm." + n + str(inspect.signature(fn))] = (fn.__doc__ or "").strip().split("\n")[0]
+                    doc = (fn.__doc__ or "").strip()
+                    # One line each in the overview; the full docstring for a single function.
+                    out["bwm." + n + str(inspect.signature(fn))] = doc if path.startswith("bwm.") else doc.split("\n")[0]
             return {"bwm_helpers": out or f"No bwm.{path[4:]}",
                     "note": "Use these inside the code of run_python, not as tools."}
         if path.startswith("bpy.ops.") and path.count(".") == 2:
