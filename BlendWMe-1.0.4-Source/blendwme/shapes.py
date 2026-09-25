@@ -240,8 +240,30 @@ def wedge(name, size=(1, 1, 1), location=(0, 0, 0), high_side="+Y", collection=N
     return extrude_profile(name, pts, sy, location, "Y", collection, material)
 
 
+def _roof_tiles(name, W, edge, eave, R, tv, rows, axis, location, collection, material):
+    """Overlapping rows of tile strips on both slopes (one object, parented to the roof)."""
+    bm = bmesh.new()
+    run = math.hypot(edge, R - eave)                 # slope length from eave to ridge
+    angle = math.atan2(R - eave, edge)
+    strip_w = run / rows * 1.25                      # rows overlap like shingles
+    strip_t = 0.04
+    for side in (-1, 1):
+        for i in range(rows):
+            t = (i + 0.5) / rows                     # 0 at the eave, 1 at the ridge
+            u = side * edge * (1 - t)                # across the ridge
+            v = eave + (R - eave) * t + tv + strip_t / 2 - 0.004 * i
+            geom = bmesh.ops.create_cube(bm, size=1.0)
+            verts = geom["verts"]
+            m = (Matrix.Translation((0, u, v)) @ Matrix.Rotation(-side * angle, 4, "X")
+                 @ Matrix.Diagonal((W, strip_w, strip_t, 1)))
+            bmesh.ops.transform(bm, matrix=m, verts=verts)
+    if axis == "Y":
+        bmesh.ops.transform(bm, matrix=Matrix.Rotation(math.radians(90), 4, "Z"), verts=bm.verts)
+    return _finish(name, bm, location, collection, material)
+
+
 def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), overhang=0.3, thickness=0.15,
-               ridge_axis="X", collection=None, material=None, gable=True, gable_material=None):
+               ridge_axis="X", collection=None, material=None, gable=True, gable_material=None, tiles=0):
     """A pitched (gable) roof that sits exactly on walls of width x depth.
 
     location = (x, y, z) where x, y is the centre of the walls and z is the TOP of the walls.
@@ -249,7 +271,8 @@ def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), overh
     wall tops. The underside passes exactly through the wall top edges, so there is no gap.
     gable=True also fills the two triangular wall ends (name + '_Gables') with gable_material
     (default: a warm plaster colour). Use the walls' material to match them.
-    Returns the roof object (the gables are parented to it).
+    tiles=N lays N overlapping rows of tile strips on each slope (name + '_Tiles').
+    Returns the roof object (the gables and tiles are parented to it).
     """
     W, D, R = num(width, 4), num(depth, 3), num(rise, 1.2)
     o, t = num(overhang, 0.3), num(thickness, 0.15)
@@ -268,6 +291,13 @@ def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), overh
         mat = gable_material if gable_material is not None else _h.material("Plaster", (0.88, 0.8, 0.66), 0.8)
         g = extrude_profile(name + "_Gables", tri, W, (cx, cy, z0), "X" if axis == "X" else "Y", collection, mat)
         parent(g, roof)
+    rows = int(num(tiles))
+    if rows > 0:
+        base = roof.active_material
+        tile_mat = _h.material(base.name + "_Tile", tuple(c * 0.85 for c in base.diffuse_color[:3]), 0.75) \
+            if base is not None else None
+        t = _roof_tiles(name + "_Tiles", W + 2 * o, edge, eave, R, tv, rows, axis, (cx, cy, z0), collection, tile_mat)
+        parent(t, roof)
     return roof
 
 

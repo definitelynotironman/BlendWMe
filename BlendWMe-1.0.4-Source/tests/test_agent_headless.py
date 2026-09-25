@@ -611,6 +611,45 @@ check("kit: inspect_api lists the new helpers", all(f"bwm.{n}" in " ".join(info[
 check("kit: inspect_api gives full help for one helper", "WALL TOP" in str(knowledge.inspect_api("bwm.gable_roof")).upper()
       or "top of the walls" in str(knowledge.inspect_api("bwm.gable_roof")))
 
+# ----------------------------------------------------------------------
+# 7j. Fix A4: worked example cards. A card is only kept if every step runs cleanly.
+# ----------------------------------------------------------------------
+import re  # noqa: E402
+EXPECT = {"example-cottage": ["Ground", "Base", "Walls", "Roof", "Roof_Tiles", "Chimney", "Door", "Window_Left", "Path"],
+          "example-room": ["Floor", "Wall_Back", "Wall_Left", "Bed", "Desk", "Monitor", "Chair", "Closet"],
+          "example-ice-cream-cone": ["Cone", "Cone_Waffle", "Scoop_1", "Scoop_2", "Cherry", "Plate"]}
+def floating_objects(tolerance=0.02):
+    """Top-level visible meshes whose bottom touches neither the ground nor anything below them."""
+    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH" and not o.hide_render and o.visible_get()]
+    boxes = {o.name: bwm_h.bounds(o, children=False) for o in meshes}
+    out = []
+    for o in meshes:
+        b = boxes[o.name]
+        if b.min.z <= tolerance or o.parent is not None:
+            continue
+        supported = any(n != o.name and c.min.z - tolerance <= b.min.z <= c.max.z + tolerance
+                        and c.min.x < b.max.x and c.max.x > b.min.x and c.min.y < b.max.y and c.max.y > b.min.y
+                        for n, c in boxes.items())
+        if not supported:
+            out.append(o.name)
+    return out
+
+
+examples = [n for n, _ in knowledge.skill_index() if n.startswith("example-")]
+check("example cards exist for the Stage 0 briefs", set(EXPECT) <= set(examples), examples)
+for card in examples:
+    fresh_scene()
+    text = knowledge.load_skill(card)
+    blocks = re.findall(r"```python\n(.*?)```", text, re.S)
+    results = [executor.run(code, f"{card} step {i + 1}") for i, code in enumerate(blocks)]
+    bad = [(i + 1, r.get("error")) for i, r in enumerate(results) if not r["ok"]]
+    check(f"{card}: all {len(blocks)} steps run cleanly", blocks and not bad, bad)
+    repaired = [(i + 1, r["auto_repaired"]) for i, r in enumerate(results) if r.get("auto_repaired")]
+    check(f"{card}: needs no auto-repair (it is the model's example)", not repaired, repaired)
+    missing = [n for n in EXPECT.get(card, []) if n not in bpy.data.objects]
+    check(f"{card}: builds every named part", not missing, missing)
+    check(f"{card}: nothing floats", not floating_objects(), floating_objects())
+
 # 8. Key handling: session mode keeps it in memory only, nothing in preferences
 from blendwme import credentials  # noqa: E402
 credentials.set_key("sk-test-" + "a" * 30, "SESSION")

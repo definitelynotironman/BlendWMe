@@ -17,6 +17,7 @@
 8. Ground: a plane or a slightly irregular disc island. Put everything on it.
 
 ## Code pattern: cottage blockout with helpers
+(For a complete tested build with roof tiles, door, windows and path, load example-cottage.)
 ```python
 col = bwm.collection("Cottage")
 stone, plaster, roof_m = bwm.material("Stone", (0.45, 0.43, 0.4), 0.9), bwm.material("Plaster", (0.88, 0.8, 0.66), 0.8), bwm.material("Roof_Tile", (0.62, 0.2, 0.12), 0.7)
