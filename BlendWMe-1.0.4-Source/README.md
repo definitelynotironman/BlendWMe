@@ -1,4 +1,4 @@
-# BlendWMe 1.0.4
+# BlendWMe 1.0.5
 
 An AI Blender artist that lives inside Blender. It can build at full speed, slow down and show you how, or coach you while you do it yourself.
 
@@ -24,7 +24,7 @@ What MCP does not have, and BlendWMe does: it lives in Blender, so you need no o
 ## Install
 
 1. Edit > Preferences > Add-ons. Disable any older BlendWMe. Restart Blender.
-2. Top-right menu > **Install from Disk** > choose `blendwme-1.0.4.zip`.
+2. Top-right menu > **Install from Disk** > choose `blendwme-1.0.5.zip`.
 3. Make sure **Allow Online Access** is on (Preferences > System > Network).
 4. In the 3D Viewport press **N** and open the **BlendWMe** tab.
 5. Open **Connection**. Copy your Nebius key, then press **Paste Key**. Press **Test Connection**. It finds the exact model IDs on your account and checks that tool calling works.
@@ -123,9 +123,27 @@ you ─► panel ─► agent thread ──► Nebius (Nemotron, tool calling)
 | `overlay.py` | The Graphite Paper card and red radar pointers |
 | `ui.py`, `prefs.py` | Panel, buttons, settings |
 | `credentials.py` | Keeps your API key in the OS password store, never in Blender files |
-| `precheck.py` | Checks code against the real Blender API before it runs |
+| `repair.py` | Repairs mechanical API slips (3 vs 4 colour values, swapped modifier arguments, renamed inputs, 2.7x calls) before a step runs |
+| `precheck.py` | Rejects only what cannot be repaired, before it runs |
+| `shapes.py`, `furniture.py` | The bwm modelling kit |
 | `logs.py` | Writes the full conversation logs |
 | `bridge.py` | Runs Blender work safely on the main thread |
+
+### The bwm modelling kit (new in 1.0.5)
+
+Open models write plausible but wrong low-level Blender Python. So instead of making the model fight bmesh, BlendWMe gives it a tested, forgiving kit, available inside run_python as `bwm.<name>`:
+
+| Group | Functions |
+|---|---|
+| Shapes | `box`, `cylinder`, `cone` (point-down too), `sphere` (or ellipsoid), `torus`, `prism`, `wedge`, `extrude_profile` (2D outline to solid), `loft` (smooth body through sections), `lathe`, `tube`, `limb`, `gable_roof` (with tile rows) |
+| Modifiers, kept live | `bevel`, `mirror`, `array`, `subdivide`, `solidify`, `boolean` |
+| Placement | `bounds`, `top`, `place_on` (ray-cast onto sloped roofs, `sink=True` for chimneys), `align`, `rotate`, `duplicate`, `parent`, `group` |
+| Architecture | `wall`, `floor`, `opening`, `window` and `door` (they snap onto a thin wall or a solid house body, cut a live hole and face outwards), `path` |
+| Furniture | `bed`, `desk`, `table`, `chair(at='Desk')`, `wardrobe` / `closet`, `shelf`, `monitor(on='Desk')`, `keyboard(on='Desk')`, `pc_tower`, `rug`, `lamp`, `plant`; `against='WallName'` turns a piece to face the room with its back on that wall |
+
+Every function takes `name, sizes, location, collection, material` in that order and everything else by keyword. Arguments are forgiving: numbers as text, colours as 3 or 4 values, 0-255, `'#hex'` or `'red'`, common alias names (`color=`, `position=`, `height=`), and unknown extras are ignored with a note. Re-running a step with the same names replaces the AI's own earlier objects instead of making `Roof.001` copies; the user's objects are never replaced. `inspect_api('bwm.gable_roof')` shows the full help.
+
+Three worked example cards (`example-cottage`, `example-room`, `example-ice-cream-cone`) show complete builds with the kit. The test suite runs every step of every example card in Blender 4.2.
 
 ### Making it a better artist
 
@@ -137,13 +155,16 @@ BlendWMe expects mistakes and is built to recover on its own:
 
 | Problem | What happens |
 |---|---|
+| The code has a small mechanical API slip (`diffuse_color` with 3 values, `modifiers.new('SOLIDIFY', 'Solidify')`, `inputs['Specular']`, `scene.objects.link`, `bpy.active_object`, `create_cone(radius=)`, `obj.select = True`, a removed 2.7x property) | It is repaired and the step runs. The model is told what was fixed, and the step counts as a success. Line numbers in errors still match the model's code. |
+| The model writes tool calls as text (tags, bare JSON, XML, YAML, code in python fences) or calls MCP-style tools like `execute_blender_code` | They are recovered and run. In Auto mode BlendWMe asks the provider for a tool call every turn (`tool_choice=required`), which stopped Nemotron from answering in broken text. |
+| The model only tests the environment ("is bwm available?") | The step is not run and not counted as a failure; the model gets the answer (everything is ready, plus the bwm list). |
 | A step's code crashes | Everything that step created is removed, so the retry never leaves duplicates like `Roof.001`. The AI gets the failing line, the error and a plain-language hint (for example "you passed a name where Blender needs the object"), then runs the whole step again. You see STEP FAILED, then STEP (retry). |
-| It fails twice in a row | It is told to change approach: smaller steps, bmesh instead of operators, or check names with inspect_api. |
-| It fails 4 times | It pauses and hands you the wheel with the error on the card. Fix it, or type a hint and press Resume. No token-burning loops. |
+| The same step fails twice | It is told to change approach (and, if the error repeats exactly, that it is the same error). Failures are counted per step, not across different steps. |
+| The same step fails 4 times | It pauses and hands you the wheel with the error on the card. Pre-check rejections (nothing ran) count separately, with a limit of 6. |
 | A step half-changed objects that already existed | It is told exactly which ones, so it can fix them instead of guessing. |
 | Network trouble or the provider is busy | Automatic retry after 3, 8 and 20 seconds. |
 | The conversation gets too long | Older steps are shortened and the request is retried. |
-| The code uses a Blender name that does not exist (like `bpy.active_object` or `bm.new`), an old 2.7-era call (`scene.objects.link`), a renamed shader input (`'Emission'`), or a wrong argument name (`create_cone(radius=...)`) | A pre-check reads the code before it runs, compares it with the real API of your Blender, and sends back the right name. Nothing runs, so nothing needs undoing. |
+| The code uses a Blender name that does not exist and cannot be repaired (like `bm.new` or `bmesh.ops.cube`) | A pre-check reads the code before it runs, compares it with the real API of your Blender, and sends back the right name. Nothing runs, so nothing needs undoing. |
 | A step fails and gets fixed | Shown as a quiet grey SELF-CORRECTING line ("fixed a code error, 2 tries"), not a red problem. Red is kept for real trouble. |
 | The vision model is missing or fails | Another model that accepts images is found automatically. If none works, BlendWMe keeps building and checks its work with scene data. |
 | The model calls Python as if it were a tool (`bwm.mesh(...)`, `bpy.ops...` as tool calls) | BlendWMe runs those calls together as one real Python step (materials and collections first) and tells the model to use run_python. Unknown tool names get a reply listing the real tools and an example. At most 8 tool calls run per turn. |
@@ -151,6 +172,23 @@ BlendWMe expects mistakes and is built to recover on its own:
 | The model writes a broken tool call | It is recovered when possible, or the model is asked to resend it. |
 | The model only talks and stops working | It is nudged once to carry on. |
 | Something still goes wrong | Press Pause or Stop at any time. Undo AI Step (Ctrl+Z) reverses any step. Copy Log gives a full report to share. |
+
+## The art director (new in 1.0.5)
+
+In Auto mode the harness drives vision, not the model:
+
+- **References first.** Reference images become a written build spec (style, parts with counts and relative sizes, proportions, colours) before anything is built.
+- **Reviews without being asked.** After the first build step (with a reference) or the third (without), and then every 4 steps, BlendWMe captures the scene from four angles and a vision model judges it with a rubric: match to the brief and reference, silhouette and proportions, contact, shape detail, colour and value, then the most valuable fixes. The review restates the brief and lists every AI-made object with its exact size, so leftovers and wrong scale are easy to spot.
+- **One check before finishing.** The first time the model calls finish, the result is reviewed once more if anything changed.
+- **Critique converges.** At most 3 periodic reviews per task. When every plan part is built (or after 20 build steps without a plan), the model is told to fix only clear problems and finish.
+
+## Live evaluation
+
+`tools/live_eval.py` runs one real task in background Blender against real Nebius (key from `NEBIUS_API_KEY`). When nobody is at the keyboard it presses Resume and answers questions, and counts each time. It saves the full log, a four-angle picture, the `.blend` and a summary line.
+
+```
+blender -b --factory-startup --python tools/live_eval.py -- --task cottage      # or room, cone, cottage_ref
+```
 
 ## Full logs
 
@@ -176,16 +214,19 @@ Limits: it cannot paint freehand sculpt or texture strokes like a person with a 
 
 ## Tests
 
-- `tests/test_agent_headless.py` runs the real agent loop in headless Blender against a fake model server: building, error recovery, user-edit detection, pause mid-thought, Watch gating, Teach checks, Stop. (86 checks, including argument type fixing, rescued Python tool calls, hidden collections, the plan checklist, quiet self-correction, rollback, the stuck guard, the pre-check, vision fallback, a seeing agent, logs and key safety.)
-- `tests/test_llm.py` tests the client helpers.
-
-Viewport capture, multi-angle framing and the overlay card were checked in Blender 4.2.3. Live Nebius calls were not run in the build environment. Use Test Connection and Test Vision on your account.
+- `tests/test_agent_headless.py` runs the real agent loop in headless Blender 4.2.3 against a fake model server: building, error recovery, user-edit detection, pause mid-thought, Watch gating, Teach checks, Stop, auto-repair, the bwm kit (with geometry checks), the example cards, harness-driven reviews, the stuck guard and text tool-call recovery. 192 checks:
+  `"C:\Program Files\Blender Foundation\Blender 4.2\blender.exe" -b --factory-startup --python-exit-code 1 --python tests/test_agent_headless.py`
+- `tests/test_llm.py` tests the client helpers, including every text tool-call format seen in live runs.
+- `tools/live_eval.py` runs real tasks against Nebius (see Live evaluation).
+- `tools/package.py` builds `dist/blendwme-<version>.zip`.
 
 ## Credits
 
 The offscreen capture and multi-angle framing in `look.py` adapt MCP for Blender by Siddharth Ahuja (MIT). See `LICENSE-THIRD-PARTY`.
 
 ## Changelog
+
+- **1.0.5**: the reliability floor (Phase A). `import bwm` works. Mechanical API slips are repaired instead of rejected. The forgiving bwm modelling kit (shapes, placement, architecture, furniture). Worked example cards for the cottage, room and ice cream cone. Harness-driven vision: reference spec, art director reviews with an object inventory, a final check, converging critique. Smarter stuck guard (per step; pre-check and test steps not counted). inspect_api for bmesh and mathutils. Auto mode requires a tool call every turn, and tool calls written as text are recovered in five formats. look works in background Blender, and captures show node materials in their real colour. Blender's default cube is flagged. Live evaluation script.
 
 - **1.0.4**: tool arguments sent as text ("2.0", "[1, 2]", "True") are converted using each tool's schema, like MCP servers do; long-conversation shortening no longer adds a fake code field to non-code tool calls.
 

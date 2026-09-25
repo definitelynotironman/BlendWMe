@@ -346,7 +346,7 @@ class BWM_OT_copy_log(bpy.types.Operator):
     bl_description = "Copy the conversation and activity (no API key) for debugging"
 
     def execute(self, context):
-        lines = [f"BlendWMe 1.0.4 | model {prefs.gather_config(context)['model']} | "
+        lines = [f"BlendWMe 1.0.5 | model {prefs.gather_config(context)['model']} | "
                  f"calls {session.calls} | tokens {session.tokens}"]
         for e in session.log:
             lines.append(f"[{e['who']}] {e['text']}" + (f" -- {e['detail']}" if e.get("detail") else ""))
