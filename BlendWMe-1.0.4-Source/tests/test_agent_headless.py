@@ -97,7 +97,9 @@ URL = f"http://127.0.0.1:{server.server_port}/v1"
 
 CONFIG = {"api_key": "test", "base_url": URL, "model": "nvidia/nemotron-3-super-120b-a12b",
           "vision_enabled": False, "vision_model": "", "reasoning": "LOW", "temperature": 0.4, "max_tokens": 4096,
-          "max_steps": 50, "references": [], "blender_version": bpy.app.version_string}
+          "max_steps": 50, "references": [], "blender_version": bpy.app.version_string,
+          # Never write test logs into the user's real Documents/BlendWMe Logs folder.
+          "log_folder": os.path.join(__import__("tempfile").gettempdir(), "bwm_logs_test")}
 
 
 def pump_until(predicate, timeout=30, on_tick=None):
