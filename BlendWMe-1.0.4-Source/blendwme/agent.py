@@ -26,6 +26,9 @@ MAX_TOOL_RESULT = 6000
 MAX_CALLS_PER_TURN = 8
 KEEP_RECENT = 14          # newest messages kept in full
 CONTEXT_BUDGET = 110_000  # characters before older results are compacted
+REVIEW_FIRST = 3          # successful build steps before the first art director review
+REVIEW_FIRST_WITH_REF = 1  # ... when the user gave reference images (match them early)
+REVIEW_EVERY = 4          # successful build steps between reviews
 
 
 _SEES_IMAGES = {}   # model id -> True/False, filled from the provider's model list
@@ -63,6 +66,13 @@ class Agent:
         self.bad_tool_calls = 0
         self.pending_images = []  # images for a vision-capable agent, sent after tool replies
         self.agent_sees = False
+        # Harness-driven vision: the art director looks without being asked.
+        self.ok_steps = 0         # successful run_python steps in this task
+        self.reviewed_at = 0      # ok_steps when the last review happened
+        self.reviews = 0
+        self.final_reviewed = False
+        self.ref_spec = ""
+        self.spec_pending = False
 
     # ------------------------------------------------------------------
     # Called from the UI (main thread)
@@ -90,6 +100,7 @@ class Agent:
             # Keep the old snapshot: edits you made between messages get reported.
             self.messages.append({"role": "user", "content": text})
         self.budget_start = session.tool_steps
+        self.final_reviewed = False
         self.finished = False
         self.fail_streak = 0
         self.vision_broken = ""
@@ -125,6 +136,9 @@ class Agent:
             {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": intro},
         ]
+        self.ok_steps = self.reviewed_at = self.reviews = 0
+        self.ref_spec = ""
+        self.spec_pending = bool(refs)
 
     def _system_prompt(self):
         return prompts.build_system(session.mode, session.level,
@@ -167,6 +181,9 @@ class Agent:
         client = llm.Client(self.config.get("api_key"), self.config.get("base_url"))
         self.agent_sees = self._agent_sees_images(client)
         try:
+            if self.spec_pending:
+                self.spec_pending = False
+                self._reference_spec(client)
             while not self.finished:
                 self._check_stop()
                 self._wait_if_paused()
@@ -219,6 +236,8 @@ class Agent:
                     self._tool_reply(call, result)
                     if self.finished:
                         break
+                if not self.finished:
+                    self._maybe_review(client)
                 self._send_pending_images()
             if not self.finished and session.status not in (ERROR,):
                 session.set_status(IDLE)
@@ -316,7 +335,7 @@ class Agent:
                 session.add("info", "This model can see, so it judges the pictures with its own eyes.")
         return _SEES_IMAGES[model]
 
-    def _send_pending_images(self):
+    def _send_pending_images(self, review=True):
         if not self.pending_images:
             return
         content = []
@@ -324,7 +343,8 @@ class Agent:
             content.append({"type": "text", "text": item["caption"]})
             for path in item["paths"]:
                 content.append({"type": "image_url", "image_url": {"url": llm.image_data_url(path)}})
-        content.append({"type": "text", "text": prompts.SELF_REVIEW.format(brief=self.brief[:600])})
+        if review:
+            content.append({"type": "text", "text": prompts.SELF_REVIEW.format(brief=self.brief[:600])})
         self.messages.append({"role": "user", "content": content})
         self.pending_images = []
 
@@ -564,6 +584,7 @@ class Agent:
                 session.changed_flag = True
             self.retry_entry = None
             self.fail_streak = 0
+            self.ok_steps += 1
             session.add("step", title, detail=explain, ok=True)
             if part:
                 session.tick_plan(part)
@@ -699,6 +720,91 @@ class Agent:
         return {"view": mode, "views": info.get("views"), "vision_model": model,
                 "vision_report": description or "(the vision model returned nothing)"}
 
+    # ------------------------------------------------------------------
+    # Harness-driven vision: references become a spec, the art director reviews
+    # ------------------------------------------------------------------
+    def _references(self):
+        return [p for p in self.config.get("references", []) if os.path.isfile(p)][:2]
+
+    def _vision_ready(self):
+        return self.config.get("vision_enabled", True) and not self.vision_broken
+
+    def _ask_vision(self, client, prompt, images):
+        """Text from the vision model, or "" (vision trouble never stops the task)."""
+        model = self._vision_model(client)
+        if not model:
+            return ""
+        t0 = time.time()
+        try:
+            text = client.describe_image(model, prompt, images)
+        except llm.LLMError as e:
+            self._vision_failed(e)
+            return ""
+        self._trace("vision", model=model, seconds=round(time.time() - t0, 1))
+        return (text or "").strip()
+
+    def _reference_spec(self, client):
+        """Turn the user's reference images into a structured build spec, before any building."""
+        refs = self._references()
+        if not refs or not self._vision_ready():
+            return
+        session.add("look", "Studying your reference image" + ("s" if len(refs) > 1 else ""))
+        if self.agent_sees:
+            self.pending_images.append({"caption": "The user's REFERENCE image(s). Build to match them.",
+                                        "paths": refs})
+            self._send_pending_images(review=False)
+            return
+        spec = self._ask_vision(client, prompts.REFERENCE_SPEC.format(brief=self.brief[:1200]), refs)
+        if not spec:
+            return
+        self.ref_spec = spec[:3000]
+        self.messages.append({"role": "user", "content":
+            "[Reference spec: BlendWMe's eyes studied the user's reference image(s). Your build must "
+            "clearly follow it: same parts, counts, proportions and colours.]\n" + self.ref_spec})
+        self._trace("reference_spec", chars=len(self.ref_spec))
+
+    def _maybe_review(self, client):
+        """Every few successful build steps, the art director looks without being asked."""
+        if session.mode != "AUTO" or not self._vision_ready() or self.ok_steps == 0:
+            return
+        first = REVIEW_FIRST_WITH_REF if self._references() else REVIEW_FIRST
+        if self.reviews == 0 and self.ok_steps < first:
+            return
+        if self.reviews > 0 and self.ok_steps - self.reviewed_at < REVIEW_EVERY:
+            return
+        self._review(client, f"after {self.ok_steps} build steps")
+
+    def _review(self, client, when):
+        """Capture the scene from several angles and add an art director review. Returns its text."""
+        info = bridge.call(look.capture, "angles")
+        if info.get("error"):
+            return ""
+        self.reviews += 1
+        self.reviewed_at = self.ok_steps
+        refs = self._references()
+        session.last_capture = info["path"]
+        session.add("look", "Art director review " + when)
+        layout = ("The first image is a contact sheet of the scene (" + ", ".join(info.get("views", []))
+                  + "), " + info.get("layout", "") + ". Front looks along +Y, right looks along -X.")
+        ref_text = f"The next {len(refs)} image(s) are the user's REFERENCE." if refs else ""
+        header = (f"[Art director review {when}. BlendWMe captured the scene from several angles"
+                  + (" next to the user's reference" if refs else "") + " and judged it against the brief.]")
+        if self.agent_sees:
+            self.pending_images.append({"caption": header + " " + layout + " " + ref_text,
+                                        "paths": [info["path"]] + refs})
+            self._trace("review", when=when, by="agent")
+            return "attached"
+        prompt = prompts.REVIEW.format(layout=layout, refs=ref_text, brief=self.brief[:1200],
+                                       spec=("Reference spec: " + self.ref_spec[:1500]) if self.ref_spec else "",
+                                       ref_word=" and reference" if refs else "")
+        text = self._ask_vision(client, prompt, [info["path"]] + refs)
+        if not text:
+            return ""
+        self.messages.append({"role": "user", "content": header + "\n" + text[:2500]
+                              + "\nFix the most important problems first, then continue the plan."})
+        self._trace("review", when=when, by="vision", chars=len(text))
+        return text
+
     def _vision_model(self, client, exclude=""):
         """The configured vision model, or one discovered from the account's catalogue."""
         current = self.config.get("vision_model", "")
@@ -792,6 +898,17 @@ class Agent:
         return {"answer": "\n".join(answers)}
 
     def _tool_finish(self, args, client):
+        # Quality gate: before the first finish, the art director looks at the final result once
+        # (only if something changed since the last review). The model then fixes or finishes again.
+        if (session.mode == "AUTO" and not self.final_reviewed and self.ok_steps > 0
+                and self._vision_ready() and (self.reviews == 0 or self.ok_steps > self.reviewed_at)):
+            self.final_reviewed = True
+            review = self._review(client, "before finishing")
+            if review:
+                return {"not_finished_yet": "BlendWMe's art director checked the result before you finish "
+                                            "(see the review). Fix any real problems (missing parts from the "
+                                            "brief, floating or intersecting parts, wrong proportions). If it "
+                                            "is good, call finish again."}
         summary = str(args.get("summary") or "Done.")
         session.add("ai", summary)
         session.set_card({"kind": "done", "title": "Done", "text": summary})

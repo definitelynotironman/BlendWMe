@@ -365,6 +365,38 @@ check("vision failure does not stop the task", session.status == state.DONE, ses
 check("work continues after vision failure", any("still building" in m["content"] for m in agent.messages if m["role"] == "tool"))
 check("second look skips quickly", any("unavailable this session" in m["content"] for m in agent.messages if m["role"] == "tool"))
 
+# 7c2. Fix A5: harness-driven vision. References become a spec before building, the art
+# director reviews every few steps without being asked, and checks once before finishing.
+VISION_OK.add("Qwen/Qwen3.8-27B")
+VISION_SEEN.clear()
+step = lambda i: call("run_python", title=f"Part {i}", explain="x", code=f"bwm.box('AD_{i}', (1, 1, 1), ({i * 2}, 0, 0.5))")  # noqa: E731
+SCRIPT[:] = [step(i) for i in range(1, 7)] + [call("finish", summary="first try"), call("finish", summary="done")]
+cfg_ref = dict(cfg, vision_model="Qwen/Qwen3.8-27B", references=[png])
+agent.send("Build from my reference", cfg_ref, new_task=True)
+pump_until(lambda: not agent.is_running())
+users = [m["content"] for m in agent.messages if m["role"] == "user" and isinstance(m["content"], str)]
+first_model_turn = next(i for i, m in enumerate(agent.messages) if m["role"] == "assistant")
+check("reference turned into a spec before any building",
+      any("[Reference spec" in str(m.get("content")) for m in agent.messages[:first_model_turn]))
+reviews = [u for u in users if u.startswith("[Art director review")]
+check("art director reviews without being asked (after step 1 with a reference, then every 4)",
+      [r.split(".")[0] for r in reviews][:2] == ["[Art director review after 1 build steps",
+                                                "[Art director review after 5 build steps"], reviews)
+gate = [json.loads(m["content"]) for m in agent.messages if m["role"] == "tool" and "not_finished_yet" in m["content"]]
+check("final check before the first finish, then finish is accepted",
+      len(gate) == 1 and any("before finishing" in r for r in reviews) and session.status == state.DONE)
+check("reviews compare against the reference image", len(VISION_SEEN) >= 4)
+
+SCRIPT[:] = [step(i) for i in range(11, 14)] + [call("finish", summary="done")]
+agent.send("Build without a reference", dict(cfg_ref, references=[]), new_task=True)
+pump_until(lambda: not agent.is_running())
+users = [m["content"] for m in agent.messages if m["role"] == "user" and isinstance(m["content"], str)]
+check("without references the first review comes after 3 steps",
+      any(u.startswith("[Art director review after 3 build steps") for u in users)
+      and not any("[Reference spec" in u for u in users))
+check("no extra final check when nothing changed since the last review", session.status == state.DONE
+      and not any("not_finished_yet" in m["content"] for m in agent.messages if m["role"] == "tool"))
+
 # 7d. Pre-check stops invented API names before anything runs
 r = executor.run("bpy.ops.mesh.primitive_cube_add()\nslab = bpy.active_object\nslab.name = 'Slab'")
 check("bpy.active_object repaired, not rejected", r["ok"] and "Slab" in bpy.data.objects
@@ -378,7 +410,7 @@ check("pre-check catches bm.new", "bm.verts.new" in r["error"], r)
 # 7e. Full logs are written automatically
 files = sorted(os.listdir(LOGDIR))
 check("log files saved", any(f.endswith(".md") for f in files) and any(f.endswith(".json") for f in files), files)
-md = open(os.path.join(LOGDIR, [f for f in files if f.endswith(".md")][-1]), encoding="utf-8").read()
+md = open(os.path.join(LOGDIR, [f for f in files if f.endswith("look-at-it.md")][-1]), encoding="utf-8").read()
 check("log has code, results and timeline", "still building" in md and "## Timeline" in md and "```python" in md)
 check("log never contains the key", CONFIG["api_key"] == "test" or "test" not in md)
 p = logs.save([{"role": "user", "content": "key is sk-SECRET-123456789"}], [], {"title": "x"}, LOGDIR, "sk-SECRET-123456789")

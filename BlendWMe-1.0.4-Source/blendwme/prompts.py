@@ -12,7 +12,7 @@ You can model, shade, light, rig, animate and set up cameras. You build real, ed
 2. Load the matching skill card with load_skill. If a WORKED EXAMPLE card is close to the brief (a building, a room, a small prop), load it first and follow its plan and code style, changing sizes, colours and counts to fit the brief.
 3. Call plan with every part in build order: its size in metres and what it attaches to. Count what the brief asks for (for example "four windows" = 4 window parts on the walls). This plan is your blueprint. Use its numbers in your code.
 4. Build the parts with run_python, following the build style below. Pass part=<number> so the checklist ticks off.
-5. After the main forms, and again at the end, call look (mode "angles") and judge it like an art director: silhouette, proportions, contact, gaps, overlaps, colour balance. Fix what is wrong. If look is unavailable, check with get_scene_info bounds.
+5. BlendWMe's art director looks at your work from several angles every few steps and before you finish, and sends you a review. Treat it like notes from a lead artist: fix real problems (missing parts, floating or intersecting parts, wrong proportions) before moving on. You can also call look yourself at any time. If vision is unavailable, check with get_scene_info bounds.
 6. Before finish, check every item in the brief exists, is the right size, and sits on the right host (windows IN walls, chimney THROUGH the roof, door at ground level on the front).
 7. Call finish with a short summary.
 
@@ -142,6 +142,32 @@ Answer in this order, briefly:
 3. FIXES: the 1-4 most valuable changes, with direction and rough amounts (for example "roof overhang should be about 20% wider on each side").
 Do not invent details you cannot see. Say if something is unclear from this angle."""
 
+
+REFERENCE_SPEC = """You are helping a 3D artist rebuild what is in these reference image(s) in Blender.
+The artist's brief: {brief}
+
+Write a precise build spec, in this order and briefly:
+1. STYLE: e.g. stylised low poly, realistic, cartoon; mood and lighting.
+2. PARTS: every visible part, one per line: name, shape, rough size RELATIVE to the main body
+   (e.g. "roof: steep gable, ridge height about 0.8 x wall height, overhang about 10%"),
+   and where it attaches. Give COUNTS (e.g. "windows: 3 on the front, 2 small square").
+3. PROPORTIONS: the 3-5 most important ratios (width : depth : height of the main body, etc.).
+4. COLOURS: each part's colour as approximate RGB 0-1, e.g. "walls (0.92, 0.85, 0.7)".
+5. DETAILS that make it recognisable (trim, shutters, chimney position, path shape...).
+Only describe what you can see. Say what is hidden or unclear."""
+
+REVIEW = """You are the art director reviewing a Blender artist AI's work in progress. {layout}
+{refs}
+Brief: {brief}
+{spec}
+Judge it with this rubric, briefly and concretely:
+1. MATCH: is everything in the brief{ref_word} there, with the right count, on the right host? List what is missing.
+2. SILHOUETTE AND PROPORTIONS: do the big shapes read clearly from every angle? Anything too big, small, thin or flat?
+3. CONTACT: anything floating, sinking, intersecting wrongly, or with visible gaps?
+4. SHAPES: big / medium / small detail balance; does it look made with care or like default boxes?
+5. COLOUR AND VALUE: palette harmony, enough contrast between neighbouring parts.
+Then give the 1-4 most valuable FIXES with direction and rough amounts, most important first.
+End with one line: VERDICT: GOOD or VERDICT: NEEDS WORK."""
 
 SELF_REVIEW = """Judge the picture above like an art director, briefly:
 1. What you see, part by part. 2. Problems: floating or intersecting parts, parts on the wrong surface,
