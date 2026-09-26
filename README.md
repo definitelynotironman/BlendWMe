@@ -13,22 +13,49 @@
 
 ## Why this exists
 
-I tried to learn Blender properly. I really did. I made the donut. I made the second donut, because
-the first one looked like a bagel that had seen things. Then I opened a blank scene, stared at the
-default cube, pressed a key I thought was "grab", and Blender quietly deleted half my mesh. Every
-tutorial I watched was either "click here, then here, then here" at 2x speed, or a three-hour deep
-dive that assumed I already knew what a normal was. (I did not. I thought it was a mood.)
+Let's get one thing out of the way: I never made the donut. The only thing I ever tried to model in
+Blender was a farmhouse, and that project never really got to where I wanted it to be. Blender's
+capabilities are ridiculous, and that was exactly the problem. I found myself stuck in tutorial
+hell, always having to search for a YouTube video to get any Blender project done.
 
-At some point I stopped fighting the learning curve and hopped on the AI train. The usual AI tools
-for Blender can drop a cube, a sphere and a cylinder into a scene from a prompt. That's a nice party
-trick, but it doesn't feel like working with someone who actually knows Blender. I wanted the
-person next to me who *does*: someone who can build the thing, show me how they built it, point at
-the actual button, and keep going when I grab the mouse and change their work.
+I'm pretty good with other 3D modelling tools. Fusion 360 is the one I use most often, and
+SolidWorks is where I started off. But I think those constructive CAD tools are more intuitive to
+learn, because you usually build things up from simple shapes. Blender, however, seems to have been
+made as a creative tool with a much greater horizon to aim for. Seriously, it's actually crazy what
+it can do. The thing is, it feels "destructive", if I can say that, and that's the major difference
+between it and the tools I mentioned. It made it much harder for me to change my way of thinking:
+from putting squares and patterns together to make gearboxes, to moulding a shape I don't even know
+exists yet. It's definitely a skill issue, and one I plan to fix.
 
-So I built that. BlendWMe is an experienced Blender artist that lives inside Blender. It can build
+When I ran into MCP for Blender, I was like, well, I'm cooked for sure now if AI can do this IN
+BLENDER. I made a few prompts to see how far it could go, and it's pretty good. Claude is pretty
+good. I want to be pretty good too! Please teach me your ways, Claude, teach me to be like you. And
+as the master of all four elements, the Avatar if you will, Claude accepted. It accepted to
+BlendWMe!
+
+Okay, maybe I got carried away. But that's basically how the idea came about. Tutorial hell kept me
+a beginner for as long as I've known Blender. So I wanted to make something that keeps me in the
+app, actually doing stuff, making things and learning Blender inside out from an AI that is
+probably far ahead of me.
+
+So that's what BlendWMe is: an experienced Blender artist that lives inside Blender. It can build
 with you, teach you one step at a time, or take the wheel while you watch, and you can grab the
 wheel back whenever you like. It runs on the Claude or ChatGPT plan you already pay for, through the
 official Claude Code and Codex programs. No extra API bill sneaking up on you.
+
+The trap, of course, is getting stuck in AI hell with Blender instead. That's likely if it's used
+the way vibe coding is used by people who only learned to code once a computer could do it 100x
+better than they could [I am people. People is in fact me]. But that's not how I intended to use the
+tool. AI exists, and it probably won't go away any time soon. Zoomed out, it hasn't really come to
+make things better for most of us, unless we try to use it that way. The creative space is the
+biggest hater of AI, and with good reason. But BlendWMe is a tool I made for me, to keep up with the
+fast-moving pace of a world with AI in it, in a way that keeps me in touch with the work I do. The
+same way Tony Stark would ask Jarvis or Friday to help him be Iron Man: Tony was always Iron Man.
+Not Jarvis, not Friday.
+
+For the creatives: I feel the people who will get the most out of this tool are the ones who are the
+most creative with it, and that's something neither I nor any AI can take away from you. So I hope
+you use it in a way that gets the most out of you.
 
 <!-- HERO: a 10 to 20 second GIF of Teach mode with the blinking block and radar ring. The maintainer records this. Path: docs/media/hero.gif -->
 
@@ -359,5 +386,5 @@ Ideas and "it would be cool if" messages are welcome too.
 - Blender is a registered trademark of the Blender Foundation. Claude and Claude Code are trademarks
   of Anthropic. ChatGPT and Codex are trademarks of OpenAI. BlendWMe is an independent project and
   is not affiliated with or endorsed by them.
-- Made by [definitelynotironman](https://github.com/definitelynotironman), who still can't make a
-  good donut without help.
+- Made by [definitelynotironman](https://github.com/definitelynotironman), whose farmhouse is
+  still not finished.
