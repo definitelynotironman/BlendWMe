@@ -62,7 +62,7 @@ def fresh():
 # ----------------------------------------------------------------------
 # Themes and drawing helpers
 # ----------------------------------------------------------------------
-for name in ("GRAPHITE", "RED", "BLENDER"):
+for name in ("GRAPHITE", "RED", "BLENDER", "Y2K", "NATIVE"):
     pal = theme.Palette(name)
     check(f"theme {name} has every colour", all(len(getattr(pal, k)) == 4 for k in
                                                 ("bg", "panel", "card", "ink", "accent", "on_accent", "shadow",
@@ -75,8 +75,9 @@ draw2d.load_fonts()
 check("fonts load", all(draw2d.font(k) not in (None, -1) for k in ("BLACK", "HAND", "BODY")))
 long_text = "word " * 120 + "Averyveryveryverylongwordthatmustbreaksomewhere" * 3
 lines = draw2d.wrap("BODY", 16, long_text, 300)
-check("wrap keeps every word (nothing is cut off)",
-      "".join(lines).replace(" ", "") == long_text.replace(" ", ""), len(lines))
+joined = "".join(ln[:-1] if ln.endswith("-") else ln for ln in lines)
+check("wrap keeps every word (nothing is cut off)", joined.replace(" ", "") == long_text.replace(" ", ""),
+      len(lines))
 check("wrap keeps lines inside the width", all(draw2d.width_of("BODY", 16, ln) <= 300.5 for ln in lines))
 check("wrap keeps blank lines between paragraphs", draw2d.wrap("BODY", 16, "a\n\nb", 300) == ["a", "", "b"])
 pts = []
@@ -134,8 +135,92 @@ panel_ops.send_text(bpy.context, "/help")
 check("/help shows the shortcuts", "Esc twice" in session.log[-1]["text"])
 panel_ops.send_text(bpy.context, "/journal")
 check("/journal opens the baton journal", panel.state.screen == "journal")
+panel_ops.settings_asked[0] = 0.0
 panel_ops.send_text(bpy.context, "/settings")
-check("/settings opens settings", panel.state.screen == "settings")
+check("/settings opens the Settings popover", panel_ops.settings_asked[0] > 0)
+
+# ----------------------------------------------------------------------
+# The five themes (four drawn, one in Blender's own interface)
+# ----------------------------------------------------------------------
+check("there are five themes", [t[0] for t in prefs.THEMES] == ["GRAPHITE", "RED", "BLENDER", "Y2K", "NATIVE"])
+y2k = theme.Palette("Y2K")
+check("the 2000s theme has Theme 2000's blue title band and orange tag",
+      y2k.band is not None and theme.TOKENS["Y2K"]["band"] == "5070D3" and theme.TOKENS["Y2K"]["tag"] == "F3963D")
+check("the 2000s theme writes its hand text in Archivo", y2k.roles.get("HAND")[0] == "BODY")
+with draw2d.scaled(1.0, 1.0, 1.0, y2k.roles):
+    role_w = draw2d.width_of("HAND", 20, "Tell Claude what to change")
+    role_font = draw2d.font("HAND") == draw2d.font("BODY")
+check("a theme role swaps the font and sets it smaller", role_font and
+      abs(role_w - draw2d.width_of("BODY", 16, "Tell Claude what to change")) < 1, role_w)
+native_pal = theme.Palette("NATIVE")
+check("Blender UI takes its colours from Blender's own theme",
+      all(len(getattr(native_pal, k)) == 4 for k in ("panel", "ink", "accent", "hot")))
+check("drawn themes draw the panel, Blender UI does not", set(theme.DRAWN) == {"GRAPHITE", "RED", "BLENDER", "Y2K"})
+from blendwme import ui  # noqa: E402
+p0 = prefs.addon_prefs()
+p0.theme = "GRAPHITE"
+check("with a drawn theme the sidebar has no BlendWMe tab", not ui.BWM_PT_main.poll(bpy.context))
+p0.theme = "NATIVE"
+check("with Blender UI the sidebar is BlendWMe", ui.BWM_PT_main.poll(bpy.context) and theme.native())
+area_stub = type("A", (), {"as_pointer": lambda self: 7})()
+panel.state.open, panel.state.area_ptr = True, 7
+check("with Blender UI the drawn panel is never open", not panel.is_open_in(area_stub))
+panel.state.open = False
+p0.theme = "GRAPHITE"
+check("the Settings popover is registered", hasattr(bpy.types, "BWM_PT_settings"))
+
+# ----------------------------------------------------------------------
+# Typing like a Blender text field (rule R7)
+# ----------------------------------------------------------------------
+fresh()
+typed("make a red roof")
+panel_ops.type_key(bpy.context, Event("LEFT_ARROW", ctrl=True))
+check("Ctrl+Left jumps a word", panel.state.cursor == len("make a red "))
+panel_ops.type_key(bpy.context, Event("RIGHT_ARROW", shift=True, ctrl=True))
+check("Ctrl+Shift+Right selects a word", panel.selection() == (len("make a red "), len("make a red roof")))
+typed("tiled roof")
+check("typing replaces the selection", panel.state.text == "make a red tiled roof", panel.state.text)
+panel_ops.type_key(bpy.context, Event("Z", ctrl=True))
+check("Ctrl+Z undoes a word at a time", panel.state.text == "make a red tiled ", panel.state.text)
+panel_ops.type_key(bpy.context, Event("Z", ctrl=True, shift=True))
+check("Ctrl+Shift+Z redoes", panel.state.text == "make a red tiled roof", panel.state.text)
+panel_ops.type_key(bpy.context, Event("A", ctrl=True))
+check("Ctrl+A selects everything", panel.selection() == (0, len(panel.state.text)))
+clip = type("Ctx", (), {})()          # background Blender has no system clipboard
+clip.window_manager = type("WM", (), {"clipboard": ""})()
+panel_ops.type_key(clip, Event("C", ctrl=True))
+check("Ctrl+C copies the selection", clip.window_manager.clipboard == "make a red tiled roof")
+panel_ops.type_key(clip, Event("X", ctrl=True))
+check("Ctrl+X cuts it", panel.state.text == "")
+panel_ops.type_key(clip, Event("V", ctrl=True))
+panel_ops.type_key(clip, Event("V", ctrl=True))
+check("Ctrl+V pastes at the caret", panel.state.text == "make a red tiled roof" * 2)
+panel_ops.type_key(bpy.context, Event("HOME"))
+panel_ops.type_key(bpy.context, Event("RIGHT_ARROW", shift=True))
+panel_ops.type_key(bpy.context, Event("RIGHT_ARROW", shift=True))
+panel_ops.type_key(bpy.context, Event("BACK_SPACE"))
+check("Shift+arrows select and Backspace deletes the selection", panel.state.text.startswith("ke a red"))
+fresh()
+lines = panel.input_layout("one two three four five six seven eight nine ten", 20, 120)
+check("the input wraps into ranges of the text (for the caret and selection)",
+      len(lines) > 1 and lines[0][0] == 0 and lines[-1][1] == len("one two three four five six seven eight nine ten"))
+
+# ----------------------------------------------------------------------
+# Text that never escapes its box (rules R4, R11)
+# ----------------------------------------------------------------------
+check("a value keeps its unit on the same line", draw2d.NBSP in draw2d.keep_together("wait 10 s please"))
+check("'6 of 7' stays together", draw2d.keep_together("6 of 7").count(draw2d.NBSP) == 2)
+check("a long word breaks with a hyphen",
+      any(ln.endswith("-") for ln in draw2d.wrap("BODY", 16, "Supercalifragilisticexpialidocious" * 2, 120)))
+orphan = draw2d.wrap("BODY", 16, "one two three four five six seven eight nine ten eleven twelve x", 170)
+check("no one-word orphan on the last line", " " in orphan[-1].strip() or len(orphan) == 1, orphan)
+cut = draw2d.fit("BODY", 16, "a sentence that is far too long for this little box", 120)
+check("a line that does not fit ends with an ellipsis", cut.endswith("…") and draw2d.width_of("BODY", 16, cut) <= 120)
+check("the line height is round(1.25 x size)", draw2d.line_height("BODY", 16) == 20 and draw2d.line_height("BODY", 13) == 16)
+para_lines = draw2d.wrap("BODY", 16, "word " * 60, 200)
+h_all = draw2d.paragraph_height("BODY", 16, "word " * 60, 200)
+h_three = draw2d.paragraph_height("BODY", 16, "word " * 60, 200, max_lines=3)
+check("max_lines limits a paragraph's height", h_three == 3 * draw2d.line_height("BODY", 16) < h_all, (h_three, h_all))
 
 # ----------------------------------------------------------------------
 # Cards: every card can be closed; Esc
@@ -315,42 +400,60 @@ check("the camera helpers are in the bwm kit list", {"camera_to_view", "frame_ca
       <= set(bwm.public_names()))
 
 # ----------------------------------------------------------------------
-# The panel's place and size: docked tight on the right, movable, resizable, minimizable
+# The panel's place and size (rules R8, R9): a corner of the free viewport and a
+# distance from it, both-axis drag with snapping, the grip, the gizmo, the views
 # ----------------------------------------------------------------------
 class Reg:
     def __init__(self, type, x, y, width, height):
         self.type, self.x, self.y, self.width, self.height = type, x, y, width, height
 
 
+class Space:
+    def __init__(self, gizmo=False):
+        self.show_gizmo = self.show_gizmo_navigate = gizmo
+
+
+class Spaces:
+    def __init__(self, gizmo=False):
+        self.active = Space(gizmo)
+
+
 class Area:
-    def __init__(self, regions):
+    def __init__(self, regions, gizmo=False):
         self.regions = regions
+        self.spaces = Spaces(gizmo)
+
+    def as_pointer(self):
+        return 4242
 
 
 class MouseEvent(Event):
-    def __init__(self, type, value="PRESS", x=0, y=0):
-        super().__init__(type, value)
+    def __init__(self, type, value="PRESS", x=0, y=0, ctrl=False, shift=False):
+        super().__init__(type, value, ctrl=ctrl, shift=shift)
         self.mouse_x, self.mouse_y = x, y
 
 
 view = Reg("WINDOW", 0, 0, 1600, 900)
 sidebar = Reg("UI", 1340, 0, 260, 870)          # the N sidebar overlapping the viewport
 header = Reg("HEADER", 0, 870, 1600, 30)
+toolbar = Reg("TOOLS", 0, 0, 48, 870)
 fake_area = Area([view, sidebar, header])
 panel_ops.host = lambda context: (fake_area, view)
 p = prefs.addon_prefs()
 panel_ops.reset_place(p)
 p.panel_size, p.text_size, p.icon_size = 75, 100, 100
 s = panel.scale()
+check("the panel scale is Blender's scale times the panel size (R2)",
+      abs(s - draw2d.system_scale() * 0.75) < 1e-6, s)
+edge_x = (panel.EDGE + theme.SHADOW_PANEL) * s + 1
 x0, y0, x1, y1 = panel.placement(fake_area, view)
-check("the panel is smaller by default (75 %)", abs((x1 - x0) - panel.PANEL_WIDTH * s) < 1 and s < draw2d.base_ui(),
-      (x1 - x0, s))
-check("docked, it sits tight against the sidebar (a few pixels for the shadow)",
-      0 < 1340 - x1 <= (panel.EDGE + theme.SHADOW_PANEL) * s + 1, 1340 - x1)
-check("docked, it starts right under the header", 0 < 870 - y1 <= panel.EDGE * s + 1, 870 - y1)
+check("the panel is smaller by default (75 %)", abs((x1 - x0) - panel.PANEL_WIDTH * s) < 1, (x1 - x0, s))
+check("it sits tight against the sidebar (a few pixels for the shadow)", 0 < 1340 - x1 <= edge_x, 1340 - x1)
+check("it starts right under the header", 0 < 870 - y1 <= panel.EDGE * s + 1, 870 - y1)
+check("the rectangle is in whole pixels (R3)", all(v == int(v) for v in (x0, y0, x1, y1)))
 fake_area.regions = [view, header]               # sidebar closed: the panel takes the edge
-check("with the sidebar closed it docks at the viewport's right edge",
-      1600 - panel.placement(fake_area, view)[2] <= (panel.EDGE + theme.SHADOW_PANEL) * s + 1)
+check("with the sidebar closed it sits at the viewport's right edge",
+      1600 - panel.placement(fake_area, view)[2] <= edge_x)
 fake_area.regions = [view, sidebar, header]
 
 p.panel_size = 100
@@ -360,49 +463,138 @@ narrow = panel.placement(fake_area, view)
 check("Panel size scales the whole panel", (narrow[2] - narrow[0]) < (wide[2] - wide[0]) * 0.65)
 p.panel_size = 75
 
-# Drag the logo row 300 px left and 100 px down.
-x0, y0, x1, y1 = panel.placement(fake_area, view)
-panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=x1 - 50, y=y1 - 20))
-panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x1 - 350, y=y1 - 120))
-panel_ops.end_drag(bpy.context)
-m = panel.placement(fake_area, view)
-check("dragging the logo row moves the panel", p.panel_dock == "FREE" and abs(m[2] - (x1 - 300)) < 2,
-      (m, x1))
-check("a full-height panel keeps its height while it moves (it cannot go below the viewport)",
-      abs((m[3] - m[1]) - (y1 - y0)) < 2 and m[1] >= 0)
-# Drag it back near the right edge: it docks again and gets its full height back.
-panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=m[2] - 50, y=m[3] - 20))
-panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=m[2] - 50 + 290, y=m[3] - 20))
-panel_ops.end_drag(bpy.context)
-check("let go near the right edge and it docks there again",
-      p.panel_dock == "RIGHT" and p.panel_height == 0.0 and panel.placement(fake_area, view) == (x0, y0, x1, y1),
-      (p.panel_dock, p.panel_height, p.panel_gap_right, panel.placement(fake_area, view), (x0, y0, x1, y1)))
-# A drag never takes the panel off the viewport.
-panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=1000, y=800))
-panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=-5000, y=-5000))
-panel_ops.end_drag(bpy.context)
-far = panel.placement(fake_area, view)
-check("the panel stays inside the viewport however far it is dragged", far[0] >= 0 and far[1] >= 0, far)
-panel_ops.do_action(bpy.context, "panel_reset")
-check("Put it back on the right resets place and size", p.panel_dock == "RIGHT" and not p.panel_width
-      and panel.placement(fake_area, view) == (x0, y0, x1, y1))
+# The height follows the content (R9), between the minimum and the free height.
+h300 = panel.placement(fake_area, view, natural=300)
+check("the height follows the content", h300[3] - h300[1] == 300 and h300[3] == y1, h300)
+tall = panel.placement(fake_area, view, natural=10 ** 6)
+check("a tall panel stops at the free viewport", tall[1] >= 0 and tall == (x0, y0, x1, y1))
+tiny = panel.placement(fake_area, view, natural=10)
+check("a short panel keeps the minimum height", abs((tiny[3] - tiny[1]) - round(panel.MIN_HEIGHT * s)) <= 1)
 
-# The corner grip: 80 px narrower, 200 px shorter (mouse right and up).
+# Drag the header 300 px left and 100 px down: it moves on both axes (R8).
+panel.state.frame = h300
+panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=h300[2] - 50, y=h300[3] - 20))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=h300[2] - 350, y=h300[3] - 120))
+panel_ops.end_drag(bpy.context)
+m = panel.placement(fake_area, view, natural=300)
+check("dragging the header moves the panel left and down",
+      abs(m[2] - (h300[2] - 300)) <= 1 and abs(m[3] - (h300[3] - 100)) <= 1, (m, h300))
+check("it remembers the nearest corner and the distance in design units",
+      p.panel_corner == "TR" and abs(p.panel_off_x * s - 300) <= 1 and abs(p.panel_off_y * s - 100) <= 1,
+      (p.panel_corner, p.panel_off_x, p.panel_off_y))
+# A wider viewport (or a closed sidebar) keeps that distance from the corner.
+sidebar.x = 1300
+moved = panel.placement(fake_area, view, natural=300)
+check("the distance from the corner stays when the free area changes", abs((1300 - moved[2]) - (1340 - m[2])) <= 1)
+sidebar.x = 1340
+
+# Snapping: let go 5 px from the right edge and it snaps there; Ctrl places it freely.
+bounds = panel.usable(fake_area, view)
+panel.state.frame = m
+panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=1000, y=700))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=1000 + (bounds[2] - m[2]) - 5, y=700))
+check("near an edge the panel snaps to it", p.panel_off_x == 0.0, p.panel_off_x)
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=1000 + (bounds[2] - m[2]) - 5, y=700, ctrl=True))
+check("holding Ctrl turns snapping off", abs(p.panel_off_x * s - 5) <= 1, p.panel_off_x * s)
+# Esc (or right-click) puts it back where the drag started.
+panel_ops.cancel_drag(bpy.context)
+check("Esc cancels a drag and puts the panel back", abs(p.panel_off_x * s - 300) <= 1 and not panel.state.drag)
+
+# Drag it to the bottom left: the corner changes, the toolbar is never covered.
+fake_area.regions = [view, sidebar, header, toolbar]
+panel.state.frame = panel.placement(fake_area, view, natural=300)
+f = panel.state.frame
+panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=f[0] + 40, y=f[3] - 10))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=f[0] + 40 - 5000, y=f[3] - 10 - 5000))
+panel_ops.end_drag(bpy.context)
+bl = panel.placement(fake_area, view, natural=300)
+check("dragged far down and left it takes the bottom left corner", p.panel_corner == "BL", p.panel_corner)
+check("it stays inside the free viewport, clear of the toolbar", bl[0] >= 48 and bl[1] >= 0, bl)
+view.height, header.y, sidebar.height, toolbar.height = 700, 670, 670, 670
+check("in a bottom corner it stays put when the viewport gets shorter",
+      panel.placement(fake_area, view, natural=300)[1] == bl[1])
+view.height, header.y, sidebar.height, toolbar.height = 900, 870, 870, 870
+fake_area.regions = [view, sidebar, header]
+check("the nearest corner is found from the centre", panel.to_corner((10, 10, 110, 60), (0, 0, 1000, 800))[0] == "BL"
+      and panel.to_corner((900, 700, 990, 790), (0, 0, 1000, 800))[0] == "TR")
+panel_ops.do_action(bpy.context, "panel_reset")
+check("Put it back on the right resets place and size", p.panel_corner == "TR" and not p.panel_off_x
+      and not p.panel_width and panel.placement(fake_area, view) == (x0, y0, x1, y1))
+
+# The corner grip sits opposite the panel's corner: 40 px narrower, 205 px shorter.
+panel.state.frame = (x0, y0, x1, y1)
 panel_ops.start_drag(bpy.context, "grip", MouseEvent("LEFTMOUSE", x=x0 + 5, y=y0 + 5))
-panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x0 + 85, y=y0 + 205))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x0 + 45, y=y0 + 210))
 panel_ops.end_drag(bpy.context)
 g = panel.placement(fake_area, view)
-check("the corner grip resizes the panel and keeps its top right corner",
-      abs((g[2] - g[0]) - (x1 - x0 - 80)) < 2 and abs((g[3] - g[1]) - (y1 - y0 - 200)) < 2
-      and abs(g[2] - x1) < 1 and abs(g[3] - y1) < 1, (g, (x0, y0, x1, y1)))
-panel_ops.start_drag(bpy.context, "grip", MouseEvent("LEFTMOUSE", x=x0, y=y0))
-panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x0 + 5000, y=y0 + 5000))
+check("the grip width snaps to an 8-unit grid (R9)", p.panel_width % panel.WIDTH_GRID == 0, p.panel_width)
+check("the grip resizes the panel and keeps its top right corner",
+      abs((g[2] - g[0]) - (x1 - x0 - 40)) <= panel.WIDTH_GRID * s and abs((g[3] - g[1]) - (y1 - y0 - 205)) < 2
+      and g[2] == x1 and g[3] == y1, (g, (x0, y0, x1, y1)))
+panel.state.frame = g
+panel_ops.start_drag(bpy.context, "grip", MouseEvent("LEFTMOUSE", x=g[0], y=g[1]))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=g[0] + 5000, y=g[1] + 5000))
 panel_ops.end_drag(bpy.context)
 g = panel.placement(fake_area, view)
-check("the grip stops at a usable minimum size",
-      abs((g[2] - g[0]) - panel.MIN_WIDTH * s) < 2 and abs((g[3] - g[1]) - panel.MIN_HEIGHT * s) < 2)
+check("the grip stops at the minimum size (300 x 220)",
+      abs((g[2] - g[0]) - panel.MIN_WIDTH * s) <= panel.WIDTH_GRID * s and abs((g[3] - g[1]) - panel.MIN_HEIGHT * s) < 2,
+      (g[2] - g[0], g[3] - g[1]))
 panel_ops.double_click(bpy.context, "grip")
 check("double-click on the grip gives the normal size back", not p.panel_width and not p.panel_height)
+panel_ops.toggle_maximize(bpy.context)
+check("maximize makes the panel full height", p.panel_max and panel.placement(fake_area, view, natural=300) ==
+      (x0, y0, x1, y1))
+panel_ops.toggle_maximize(bpy.context)
+check("and restore gives it back", not p.panel_max)
+
+# The navigation gizmo: the panel moves out of its way by the shorter route.
+gizmo_area = Area([view, sidebar, header], gizmo=True)
+p.avoid_gizmo = True
+gz = panel.gizmo_rect(gizmo_area, view)
+pg = panel.placement(gizmo_area, view, natural=300)
+check("the panel never covers the navigation gizmo", gz is not None and (pg[2] <= gz[0] or pg[3] <= gz[1]), (pg, gz))
+p.avoid_gizmo = False
+check("with the gizmo setting off it sits at the edge again", panel.placement(gizmo_area, view, natural=300) == h300)
+p.avoid_gizmo = True
+check("with the gizmo hidden there is nothing to avoid", panel.gizmo_rect(fake_area, view) is None)
+
+# Views (R10): Full, Compact, Minimized, with the frame animation
+fresh()
+panel.state.open, panel.state.minimized, panel.state.compact = True, False, False
+panel.state.last_rect = (x0, y0, x1, y1)
+bpy.context.preferences.view.smooth_view = 200
+p.reduce_motion = "FULL"
+panel_ops.double_click(bpy.context, "drag")
+check("double-click on the header switches to Compact", panel.state.view() == "compact")
+check("changing view animates the frame", panel.state.anim is not None and panel.state.anim["dur"] == panel.COLLAPSE_TIME)
+panel_ops.double_click(bpy.context, "drag")
+check("and back to Full (expanding is 200 ms)", panel.state.view() == "full" and panel.state.anim["dur"] == panel.EXPAND_TIME)
+bpy.context.preferences.view.smooth_view = 0
+panel_ops.minimize()
+check("with Smooth View off the view changes at once", panel.state.view() == "mini" and panel.state.anim is None)
+panel_ops.restore()
+bpy.context.preferences.view.smooth_view = 200
+p.reduce_motion = "SYSTEM"
+panel.state.anim = None
+panel.state.compact = True
+panel_ops.do_action(bpy.context, "maximize")
+check("maximize in Compact opens Full", panel.state.view() == "full")
+
+# Auto-Compact: a viewport too short for Full shows Compact (R12)
+painter = panel.Painter(fake_area, view)
+with draw2d.scaled(painter.zoom, 1.0, 1.0, painter.p.roles):
+    session.add("you", "Build a cottage")
+    session.add("ai", "On it.", brain="claude")
+    big = painter.fits_full()
+    view.height, header.y, sidebar.height = 260, 230, 230
+    small = painter.fits_full()
+    view.height, header.y, sidebar.height = 900, 870, 870
+    inner = panel.panel_width(fake_area, view) - 2 * painter.px(panel.PAD)
+    compact_h = painter.compact_height(inner)
+    full_h = painter.full_height(inner)
+check("Full fits a normal viewport", big)
+check("a short viewport falls back to Compact", not small)
+check("Compact is shorter than Full", compact_h < full_h, (compact_h, full_h))
 
 # Size steppers in the settings
 p.panel_size = 50
@@ -417,7 +609,7 @@ p.panel_size, p.text_size, p.icon_size = 75, 100, 100
 with draw2d.scaled(0.75, 1.2, 1.3):
     inside = (draw2d.FONT_SCALE, draw2d.ICON_SCALE, round(draw2d.ui() / draw2d.base_ui(), 2),
               round(draw2d.line_height("HAND", 10), 3))
-check("the size settings are on while the panel draws", inside == (1.2, 1.3, 0.75, round(12.0 * 1.22, 3)), inside)
+check("the size settings are on while the panel draws", inside == (1.2, 1.3, 0.75, round(12.0 * 1.25)), inside)
 check("and off again for the viewport indicators", (draw2d.FONT_SCALE, draw2d.ICON_SCALE, draw2d.ZOOM) == (1, 1, 1))
 
 # Minimize keeps the session; Take control minimizes
@@ -453,7 +645,7 @@ check("a minimized panel counts as open but not expanded",
 panel.state.open, panel.state.minimized = False, False
 
 from blendwme.relay import addon_version  # noqa: E402
-check("saved logs carry the manifest's version", addon_version() == "2.1.0", addon_version())
+check("saved logs carry the manifest's version", addon_version() == "2.2.0", addon_version())
 
 # ----------------------------------------------------------------------
 # Export and the launcher

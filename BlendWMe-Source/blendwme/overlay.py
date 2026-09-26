@@ -71,21 +71,26 @@ def _pointers_on():
 
 
 # ----------------------------------------------------------------------
-# Indicators
+# Indicators (whole pixels, hard edges: rules R1 to R5)
 # ----------------------------------------------------------------------
+def _px(v, s):
+    return max(1, round(v * s))
+
+
 def radar(cx, cy, pal, size=34.0):
     """Two hot rings growing from 0.3x to 1.3x and fading over 1.8 s; the second 0.9 s late."""
     s = d.ui()
     r = size * s
+    cx, cy = round(cx), round(cy)
     if _motion():
         t = time.time() - _pointer_start[0]
         for delay in (0.0, 0.9):
             phase = ((t - delay) % 1.8) / 1.8
-            d.circle(cx, cy, r * (0.3 + phase), pal.with_alpha(pal.hot, 1.0 - phase), 2.5 * s)
+            d.circle(cx, cy, round(r * (0.3 + phase)), pal.with_alpha(pal.hot, 1.0 - phase), _px(2.5, s))
     else:
-        d.circle(cx, cy, r * 0.8, pal.hot, 2.5 * s)
-        d.circle(cx, cy, r * 1.2, pal.with_alpha(pal.hot, 0.45), 2.0 * s)
-    d.disc(cx, cy, 5 * s, pal.hot)
+        d.circle(cx, cy, round(r * 0.8), pal.hot, _px(2.5, s))
+        d.circle(cx, cy, round(r * 1.2), pal.with_alpha(pal.hot, 0.45), _px(2.0, s))
+    d.disc(cx, cy, _px(5, s), pal.hot)
 
 
 def pencil_circle(x, y, w, h, pal, arrow=True):
@@ -100,25 +105,62 @@ def pencil_circle(x, y, w, h, pal, arrow=True):
         a = 2 * math.pi * t + 0.6
         wobble = 1.0 + 0.04 * math.sin(a * 3.0) + 0.05 * t
         pts.append((cx + rx * wobble * math.cos(a), cy + ry * wobble * math.sin(a)))
-    d.polyline(pts, pal.hot, 3.0 * s)
+    width = _px(3.0, s)
+    d.polyline(pts, pal.hot, width)
     if arrow:
         ax, ay = cx - rx - 6 * s, cy - ry - 6 * s
         tip = (ax + 18 * s * 0.7, ay + 18 * s * 0.7)
-        d.polyline([(ax - 26 * s, ay - 26 * s), tip], pal.hot, 3.0 * s)
-        d.polyline([(tip[0] - 12 * s, tip[1]), tip, (tip[0], tip[1] - 12 * s)], pal.hot, 3.0 * s)
+        d.polyline([(ax - 26 * s, ay - 26 * s), tip], pal.hot, width)
+        d.polyline([(tip[0] - 12 * s, tip[1]), tip, (tip[0], tip[1] - 12 * s)], pal.hot, width)
+
+
+def _overlaps(a, b):
+    return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
+
+
+def bubble_size(words, hand=False):
+    s = d.ui()
+    key, size = ("HAND", round(17 * s)) if hand else ("BODY", round(14 * s))
+    pad = round(12 * s)
+    width = round(min(260 * s, d.width_of(key, size, words) + 2 * pad))
+    h = round(d.paragraph_height(key, size, words, width - 2 * pad, max_lines=6) + 18 * s)
+    return key, size, pad, width, h
+
+
+def place_bubble(anchor, words, region, avoid=None, hand=False):
+    """Where a note goes: left of what it talks about, or right, or below, so it never
+    covers the panel (rule R12) and never leaves the region. Returns (x, y)."""
+    s = d.ui()
+    _, _, _, w, h = bubble_size(words, hand)
+    ax, ay = anchor
+    gap = round(40 * s)
+    edge = round(6 * s)
+    tries = [(ax - w - gap, ay + round(24 * s)), (ax + gap, ay + round(24 * s)),
+             (ax - w / 2, ay - h - gap), (ax - w / 2, ay + gap)]
+    best = None
+    for x, y in tries:
+        x = max(edge, min(x, region.width - w - edge))
+        y = max(edge, min(y, region.height - h - edge))
+        rect = (x, y, x + w, y + h)
+        if avoid is None or not _overlaps(rect, avoid):
+            return round(x), round(y)
+        best = best or (round(x), round(y))
+    return best
 
 
 def bubble(x, y, words, pal, anchor=None, hand=False):
     """A paper note. Its bottom left is (x, y). A dashed leader goes to `anchor`."""
     s = d.ui()
-    key, size = ("HAND", 17 * s) if hand else ("BODY", 14 * s)
-    width = min(260 * s, d.width_of(key, size, words) + 24 * s)
-    h = d.paragraph_height(key, size, words, width - 24 * s) + 18 * s
+    key, size, pad, width, h = bubble_size(words, hand)
+    x, y = round(x), round(y)
     if anchor is not None:
-        d.dashed_path([(x + width, y + h / 2), anchor], pal.ink, 2 * s, 7 * s, 5 * s, closed=False)
-    d.box(x, y, width, h, fill=pal.card, border=pal.ink, width=2.0, radius=8, shadow=pal.shadow,
-          shadow_offset=3)
-    d.paragraph(key, size, x + 12 * s, y + h - 9 * s, words, pal.ink, width - 24 * s)
+        # The leader leaves from the side nearest the anchor.
+        sx = x + width if anchor[0] > x + width / 2 else x
+        d.dashed_path([(sx, y + h / 2), anchor], pal.ink, _px(2, s), 7 * s, 5 * s, closed=False)
+    d.box(x, y, width, h, fill=pal.card, border=pal.ink, width=theme.BORDER_CARD, radius=8, shadow=pal.shadow,
+          shadow_offset=theme.SHADOW_BUTTON)
+    with d.clip(x, y, width, h):
+        d.paragraph(key, size, x + pad, y + h - round(9 * s), words, pal.ink, width - 2 * pad, max_lines=6)
     return width, h
 
 
@@ -150,26 +192,38 @@ def building_outline(region, rv3d, names, pal, brain):
                 boxes.append(b)
     if not boxes:
         return
-    x0 = min(b[0] for b in boxes) - 14 * s
-    y0 = min(b[1] for b in boxes) - 14 * s
-    x1 = max(b[2] for b in boxes) + 14 * s
-    y1 = max(b[3] for b in boxes) + 14 * s
+    m = round(14 * s)
+    x0 = round(min(b[0] for b in boxes)) - m
+    y0 = round(min(b[1] for b in boxes)) - m
+    x1 = round(max(b[2] for b in boxes)) + m
+    y1 = round(max(b[3] for b in boxes)) + m
     offset = ((time.time() % 10.0) * 24 * s) if _motion() else 0.0
-    d.dashed_path(d.rounded_points(x0, y0, x1 - x0, y1 - y0, 4 * s), pal.ink, 2.2 * s, 9 * s, 6 * s, offset)
+    d.dashed_path(d.rounded_points(x0, y0, x1 - x0, y1 - y0, round(4 * s)), pal.ink, _px(2, s), 9 * s, 6 * s,
+                  offset)
     words = "Building now"
-    size = 16 * s
-    w = d.width_of("HAND", size, words) + 40 * s
-    h = 28 * s
-    tx, ty = x0 + 10 * s, y1 - h / 2
-    d.box(tx, ty, w, h, fill=pal.card, border=pal.ink, width=2.0, radius=h / 2 / s)
+    size = round(16 * s)
+    w = round(d.width_of("HAND", size, words) + 40 * s)
+    h = round(28 * s)
+    tx, ty = x0 + round(10 * s), y1 - h // 2
+    d.box(tx, ty, w, h, fill=pal.card, border=pal.ink, width=theme.BORDER_CARD, radius=h / 2 / s)
     if brain == "codex":
-        d.diamond(tx + 15 * s, ty + h / 2, 6 * s, pal.ink, 1.8 * s)
+        d.diamond(tx + round(15 * s), ty + h / 2, 6 * s, pal.ink, _px(2, s))
     else:
-        d.circle(tx + 15 * s, ty + h / 2, 5.5 * s, pal.ink, 1.8 * s)
-    d.text("HAND", size, tx + 28 * s, ty + h / 2 - size * 0.32, words, pal.ink)
+        d.circle(tx + round(15 * s), ty + h // 2, round(5.5 * s), pal.ink, _px(2, s))
+    d.text("HAND", size, tx + round(28 * s), ty + h / 2 - size * 0.32, words, pal.ink)
 
 
-def working_card(region, pal):
+def _free(area, region):
+    """(left, right) of the viewport that the toolbar and the sidebar do not cover."""
+    try:
+        from . import panel
+        left, _, right, _ = panel.free_area(area, region)
+        return left, right
+    except Exception:
+        return 0, region.width
+
+
+def working_card(region, pal, area=None):
     """Top of the viewport (screen 31): who is working, the step, the scribble line."""
     from .relay import relay
     s = d.ui()
@@ -178,53 +232,66 @@ def working_card(region, pal):
     name = {"claude": "Claude", "codex": "Codex"}.get(brain, "BlendWMe")
     verb = "working" if session.status == WORKING else "thinking"
     progress = (card.get("progress") or "").upper()
-    head = f"{name} is {verb}" .upper() + (f" · {progress}" if progress else "")
+    head = f"{name} is {verb}".upper() + (f" · {progress}" if progress else "")
     title = card.get("title") or ""
-    width = min(560 * s, region.width - 40 * s)
+    left, right = _free(area, region) if area is not None else (0, region.width)
+    width = round(min(560 * s, right - left - 40 * s))
     if width < 240 * s:
         return
-    h = (92 if title else 58) * s
-    x = (region.width - width) / 2
-    y = region.height - h - 60 * s
-    d.box(x, y, width, h, fill=pal.panel, border=pal.ink, width=2.5, radius=8, shadow=pal.shadow, shadow_offset=4)
-    top = y + h - 22 * s
+    h = round((92 if title else 58) * s)
+    x = round(left + (right - left - width) / 2)
+    y = round(region.height - h - 60 * s)
+    d.box(x, y, width, h, fill=pal.panel, border=pal.ink, width=theme.BORDER_CARD, radius=8, shadow=pal.shadow,
+          shadow_offset=4)
+    top = y + h - round(22 * s)
     phase = ((time.time() % 1.2) / 1.2) if _motion() else None
-    d.ticks(x + 14 * s, top - 6 * s, 12 * s, pal.ink, phase)
+    d.ticks(x + round(14 * s), top - round(6 * s), round(12 * s), pal.ink, phase)
     if brain == "codex":
-        d.diamond(x + 46 * s, top, 6 * s, pal.ink, 1.8 * s)
+        d.diamond(x + round(46 * s), top, 6 * s, pal.ink, _px(2, s))
     else:
-        d.circle(x + 46 * s, top, 5.5 * s, pal.ink, 1.8 * s)
-    d.tracked("BLACK", 10.5 * s, x + 60 * s, top - 4 * s, head, pal.ink)
+        d.circle(x + round(46 * s), top, round(5.5 * s), pal.ink, _px(2, s))
     hint = "Esc pauses"
-    hw = d.width_of("HAND", 15 * s, hint)
-    d.text("HAND", 15 * s, x + width - hw - 14 * s, top - 5 * s, hint, pal.muted)
-    if title:
-        d.text("HAND", 20 * s, x + 14 * s, top - 34 * s, title, pal.ink)
-        prog = ((time.time() % 2.6) / 2.6) if _motion() else 1.0
-        d.scribble(x + 16 * s, y + 14 * s, min(220 * s, width * 0.4), 3 * s, pal.ink, prog,
-                   "zigzag" if brain == "codex" else "wavy", 2.2 * s)
+    hs = round(15 * s)
+    hw = d.width_of("HAND", hs, hint)
+    with d.clip(x, y, width, h):
+        room = width - round(74 * s) - hw - round(14 * s)
+        d.tracked("BLACK", round(10.5 * s), x + round(60 * s), top - round(4 * s),
+                  d.tracked_fit("BLACK", round(10.5 * s), head, room), pal.ink)
+        d.text("HAND", hs, x + width - hw - round(14 * s), top - round(5 * s), hint, pal.muted)
+        if title:
+            ts = round(20 * s)
+            d.text("HAND", ts, x + round(14 * s), top - round(34 * s),
+                   d.fit("HAND", ts, title, width - round(28 * s)), pal.ink)
+            prog = ((time.time() % 2.6) / 2.6) if _motion() else 1.0
+            d.scribble(x + round(16 * s), y + round(14 * s), min(220 * s, width * 0.4), 3 * s, pal.ink, prog,
+                       "zigzag" if brain == "codex" else "wavy", _px(2, s))
 
 
-def cue_card(region, card, pal):
-    """Your turn, at the bottom of the viewport, when the panel is not open here."""
+def cue_card(region, card, pal, area=None):
+    """Your turn, at the bottom of the viewport, when BlendWMe is not showing there."""
     s = d.ui()
-    width = min(560 * s, region.width - 40 * s)
+    left, right = _free(area, region) if area is not None else (0, region.width)
+    width = round(min(560 * s, right - left - 40 * s))
     if width < 240 * s:
         return
     words = card.get("text") or card.get("title") or ""
-    tw = width - 80 * s
-    h = 54 * s + d.paragraph_height("HAND", 20 * s, words, tw)
-    x = (region.width - width) / 2
-    y = 30 * s
-    d.box(x, y, width, h, fill=pal.card, border=pal.ink, width=2.5, radius=10, shadow=pal.shadow, shadow_offset=6)
-    top = y + h - 18 * s
+    tw = width - round(80 * s)
+    size = round(20 * s)
+    h = round(54 * s + d.paragraph_height("HAND", size, words, tw, max_lines=5))
+    x = round(left + (right - left - width) / 2)
+    y = round(30 * s)
+    d.box(x, y, width, h, fill=pal.card, border=pal.ink, width=theme.BORDER_CARD, radius=10, shadow=pal.shadow,
+          shadow_offset=theme.SHADOW_PANEL)
+    top = y + h - round(18 * s)
     on = (not _motion()) or (time.time() % 2.0) < 1.0
-    d.box(x + 18 * s, top - 22 * s, 22 * s, 22 * s, fill=pal.hot if on else pal.with_alpha(pal.hot, 0.18),
-          border=pal.ink if on else None, width=1.5, radius=2)
+    block = round(22 * s)
+    d.box(x + round(18 * s), top - block, block, block, fill=pal.hot if on else pal.with_alpha(pal.hot, 0.18),
+          border=pal.ink if on else None, width=1, radius=2)
     kind = card.get("kind")
     head = {"teach": "Your turn", "watch": "Press Next", "ask": "A question for you"}.get(kind, "Your turn")
-    d.tracked("BLACK", 11 * s, x + 56 * s, top - 10 * s, head.upper(), pal.ink)
-    d.paragraph("HAND", 20 * s, x + 56 * s, top - 18 * s, words, pal.ink, tw)
+    with d.clip(x, y, width, h):
+        d.tracked("BLACK", round(11 * s), x + round(56 * s), top - round(10 * s), head.upper(), pal.ink)
+        d.paragraph("HAND", size, x + round(56 * s), top - round(18 * s), words, pal.ink, tw, max_lines=5)
 
 
 # ----------------------------------------------------------------------
@@ -291,6 +358,23 @@ def _editor_matches(area, editor):
 # ----------------------------------------------------------------------
 # Draw handlers
 # ----------------------------------------------------------------------
+def _blendwme_shows_in(area):
+    """True when BlendWMe itself is visible in this viewport: the drawn panel (not
+    minimized), or with "Blender UI" the sidebar open on the BlendWMe tab."""
+    from . import panel
+    if theme.native():
+        from . import ui
+        return ui.sidebar_shows_blendwme(area)
+    return panel.is_expanded_in(area)
+
+
+def _panel_rect(area):
+    from . import panel
+    if panel.is_open_in(area):
+        return panel.state.rect
+    return None
+
+
 def _draw_view3d_main():
     from . import panel
     from .relay import relay
@@ -302,6 +386,7 @@ def _draw_view3d_main():
         gpu.state.blend_set("ALPHA")
         pal = theme.current()
         brain = relay.running or relay.active
+        avoid = _panel_rect(area)
         if rv3d is not None and _pointers_on():
             building = [p["object"] for p in session.pointers if p.get("building") and p.get("object")]
             if building:
@@ -323,16 +408,19 @@ def _draw_view3d_main():
                 radar(xy.x, xy.y, pal)
                 if p.get("label"):
                     s = d.ui()
-                    bubble(xy.x - 300 * s, xy.y + 40 * s, p["label"], pal, anchor=(xy.x - 12 * s, xy.y + 8 * s))
+                    anchor = (round(xy.x), round(xy.y + 8 * s))
+                    bx, by = place_bubble(anchor, p["label"], region, avoid)
+                    bubble(bx, by, p["label"], pal, anchor=anchor)
         _draw_region_pointer(region, area, pal)
-        if not panel.is_expanded_in(area):
-            # Closed or minimized: a Teach cue still shows on the viewport. The working card
-            # only shows when the panel is closed (the minimized bar already says "Building").
+        if not _blendwme_shows_in(area):
+            # BlendWMe is closed or minimized here: a "your turn" cue still shows on the
+            # viewport. The working card shows only when it is closed (the minimized bar
+            # already says "Building").
             card = session.card
             if card and not card.get("hidden") and session.status in (WAIT_USER, WAIT_NEXT, ASKING):
-                cue_card(region, card, pal)
+                cue_card(region, card, pal, area)
             elif relay.is_running() and session.status in (THINKING, WORKING) and not panel.is_open_in(area):
-                working_card(region, pal)
+                working_card(region, pal, area)
         gpu.state.blend_set("NONE")
     except Exception as e:  # never break Blender's drawing
         print("BlendWMe overlay:", e)
@@ -360,11 +448,13 @@ def _draw_region_pointer(region, area, pal):
         if editor == "VIEW_3D" and region.type == "WINDOW" and not p.get("label"):
             continue        # never circle the whole viewport without a reason
         # The pencil circle around the part of the editor, inset so it stays visible.
-        inset = 10 * s
+        inset = round(10 * s)
         pencil_circle(inset, inset, region.width - 2 * inset, region.height - 2 * inset, pal,
                       arrow=region.width > 120 * s and region.height > 120 * s)
         if p.get("label") and region.width > 160 * s and region.height > 50 * s:
-            bubble(14 * s, region.height / 2, p["label"], pal, hand=True)
+            avoid = _panel_rect(area) if (area.type == "VIEW_3D" and region.type == "WINDOW") else None
+            bx, by = place_bubble((round(14 * s), round(region.height / 2)), p["label"], region, avoid, hand=True)
+            bubble(bx, by, p["label"], pal, hand=True)
 
 
 def _draw_other():
@@ -377,6 +467,41 @@ def _draw_other():
         print("BlendWMe overlay:", e)
 
 
+# ----------------------------------------------------------------------
+# One timer for every redraw (rule R6): about 30 fps only while something moves,
+# and only the regions that show it. Idle, it checks four times a second.
+# ----------------------------------------------------------------------
+FAST = 1 / 30
+IDLE_EVERY = 0.25
+SIDEBAR_EVERY = 0.5          # the "Blender UI" sidebar's live line (the seconds) updates twice a second
+_last_sidebar = [0.0]
+
+
+def _pointed_editors():
+    return {p.get("editor") for p in session.pointers if p.get("editor")}
+
+
+def _tag(area, kinds):
+    for region in area.regions:
+        if region.type in kinds:
+            region.tag_redraw()
+
+
+def redraw_plan():
+    """What to redraw now: (viewport overlays move, the panel moves, the sidebar is live)."""
+    from . import panel
+    from .relay import relay
+    moving = _motion()
+    working = relay.is_running() and session.status in (THINKING, WORKING)
+    your_turn = session.status in (WAIT_USER, WAIT_NEXT, ASKING) and bool(session.card)
+    overlays = moving and _pointers_on() and bool(session.pointers)
+    # The cue and working cards on the viewport blink and tick when BlendWMe is not showing.
+    cards = moving and (working or your_turn)
+    panel_moves = panel.state.open and not theme.native() and panel.animates()
+    sidebar = theme.native() and working
+    return overlays, cards, panel_moves, sidebar
+
+
 def _redraw_timer():
     # The Done card collapses after 6 s into one line in the conversation.
     card = session.card
@@ -386,20 +511,35 @@ def _redraw_timer():
     if any(p.get("tab") for p in session.pointers):
         _read_tabs()
     from . import panel
-    animate = (bool(session.pointers) or bool(session.card) or session.status in (THINKING, WORKING)
-               or panel.state.open)
-    if animate and theme.reduce_motion():
-        animate = panel.state.focused          # still keep the text caret alive
+    try:
+        overlays, cards, panel_moves, sidebar = redraw_plan()
+    except Exception:
+        overlays = cards = panel_moves = sidebar = False
     changed = session.changed_flag
-    if animate or changed:
-        session.changed_flag = False
-        try:
-            for window in bpy.context.window_manager.windows:
-                for area in window.screen.areas:
+    session.changed_flag = False
+    now = time.time()
+    sidebar_due = sidebar and now - _last_sidebar[0] >= SIDEBAR_EVERY
+    if sidebar_due:
+        _last_sidebar[0] = now
+    editors = _pointed_editors()
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == "VIEW_3D":
+                    if changed:
+                        _tag(area, ("WINDOW", "UI", "HEADER"))
+                        continue
+                    if overlays or (cards and not _blendwme_shows_in(area)):
+                        _tag(area, ("WINDOW",))
+                    elif panel_moves and area.as_pointer() == panel.state.area_ptr:
+                        _tag(area, ("WINDOW",))
+                    if sidebar_due:
+                        _tag(area, ("UI",))
+                elif editors and any(_editor_matches(area, e) for e in editors) and (changed or overlays):
                     area.tag_redraw()
-        except Exception:
-            pass
-    return 0.05 if animate else 0.25
+    except Exception:
+        pass
+    return FAST if (overlays or cards or panel_moves) else (SIDEBAR_EVERY if sidebar else IDLE_EVERY)
 
 
 def register():

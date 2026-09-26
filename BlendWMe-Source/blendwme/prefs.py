@@ -1,12 +1,13 @@
 """Settings (saved in Blender's preferences) and per-session options (mode, prompt, references).
 
-2.1 keeps settings to the few that matter. They all live on one screen, the
-panel's "Brains and settings" screen:
+The settings are drawn with Blender's own widgets everywhere (rule R7): in the
+panel's Settings popover, in the sidebar with the "Blender UI" theme, and in
+Preferences > Add-ons > BlendWMe. One function draws them all (draw_settings).
 
-- the theme (Graphite Paper, Red on Paper, Blender Grey)
+- the brain, the references and the theme (Graphite, Red, Blender Grey, 2000s, Blender UI)
+- the panel's size, text size and icon size, and where it sits
 - the relay options (offer a hand-over at a limit, hand over by itself in Auto,
-  the returning brain reviews the other's work first)
-- the Auto pace and whether pointers show in the viewport
+  the returning brain reviews the other's work first), the Auto pace and the pointers
 
 Everything else sits behind a closed "Advanced" section. BlendWMe never asks
 for an API key: the brains sign in inside the official Claude Code and Codex
@@ -19,9 +20,13 @@ import bpy
 
 from .state import session
 
-THEMES = [("GRAPHITE", "Graphite", "Graphite Paper: pencil on paper. Red only when you need to look"),
-          ("RED", "Red", "Red on Paper: bold and warm"),
-          ("BLENDER", "Blender", "Blender Grey: sits quietly in Blender's dark interface, orange indicators")]
+THEMES = [("GRAPHITE", "Graphite", "Graphite Paper: pencil on paper. Red only when you need to look", 0),
+          ("RED", "Red", "Red on Paper: bold and warm", 1),
+          ("BLENDER", "Blender Grey", "Sits quietly in Blender's dark interface, orange indicators", 2),
+          ("Y2K", "2000s", "Made for Blender's Theme 2000: Luna blue, a navy shadow, orange when it's your turn", 3),
+          ("NATIVE", "Blender UI", "No drawn panel: BlendWMe lives in the sidebar (N) with Blender's own buttons, "
+                                   "like other extensions", 4)]
+CORNERS = [("TR", "Top right", ""), ("TL", "Top left", ""), ("BR", "Bottom right", ""), ("BL", "Bottom left", "")]
 
 
 def addon_prefs(context=None):
@@ -52,11 +57,21 @@ def _redraw(self, context):
     session.changed_flag = True
 
 
+def _theme_changed(self, context):
+    """Moving between the drawn panel and "Blender UI" moves BlendWMe with it."""
+    session.changed_flag = True
+    try:
+        from . import ui
+        ui.theme_switched(context)
+    except Exception as e:
+        print("BlendWMe: theme switch:", e)
+
+
 class BWM_Preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     # -- the settings screen -------------------------------------------------
-    theme: bpy.props.EnumProperty(name="Theme", items=THEMES, default="GRAPHITE", update=_redraw)
+    theme: bpy.props.EnumProperty(name="Theme", items=THEMES, default="GRAPHITE", update=_theme_changed)
     offer_handover: bpy.props.BoolProperty(
         name="Offer a hand-over when a limit is reached", default=True,
         description="When Claude or Codex reaches its usage limit, show a card that offers the other one")
@@ -90,16 +105,20 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         name="Minimize when I take control", default=True, update=_redraw,
         description="Take control folds the panel into a small bar, so the viewport is yours. "
                     "The session keeps going; click the bar to open it again")
-    # Where the panel sits. Set by dragging its header (and its corner grip); "Put it back
-    # on the right" in the settings resets them. Distances are at 100 % panel size.
-    panel_dock: bpy.props.EnumProperty(
-        name="Panel place", default="RIGHT", update=_redraw,
-        items=[("RIGHT", "On the right", "Tight against the right edge of the viewport"),
-               ("FREE", "Where I put it", "Where you dragged it")])
-    panel_gap_right: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
-    panel_gap_top: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
+    avoid_gizmo: bpy.props.BoolProperty(
+        name="Keep clear of the navigation gizmo", default=True, update=_redraw,
+        description="The panel never covers the navigation gizmo in the top right corner. Turn this off "
+                    "(or hide the gizmo) to let the panel sit right against the edge")
+    # Where the panel sits (rule R9): the nearest corner of the free viewport and the
+    # distance from it, in design units (pixels / scale), so it stays put when the
+    # viewport, the sidebar or the scale changes. Set by dragging the header and the
+    # corner grip; "Put the panel back" resets them.
+    panel_corner: bpy.props.EnumProperty(name="Panel corner", items=CORNERS, default="TR", update=_redraw)
+    panel_off_x: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
+    panel_off_y: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
     panel_width: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})     # 0: the design width
-    panel_height: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})    # 0: full height
+    panel_height: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})    # 0: follows the content
+    panel_max: bpy.props.BoolProperty(default=False, options={"HIDDEN"})               # full height
 
     # -- Advanced (closed by default) -----------------------------------------
     show_advanced: bpy.props.BoolProperty(name="Advanced", default=False)
@@ -154,31 +173,119 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         draw_settings(self.layout, self, context)
 
 
-def draw_settings(layout, p, context=None):
-    """The same settings as the panel's settings screen, in Blender's own widgets."""
+def _heading(layout, words, icon="NONE"):
+    row = layout.row()
+    row.label(text=words, icon=icon)
+    return row
+
+
+def draw_brains(layout, context):
+    """Who works with you: Claude or Codex, and whether each is installed and signed in."""
+    from . import setup_checks
+    s = getattr(context.window_manager, "blendwme", None)
     col = layout.column()
-    col.label(text="Theme")
-    col.row().prop(p, "theme", expand=True)
-    col.separator()
-    col.label(text="Relay")
+    _heading(col, "Who works with you", "COMMUNITY")
+    if s is not None:
+        col.row(align=True).prop(s, "brain", expand=True)
+    for brain, words in (("claude", "Claude Code"), ("codex", "Codex CLI")):
+        level, message = setup_checks.results.get(brain, (None, ""))
+        if level == setup_checks.OK:
+            text, icon = f"{words}: installed and signed in", "CHECKMARK"
+        elif level == setup_checks.RUNNING:
+            text, icon = f"{words}: checking...", "SORTTIME"
+        elif level is None:
+            text, icon = f"{words}: not checked yet", "DOT"
+        else:
+            text, icon = message, "ERROR"
+        wrapped(col, text, icon=icon, width=46)
+    row = col.row(align=True)
+    row.operator("blendwme.setup_check", text="Check again", icon="FILE_REFRESH").which = "ALL"
+    level = setup_checks.results.get("mcp", (None, ""))[0]
+    if level in (setup_checks.ERROR, setup_checks.WARN):
+        row.operator("blendwme.setup_check", text="Install the tools server", icon="IMPORT").which = "install"
+
+
+def draw_references(layout, context):
+    s = getattr(context.window_manager, "blendwme", None)
+    if s is None:
+        return
+    col = layout.column(align=True)
+    _heading(col, "References for this task", "IMAGE_REFERENCE")
+    col.prop(s, "reference_1", text="")
+    col.prop(s, "reference_2", text="")
+
+
+def draw_theme(layout, p):
+    col = layout.column()
+    _heading(col, "Theme", "COLOR")
+    grid = col.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
+    for key, name, _, _ in THEMES:
+        grid.prop_enum(p, "theme", key, text=name)
+
+
+def draw_panel_options(layout, p):
+    col = layout.column()
+    _heading(col, "Panel", "WINDOW")
+    if p.theme == "NATIVE":
+        wrapped(col, "Blender UI: BlendWMe is here in the sidebar. Pick a drawn theme for the floating panel.",
+                width=46)
+        return
+    sub = col.column(align=True)
+    sub.prop(p, "panel_size")
+    sub.prop(p, "text_size")
+    sub.prop(p, "icon_size")
+    col.prop(p, "minimize_on_take_control")
+    col.prop(p, "avoid_gizmo")
+    col.operator("blendwme.panel_reset", text="Put the panel back on the right", icon="LOOP_BACK")
+
+
+def draw_relay(layout, p):
+    col = layout.column()
+    _heading(col, "Relay, pace and pointers", "UV_SYNC_SELECT")
     col.prop(p, "offer_handover")
     col.prop(p, "auto_relay")
     col.prop(p, "returning_reviews")
-    col.separator()
-    col.prop(p, "pace", text="Pace (s a step)")
+    col.prop(p, "pace", text="Auto pace (s a step)")
     col.prop(p, "show_pointers")
-    col.separator()
-    col.label(text="Panel")
-    col.prop(p, "panel_size")
-    col.prop(p, "text_size")
-    col.prop(p, "icon_size")
-    col.prop(p, "minimize_on_take_control")
-    col.operator("blendwme.panel_reset", text="Put the panel back on the right", icon="LOOP_BACK")
-    col.separator()
+
+
+def wrapped(layout, text, icon="NONE", width=46):
+    """A few labels that wrap long text (Blender's labels do not wrap by themselves)."""
+    import textwrap
+    col = layout.column(align=True)
+    for i, line in enumerate(textwrap.wrap(text, width) or [""]):
+        col.label(text=line, icon=icon if i == 0 else "BLANK1" if icon != "NONE" else "NONE")
+    return col
+
+
+def draw_settings(layout, p, context=None):
+    """Every setting, in Blender's own widgets: the Settings popover, the sidebar and the
+    add-on preferences all draw this (rule R7: native where Blender is best)."""
+    context = context or bpy.context
+    col = layout.column()
+    draw_brains(col.box(), context)
+    draw_references(col.box(), context)
+    draw_theme(col.box(), p)
+    draw_panel_options(col.box(), p)
+    draw_relay(col.box(), p)
     box = col.box()
     box.prop(p, "show_advanced", icon="TRIA_DOWN" if p.show_advanced else "TRIA_RIGHT", emboss=False)
     if p.show_advanced:
         draw_advanced(box, p)
+        draw_tools(box)
+
+
+def draw_tools(layout):
+    col = layout.column(align=True)
+    col.label(text="Tools")
+    col.operator("blendwme.notebook", icon="TEXT")
+    col.operator("blendwme.show_capture", icon="IMAGE_DATA")
+    col.operator("blendwme.open_logs", icon="FILE_FOLDER")
+    col.operator("blendwme.save_log", icon="FILE_TICK")
+    col.operator("blendwme.copy_log", icon="COPYDOWN")
+    col.operator("blendwme.crash_report", icon="PACKAGE")
+    col.operator("blendwme.setup_check", text="Install the Tools Server", icon="IMPORT").which = "install"
+    col.operator("blendwme.copy_terminal_command", icon="CONSOLE")
 
 
 def draw_advanced(layout, p):

@@ -263,15 +263,108 @@ class BWM_OT_dismiss_prefs_note(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def sidebar_region(area):
+    return next((r for r in area.regions if r.type == "UI"), None)
+
+
+def sidebar_shows_blendwme(area):
+    """True when this 3D Viewport's sidebar is open on the BlendWMe tab ("Blender UI" theme)."""
+    try:
+        if not area.spaces.active.show_region_ui:
+            return False
+        region = sidebar_region(area)
+        return region is not None and region.width > 1 and region.active_panel_category == "BlendWMe"
+    except Exception:
+        return False
+
+
+def _pick_tab(area):
+    region = sidebar_region(area)
+    if region is None:
+        return False
+    try:
+        region.active_panel_category = "BlendWMe"
+        return region.active_panel_category == "BlendWMe"
+    except Exception:
+        return False
+
+
+def show_sidebar(area, show=True):
+    """Open the sidebar on the BlendWMe tab (or close it). The tab only exists after the
+    sidebar has drawn once with the "Blender UI" theme, so it is picked again just after."""
+    area.spaces.active.show_region_ui = show
+    area.tag_redraw()
+    if not show or _pick_tab(area):
+        return
+    pointer = area.as_pointer()
+    tries = [0]
+
+    def again():
+        tries[0] += 1
+        try:
+            for window in bpy.context.window_manager.windows:
+                for a in window.screen.areas:
+                    if a.as_pointer() == pointer and _pick_tab(a):
+                        a.tag_redraw()
+                        return None
+        except Exception:
+            return None
+        return 0.05 if tries[0] < 20 else None
+    bpy.app.timers.register(again, first_interval=0.05)
+
+
+def _view3d(context):
+    if context.area and context.area.type == "VIEW_3D":
+        return context.area
+    if context.window is None:
+        return None
+    return next((a for a in context.window.screen.areas if a.type == "VIEW_3D"), None)
+
+
+_theme_seen = {"last": None}
+
+
+def theme_switched(context):
+    """The theme moved between the drawn panel and "Blender UI": take BlendWMe along."""
+    from . import panel, panel_ops, theme
+    now = theme.current_name()
+    before = _theme_seen["last"]
+    _theme_seen["last"] = now
+    if context is None or getattr(context, "window", None) is None:
+        return
+    if now == "NATIVE" and before != "NATIVE":
+        area = None
+        if panel.state.open:
+            area = next((a for a in context.window.screen.areas if a.as_pointer() == panel.state.area_ptr), None)
+            panel_ops.close_panel()
+            area = area or _view3d(context)
+            if area is not None:
+                show_sidebar(area, True)
+    elif before == "NATIVE" and now != "NATIVE":
+        area = next((a for a in context.window.screen.areas if a.type == "VIEW_3D" and sidebar_shows_blendwme(a)),
+                    None)
+        if area is not None:
+            show_sidebar(area, False)
+            panel_ops.open_panel(context, area)
+
+
 class BWM_OT_open(bpy.types.Operator):
     bl_idname = "blendwme.open"
-    bl_label = "Open BlendWMe"
-    bl_description = "Open or focus BlendWMe in the 3D Viewport (Ctrl+Alt+M)"
+    bl_label = "BlendWMe"
+    bl_description = "Open BlendWMe in the 3D Viewport (Ctrl+Alt+M). Again: focus the input; again: minimize"
 
     close: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE"})
 
     def execute(self, context):
-        from . import panel, panel_ops
+        from . import panel, panel_ops, theme
+        if theme.native():
+            # "Blender UI": BlendWMe is the sidebar's BlendWMe tab. This shows or hides it.
+            area = _view3d(context)
+            if area is None:
+                self.report({"WARNING"}, "Open a 3D Viewport first: BlendWMe lives there.")
+                return {"CANCELLED"}
+            show_sidebar(area, not self.close and not sidebar_shows_blendwme(area))
+            return {"FINISHED"}
         if self.close:
             panel_ops.close_panel()
             return {"FINISHED"}
@@ -428,8 +521,99 @@ class BWM_OT_copy_terminal(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BWM_OT_example(bpy.types.Operator):
+    bl_idname = "blendwme.example"
+    bl_label = "Example"
+    bl_description = "Put this example in the message box"
+    bl_options = {"INTERNAL"}
+
+    name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        from .panel import EXAMPLE_PROMPTS
+        context.window_manager.blendwme.prompt = EXAMPLE_PROMPTS.get(self.name, self.name)
+        return {"FINISHED"}
+
+
+class BWM_OT_read_more(bpy.types.Operator):
+    bl_idname = "blendwme.read_more"
+    bl_label = "Read More"
+    bl_description = "Show the whole message (or fold it again)"
+    bl_options = {"INTERNAL"}
+
+    entry: bpy.props.IntProperty()
+
+    def execute(self, context):
+        from . import panel
+        panel.state.expanded ^= {self.entry}
+        return {"FINISHED"}
+
+
+class BWM_OT_earlier(bpy.types.Operator):
+    bl_idname = "blendwme.earlier"
+    bl_label = "Show Earlier Messages"
+    bl_description = "Show more of the conversation"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        _native["shown"] += 20
+        return {"FINISHED"}
+
+
+class BWM_OT_close_card(bpy.types.Operator):
+    bl_idname = "blendwme.close_card"
+    bl_label = "Close"
+    bl_description = "Close this card"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        from . import panel_ops
+        panel_ops.close_top_card()
+        return {"FINISHED"}
+
+
+class BWM_OT_take_control(bpy.types.Operator):
+    bl_idname = "blendwme.take_control"
+    bl_label = "Take Control"
+    bl_description = "BlendWMe pauses after the current action and the scene is yours. Resume when you are done"
+
+    def execute(self, context):
+        from . import panel_ops, theme
+        if theme.native():
+            bpy.ops.blendwme.pause()
+        else:
+            panel_ops.take_control(context)
+        return {"FINISHED"}
+
+
+class BWM_OT_pointers_again(bpy.types.Operator):
+    bl_idname = "blendwme.pointers_again"
+    bl_label = "Move"
+    bl_description = "Play the pointer again so your eye finds it"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        from . import overlay
+        overlay.restart_pointers()
+        return {"FINISHED"}
+
+
+class BWM_OT_settings(bpy.types.Operator):
+    bl_idname = "blendwme.settings"
+    bl_label = "BlendWMe Settings"
+    bl_description = "Brains, references, theme, panel size and relay options"
+
+    def execute(self, context):
+        from . import panel_ops
+        if not setup_checks.results:
+            bpy.ops.blendwme.setup_check(which="ALL")
+        panel_ops.open_settings(context)
+        return {"FINISHED"}
+
+
 # ----------------------------------------------------------------------
-# Panels
+# Panels: the "Blender UI" theme (the sidebar), the Settings popover and the
+# BlendWMe button in the 3D Viewport's header
 # ----------------------------------------------------------------------
 
 class _Base:
@@ -437,23 +621,41 @@ class _Base:
     bl_region_type = "UI"
     bl_category = "BlendWMe"
 
+    @classmethod
+    def poll(cls, context):
+        # One BlendWMe at a time: the sidebar tab exists only with the "Blender UI" theme.
+        from . import theme
+        return theme.native()
+
 
 _STATUS_ICON = {IDLE: "CHECKBOX_DEHLT", THINKING: "SORTTIME", WORKING: "MODIFIER",
                 WAIT_NEXT: "PLAY", WAIT_USER: "HAND", ASKING: "QUESTION", PAUSED: "PAUSE",
                 DONE: "CHECKMARK", ERROR: "ERROR"}
+_native = {"shown": 20}          # how many conversation entries the sidebar shows
 
 
 def _wrap_width(context):
-    return max(20, int(context.region.width / (6.5 * context.preferences.system.ui_scale)))
+    """Characters per line for the current region's width (labels do not wrap by themselves)."""
+    region = context.region
+    width = region.width if region else 300
+    return max(20, int(width / (7.0 * context.preferences.system.ui_scale)))
 
 
-def _wrapped(layout, text, width):
+def _wrapped(layout, text, width, icon="NONE", limit=None):
+    """Labels that wrap. Returns (column, True when lines were left out)."""
     col = layout.column(align=True)
-    for line in textwrap.wrap(text, width) or [""]:
-        col.label(text=line)
+    lines = []
+    for para in str(text).split("\n"):
+        lines += textwrap.wrap(para, width) or [""]
+    shown = lines if limit is None else lines[:limit]
+    if limit is not None and len(lines) > limit and shown:
+        shown[-1] = shown[-1].rstrip(" .,;:") + "…"
+    for i, line in enumerate(shown):
+        col.label(text=line, icon=icon if i == 0 else ("BLANK1" if icon != "NONE" else "NONE"))
+    return col, len(lines) > len(shown)
 
 
-def _draw_safety_notes(layout, p):
+def _draw_safety_notes(layout, p, width=44):
     """Parts that failed to start, and the one-time 'Save Preferences' note."""
     from . import lifecycle
     if lifecycle.problems:
@@ -461,67 +663,300 @@ def _draw_safety_notes(layout, p):
         box.alert = True
         box.label(text="Part of BlendWMe did not start:", icon="ERROR")
         for part, message in lifecycle.problems[:4]:
-            _wrapped(box, f"{part}: {message}", 44)
+            _wrapped(box, f"{part}: {message}", width)
         box.operator("blendwme.crash_report", icon="PACKAGE")
     if lifecycle.needs_prefs_note(p):
         box = layout.box()
-        _wrapped(box, "Save Preferences so BlendWMe stays on after restarts.", 44)
+        _wrapped(box, "Save Preferences so BlendWMe stays on after restarts.", width)
         row = box.row(align=True)
         row.operator("blendwme.save_prefs", icon="FILE_TICK")
         row.operator("blendwme.dismiss_prefs_note")
 
 
+class _Words:
+    """Just enough of a panel Painter to share its words (status, card labels) with the sidebar."""
+    relay = relay
+
+
+def _status_words():
+    from .panel import Painter
+    try:
+        return Painter.status_words(_Words())[0]
+    except Exception:
+        return STATUS_TEXT.get(session.status, session.status)
+
+
+def _card_words(card):
+    kind = card.get("kind")
+    body = card.get("text") or ""
+    title = card.get("title") or ""
+    if kind in ("teach", "ask"):
+        return body or title
+    return f"{title}. {body}" if (title and body) else (title or body)
+
+
+def draw_card(layout, context, card):
+    """The card for what is happening now, with its buttons."""
+    from .panel import Painter
+    kind = card.get("kind")
+    yours = kind in ("watch", "teach", "ask", "pause", "limit")
+    width = _wrap_width(context)
+    box = layout.box()
+    head = box.row()
+    head.alert = yours
+    head.label(text=Painter.card_label(_Words(), card), icon="HAND" if yours else "INFO")
+    head.operator("blendwme.close_card", text="", icon="X", emboss=False)
+    _wrapped(box, _card_words(card), width, limit=8)
+    if card.get("why"):
+        col, _ = _wrapped(box, "Why: " + card["why"], width, limit=4)
+        col.enabled = False
+    if kind == "teach" and session.pointers:
+        row = box.row()
+        targets = [ptr.get("label") or ptr.get("tab") or ptr.get("object") or "" for ptr in session.pointers]
+        row.label(text=", ".join(t.replace("_", " ").title() for t in targets if t) or "Pointer",
+                  icon="LIGHT_POINT")
+        row.operator("blendwme.pointers_again", text="Move")
+    if kind == "limit":
+        target = card.get("target") or relay.other(card.get("brain") or relay.active)
+        row = box.row(align=True)
+        row.scale_y = 1.5
+        row.alert = True
+        row.operator("blendwme.hand_over", text=f"Hand over to {brain_label(target)}",
+                     icon="FILE_REFRESH").target = target
+        box.operator("blendwme.close_card", text="Wait")
+        p = prefs.addon_prefs(context)
+        if p:
+            box.prop(p, "auto_relay", text="Next time, hand over by itself in Auto")
+
+
+def draw_actions(layout):
+    """The buttons for right now: Check my work / Show me, Next, Pause, Resume / Stop."""
+    status = session.status
+    running = relay.is_running()
+    if (session.card or {}).get("kind") == "limit":
+        return
+    row = layout.row(align=True)
+    row.scale_y = 1.5
+    if status == WAIT_USER:
+        row.operator("blendwme.teach", text="Check my work", icon="CHECKMARK").choice = "done"
+        row.operator("blendwme.teach", text="Show me", icon="HIDE_OFF").choice = "show_me"
+    elif status == WAIT_NEXT:
+        row.operator("blendwme.next", text="Next", icon="PLAY")
+        row.operator("blendwme.take_control", icon="HAND")
+    elif status == PAUSED:
+        row.operator("blendwme.resume", icon="PLAY")
+        row.operator("blendwme.stop", icon="CANCEL")
+    elif running and status in (THINKING, WORKING):
+        row.operator("blendwme.pause", text="Pause", icon="PAUSE")
+        row.operator("blendwme.take_control", icon="HAND")
+    elif relay.has_conversation() and status in (ERROR, IDLE):
+        row.scale_y = 1.0
+        row.operator("blendwme.resume", text="Continue", icon="PLAY")
+
+
 class BWM_PT_main(_Base, bpy.types.Panel):
-    """The sidebar is only a launcher: BlendWMe itself is the panel drawn in the viewport."""
+    """BlendWMe in Blender's own interface (the "Blender UI" theme)."""
     bl_label = "BlendWMe"
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon="GREASEPENCIL")
+
+    def draw(self, context):
+        import time
+        from . import panel
+        layout = self.layout
+        s = context.window_manager.blendwme
+        p = prefs.addon_prefs(context)
+        width = _wrap_width(context)
+        _draw_safety_notes(layout, p, width)
+        status = session.status
+
+        # The status (what is happening, live) and the brain
+        box = layout.box()
+        brain = relay.running or relay.active or s.brain
+        row = box.row()
+        row.alert = panel.your_turn()
+        if relay.is_running() and status in (THINKING, WORKING):
+            seconds = int(time.time() - (panel.state.turn_started or time.time()))
+            verb = "building" if status == WORKING else "thinking"
+            row.label(text=f"{brain_label(brain)} is {verb} · {seconds} s", icon=_STATUS_ICON.get(status, "DOT"))
+            title = (session.card or {}).get("title") or ""
+            if title:
+                _wrapped(box, title, width, icon="GREASEPENCIL", limit=2)
+        else:
+            row.label(text=_status_words(), icon=_STATUS_ICON.get(status, "DOT"))
+        sub = box.row(align=True)
+        sub.label(text=brain_label(brain), icon="OUTLINER_OB_LIGHT")
+        sub.operator("blendwme.hand_over", text="Hand over", icon="FILE_REFRESH").target = relay.other(brain)
+
+        layout.row().prop(s, "mode", expand=True)
+
+        card = session.card
+        if card and not card.get("hidden") and card.get("kind") != "work":
+            draw_card(layout, context, card)
+        draw_actions(layout)
+
+        # The message box
+        if not relay.has_conversation():
+            hint = "What shall we make?"
+        else:
+            hint = {"TEACH": "Ask a question...", "AUTO": "Describe what to build..."}.get(
+                s.mode, f"Tell {brain_label(relay.active)} what to change...")
+        col = layout.column(align=True)
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.prop(s, "prompt", text="", placeholder=hint)
+        row.operator("blendwme.paste_prompt", text="", icon="PASTEDOWN")
+        row = col.row(align=True)
+        row.scale_y = 1.4
+        row.operator("blendwme.send", text="Send", icon="EXPORT").new_task = False
+        if relay.has_conversation() and not relay.is_running():
+            row.operator("blendwme.send", text="New Task", icon="ADD").new_task = True
+        if s.mode == "AUTO" and p:
+            layout.prop(p, "pace", text="Pace (s a step)")
+        if not relay.has_conversation() and not session.log:
+            from .panel import EXAMPLES
+            col = layout.column(align=True)
+            col.label(text="Or start from an example:")
+            for name in EXAMPLES:
+                col.operator("blendwme.example", text=name, icon="LIGHT").name = name
+
+
+class BWM_PT_plan(_Base, bpy.types.Panel):
+    bl_label = "Plan"
+    bl_parent_id = "BWM_PT_main"
+
+    @classmethod
+    def poll(cls, context):
+        return _Base.poll(context) and bool(session.plan)
+
+    def draw_header(self, context):
+        done = sum(1 for item in session.plan if item["done"])
+        self.layout.label(text=f"{done} of {len(session.plan)}")
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        current = next((i for i, item in enumerate(session.plan) if not item["done"]), None)
+        for i, item in enumerate(session.plan):
+            row = col.row()
+            if i == current and relay.is_running():
+                row.alert = True                 # the part being built now
+            elif item["done"]:
+                row.enabled = False
+            name = item["name"] + (" (skipped)" if item.get("skipped") else "")
+            row.label(text=name, icon="CHECKBOX_HLT" if item["done"] else "CHECKBOX_DEHLT")
+
+
+class BWM_PT_conversation(_Base, bpy.types.Panel):
+    bl_label = "Conversation"
+    bl_parent_id = "BWM_PT_main"
 
     def draw(self, context):
         from . import panel
         layout = self.layout
-        p = prefs.addon_prefs(context)
-        row = layout.row()
-        row.scale_y = 1.6
-        if panel.is_open_in(context.area) and panel.state.minimized:
-            row.operator("blendwme.open", text="Show BlendWMe", icon="WINDOW")
-        elif panel.is_open_in(context.area):
-            row.operator("blendwme.open", text="Close BlendWMe", icon="PANEL_CLOSE").close = True
-        else:
-            row.operator("blendwme.open", text="Open BlendWMe", icon="WINDOW")
-        layout.label(text="Shortcut: Ctrl+Alt+M")
-        status = session.status
-        layout.label(text=STATUS_TEXT.get(status, status), icon=_STATUS_ICON.get(status, "DOT"))
-        _draw_safety_notes(layout, p)
+        log = [e for e in session.log if e.get("t", 0) >= panel.state.cleared_at]
+        if not log:
+            layout.label(text="Ask for anything: a cosy cabin, teach me to bevel...", icon="INFO")
+            return
+        shown = _native["shown"]
+        if len(log) > shown:
+            layout.operator("blendwme.earlier", text=f"Show earlier ({len(log) - shown} more)", icon="TRIA_UP")
+        width = _wrap_width(context)
+        for e in log[-shown:]:
+            who = e["who"]
+            text = e.get("text") or ""
+            if who == "you":
+                box = layout.box()
+                head = box.row()
+                head.alignment = "RIGHT"
+                head.label(text="YOU", icon="USER")
+                col, _ = _wrapped(box, text, width - 4)
+                col.alignment = "RIGHT"
+            elif who == "ai":
+                box = layout.box()
+                brain = e.get("brain") or "claude"
+                box.label(text=brain_label(brain).upper(),
+                          icon="KEYTYPE_KEYFRAME_VEC" if brain == "codex" else "RADIOBUT_OFF")
+                eid = panel.Painter.entry_id(None, e)
+                full = eid in panel.state.expanded
+                _, more = _wrapped(box, text, width, limit=None if full else 12)
+                if more or full:
+                    box.operator("blendwme.read_more", text="Show less" if full else "Read more",
+                                 emboss=False).entry = eid
+            elif who in ("step", "look", "retry", "done", "plan"):
+                icon = {"look": "HIDE_OFF", "retry": "GREASEPENCIL", "plan": "PRESET"}.get(
+                    who, "CHECKMARK" if e.get("ok", True) else "ERROR")
+                col, _ = _wrapped(layout, text, width, icon=icon, limit=3)
+                col.enabled = who != "retry"
+            else:
+                col, _ = _wrapped(layout, text, width, icon="ERROR" if who == "error" else "INFO", limit=6)
+                col.alert = who == "error"
 
 
-class BWM_PT_references(_Base, bpy.types.Panel):
-    bl_label = "References"
+class BWM_PT_journal(_Base, bpy.types.Panel):
+    bl_label = "The Baton (Journal)"
     bl_parent_id = "BWM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        s = context.window_manager.blendwme
-        self.layout.label(text="Images BlendWMe compares its work to.")
-        self.layout.prop(s, "reference_1", text="")
-        self.layout.prop(s, "reference_2", text="")
+        from .journal import journal
+        layout = self.layout
+        data = journal.data
+        width = _wrap_width(context)
+        _wrapped(layout, data.get("brief") or "No brief yet. Type what you want to make.", width, icon="TEXT",
+                 limit=6)
+        plan = data.get("plan") or []
+        if plan:
+            done = sum(1 for item in plan if item.get("done"))
+            layout.label(text=f"Plan: {done} of {len(plan)} done", icon="PRESET")
+        steps = [e for e in data.get("events", []) if e.get("kind") == "step" and e.get("ok")]
+        layout.label(text=f"{len(steps)} steps, each signed by who made it", icon="CHECKMARK")
+        for st in [x for x in data.get("struggles", []) if x.get("open")][-3:]:
+            _wrapped(layout, "Open: " + st["text"], width, icon="ERROR", limit=3)
+        row = layout.row(align=True)
+        row.operator("blendwme.open_journal", text="Open as Text", icon="TEXT")
+        row.operator("blendwme.export_journal", text="Export", icon="EXPORT")
 
 
-class BWM_PT_more(_Base, bpy.types.Panel):
-    bl_label = "More"
+class BWM_PT_native_settings(_Base, bpy.types.Panel):
+    bl_label = "Settings"
     bl_parent_id = "BWM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        p = prefs.addon_prefs(context)
+        if p:
+            prefs.draw_settings(self.layout, p, context)
+
+
+class BWM_PT_settings(bpy.types.Panel):
+    """The drawn panel's Settings: a popover with Blender's own widgets (rule R7)."""
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "HEADER"
+    bl_label = "BlendWMe Settings"
+    bl_ui_units_x = 18
 
     def draw(self, context):
         layout = self.layout
-        col = layout.column(align=True)
-        col.operator("blendwme.notebook", icon="TEXT")
-        col.operator("blendwme.show_capture", icon="IMAGE_DATA")
-        col.operator("blendwme.open_logs", icon="FILE_FOLDER")
-        col.operator("blendwme.save_log", icon="FILE_TICK")
-        col.operator("blendwme.copy_log", icon="COPYDOWN")
-        col.operator("blendwme.crash_report", icon="PACKAGE")
-        col = layout.column(align=True)
-        col.operator("blendwme.setup_check", text="Install the Tools Server", icon="IMPORT").which = "install"
-        col.operator("blendwme.copy_terminal_command", icon="CONSOLE")
+        p = prefs.addon_prefs(context)
+        layout.label(text="BlendWMe Settings", icon="PREFERENCES")
+        _draw_safety_notes(layout, p, 52)
+        if p:
+            prefs.draw_settings(layout, p, context)
+
+
+def draw_header_button(self, context):
+    """The one way in from the 3D Viewport's header. Pressed while BlendWMe is showing."""
+    from . import panel, theme
+    area = context.area
+    try:
+        if theme.native():
+            on = area is not None and sidebar_shows_blendwme(area)
+        else:
+            on = area is not None and panel.is_expanded_in(area)
+    except Exception:
+        on = False
+    self.layout.operator("blendwme.open", text="BlendWMe", icon="GREASEPENCIL", depress=on)
 
 
 classes = (
@@ -529,25 +964,42 @@ classes = (
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
     BWM_OT_crash_report, BWM_OT_save_prefs, BWM_OT_dismiss_prefs_note, BWM_OT_open,
+    BWM_OT_example, BWM_OT_read_more, BWM_OT_earlier, BWM_OT_close_card, BWM_OT_take_control,
+    BWM_OT_pointers_again, BWM_OT_settings,
     BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal, BWM_OT_setup_check,
     BWM_OT_export_journal,
-    BWM_PT_main, BWM_PT_references, BWM_PT_more,
+    BWM_PT_main, BWM_PT_plan, BWM_PT_conversation, BWM_PT_journal, BWM_PT_native_settings,
+    BWM_PT_settings,
 )
 
 
 def register():
     # One class at a time: a class that fails is reported, the rest still work.
+    from . import theme
     failed = []
     for c in classes:
         try:
             bpy.utils.register_class(c)
         except Exception as e:
             failed.append(f"{c.__name__}: {e}")
+    try:
+        bpy.types.VIEW3D_HT_header.remove(draw_header_button)
+    except Exception:
+        pass
+    bpy.types.VIEW3D_HT_header.append(draw_header_button)
+    try:
+        _theme_seen["last"] = theme.current_name()
+    except Exception:
+        pass
     if failed:
         raise RuntimeError("; ".join(failed))
 
 
 def unregister():
+    try:
+        bpy.types.VIEW3D_HT_header.remove(draw_header_button)
+    except Exception:
+        pass
     for c in reversed(classes):
         if getattr(c, "is_registered", False):
             bpy.utils.unregister_class(c)
