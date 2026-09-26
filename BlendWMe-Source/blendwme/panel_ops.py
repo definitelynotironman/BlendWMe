@@ -293,6 +293,9 @@ def do_action(context, action, event=None):
         prefs.sync_session(context)
     elif kind == "checks":
         bpy.ops.blendwme.setup_check(which="ALL")
+    elif kind == "install":
+        from . import setup_checks
+        setup_checks.run_in_background(["install", "mcp"], _config(context))
     elif kind == "advanced":
         try:
             bpy.ops.preferences.addon_show(module=__package__)

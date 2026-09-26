@@ -1,201 +1,315 @@
-# BlendWMe 2.0
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/blendwme-logo-blender-transparent.svg">
+    <img src="assets/logo/blendwme-logo-graphite-transparent.svg" alt="BlendWMe" width="460">
+  </picture>
+</p>
 
-An AI Blender artist that lives inside Blender. It can build at full speed, slow down and show you how, or coach you while you do it yourself. You can let go of the wheel and take it back at any moment: it continues from your version.
+<p align="center"><b>A Blender artist and coach who works with you, inside Blender.</b></p>
 
-2.0 runs on the subscriptions you may already have. **Claude Code** (Claude Pro or Max) is the main brain and **Codex CLI** (ChatGPT Plus or Pro) is the second brain. There is no pay-per-token API by default. When one brain reaches its usage limit, the other takes over from the same project journal.
+<p align="center">
+  Blender 4.2 LTS · Windows · Claude Code or Codex · MIT licence
+</p>
 
-## What is new in 2.0
+BlendWMe adds an experienced Blender artist to your Blender. It can build with you, teach you one
+step at a time with pointers on the real buttons, or work on its own while you watch. It runs on the
+Claude or ChatGPT plan you already pay for, through the official Claude Code and Codex programs.
 
-| | 1.0.5 | 2.0 |
-|---|---|---|
-| The brain | One model through a pay-per-token API | Claude Code and Codex on your subscriptions; the API brain stays, off by default |
-| How the brain reaches Blender | The add-on's own loop | BlendWMe's MCP server (`blendwme_mcp`), the same 13 tools for every brain |
-| Memory | The conversation | The **project journal**, saved with the .blend: the brief, your decisions, the plan, every step signed by the brain that made it, open struggles, reviews, handoff notes |
-| Switching brains | Not possible | **Hand over to Codex / Claude** in the panel. The other brain gets a handoff brief and a fresh look at the scene, fixes the open struggles first and builds on the other brain's work |
-| Usage limits | Not relevant | Detected. A card offers the hand-over; in Auto mode it can switch by itself |
-| Setup | Paste an API key | Setup checks in the panel: is Claude installed and signed in, is Codex, does the MCP server start |
+<!-- HERO: a 10 to 20 second GIF of Teach mode with the blinking block and radar ring. The maintainer records this. Path: docs/media/hero.gif -->
 
-Everything else stays the same whichever brain works: Auto / Watch / Teach, Piece by Piece / Full Build with the plan checklist, Pause and Take Control, the Graphite Paper card and the red pointers.
+## Contents
 
-## Install
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Using BlendWMe](#using-blendwme)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Where things are saved](#where-things-are-saved)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [Privacy and security](#privacy-and-security)
+- [Project status and versions](#project-status-and-versions)
+- [Contributing and feedback](#contributing-and-feedback)
+- [Licence and credits](#licence-and-credits)
 
-1. Install **Claude Code** and sign in once: open a terminal, run `claude` and sign in with your Claude account.
-2. Optional, for the relay: install the **Codex CLI** and sign in once: run `codex` and choose **Sign in with ChatGPT**.
-3. Download `blendwme-2.0.0.zip` from this repo's **Releases** page (or build it: `python tools/package.py` inside `BlendWMe-Source` writes it to `BlendWMe-Source/dist/`).
-4. Blender 4.2 or newer: Edit > Preferences > Add-ons. Disable any older BlendWMe. Restart Blender.
-5. Top-right menu > **Install from Disk** > choose `blendwme-2.0.0.zip`.
-6. In the 3D Viewport press **N** and open the **BlendWMe** tab.
-7. Open the **Brains** panel and press **Install MCP server** once. It makes a small Python environment in the workspace folder (`Documents/BlendWMe Workspace`) and installs the official `mcp` package (this needs the internet once). You need Python 3.10 or newer on your PC; if none is found, Blender's own Python is used.
-8. Press **Check All**. You should see three green lines: Claude, Codex (if you installed it) and the MCP server.
+## What it does
 
-BlendWMe never reads, copies or stores your Claude or ChatGPT sign-in. Sign-in happens only inside the official `claude` and `codex` programs. The setup checks use their own status commands and never show your e-mail.
+BlendWMe has three ways of working. You switch between them with the tabs at the top of the panel.
 
-## First test (the cottage)
+- **Together.** You and the AI build the same scene. It works one step at a time and waits for
+  **Next**, so you can follow along. It sees what you change in the scene and builds on your version.
+  <!-- SCREENSHOT: Together mode, the thinking box and a step card. Path: docs/media/together.png -->
+- **Teach.** It teaches you one action at a time, in under 20 words, with the reason underneath.
+  A blinking block says "do this now", a radar ring marks the tab or object to look at, and a pencil
+  circle marks the part of the window. **Check my work** looks at what you did; **Show me** lets it
+  do that step for you.
+  <!-- SCREENSHOT: Teach mode with the cue card and the radar ring on the Modifier tab. Path: docs/media/teach.png -->
+- **Auto.** It writes a plan, builds it part by part and checks the result from several angles.
+  The plan shows as a checklist. Press **Pause** or **Take control** at any time.
+  <!-- SCREENSHOT: Auto mode with the plan card. Path: docs/media/auto.png -->
 
-1. Open a new General scene. Choose **Auto** and the **Claude** brain.
-2. Type: *A cosy low poly cottage with a red tiled roof, a chimney, wooden door, four windows, a stone base and a small path. Stylised, warm colours.*
-3. Press **New Task**. Claude's reply streams into the panel while the cottage is built piece by piece.
-4. Type a follow-up: *Make the chimney taller and add a fence.* It remembers the whole project.
+Two brains, one project:
 
-Then try the relay:
-
-- Press **Hand over to Codex**. Claude writes a short handoff note, and Codex continues from the journal and a fresh look at the scene.
-- Press **Hand over to Claude**. Claude comes back to its own conversation, is told exactly what Codex changed, fixes anything Codex struggled with first, and does not undo Codex's work.
-- Save the .blend, close Blender and open the file again. The journal comes back with it, and each brain resumes where it left off.
-
-And the other modes on the same scene:
-
-- **Watch:** *Show me how you would build a wooden fence.* Press **Next** after each step. Each step uses the operators a person would use, and the card tells you the shortcut.
-- **Pause and Take Control:** while it works, press Pause. Move or reshape something. Press **Resume**. It is told exactly what you changed and builds around your version.
-- **Teach:** *Teach me to model a simple table.* You do each step. It points at what matters, and the step completes by itself when your scene shows it is done. Press **Show me** if you are stuck.
-
-### Testing the MCP server from a terminal
-
-The **Brains** panel has **Copy Terminal Command**. Paste it into a terminal: it starts an ordinary interactive `claude` session in the workspace folder with BlendWMe's tools. Ask it to build something and watch it appear in Blender.
-
-## Controls
-
-| Button | What it does |
-|---|---|
-| Brain (Claude / Codex / API) | Which brain answers your next message |
-| Send / New Task | Send continues the conversation. New Task starts fresh |
-| Tell BlendWMe | While it works, your message reaches it with its next tool result |
-| Hand over to Codex / Claude | Pass the work to the other brain. It turns red when a usage limit is reached |
-| Pause and Take Control | It stops after the current action. The scene is yours |
-| Resume / Continue | Hand back. It reads your changes first |
-| Next Step | Watch mode: go to the next step. Or set Auto-advance seconds |
-| I did it / Show me / Skip | Teach mode answers |
-| Undo AI Step | Same as Ctrl+Z. Every AI step is its own undo step |
-| Construction Notebook | Every step it ran, with its code, in a Text block |
-| Project Journal | The journal and the handoff brief, in a Text block |
-| What the AI Saw | Opens the last picture the art director judged |
-
-## Settings (Preferences > Add-ons > BlendWMe)
-
-- **Claude:** program path (empty: found automatically), model and effort (empty: your Claude Code defaults).
-- **Codex:** program path and model.
-- **Relay:** *Auto mode: hand over by itself at a usage limit* (on by default; in Watch and Teach you are always asked) and *Ask for a handoff note when handing over* (uses a little of the old brain's usage; the journal is complete without it).
-- **MCP bridge:** start automatically, workspace folder, the Python for the MCP server.
-- **API brain:** off by default. If you switch it on, it uses an OpenAI-compatible endpoint with your key (pay per token) and stops at a hard token budget. A local Ollama model can use it through Ollama's OpenAI-compatible endpoint.
+- Use **Claude** (Claude Code on your Claude plan) or **Codex** (Codex CLI on your ChatGPT plan).
+- When one reaches its usage limit, **hand over** to the other. BlendWMe keeps a journal of the
+  project (the "baton"), so the next brain knows the brief, the plan, what you changed, what was
+  hard and what is left.
 
 ## How it works
 
-```
-you ─► panel ─► relay ─► engine ─► claude -p / codex exec (your subscription)
-                  ▲                        │ MCP (stdio)
-         events: text, tool_call,          ▼
-         tool_result, done, error,   blendwme_mcp server (outside Blender)
-         limit_reached                     │ local socket, 127.0.0.1 + a random token
-                                           ▼
-                           socket_bridge ─► tool_host ─► bridge (Blender main thread)
-                                              │  ├─ run_python      hands (undo step first, rollback on failure)
-                                              │  ├─ look            eyes (multi-angle pictures to the brain)
-                                              │  ├─ get_scene_info / get_object_info / inspect_api / load_skill
-                                              │  ├─ plan / point_at / teach_step / ask_user / finish
-                                              │  └─ handoff_note / read_journal
-                                              ▼
-                                         journal ("the baton", saved with the .blend)
+```mermaid
+flowchart LR
+  U[You, in the BlendWMe panel] --> B[BlendWMe add-on in Blender]
+  B -- starts --> C[Claude Code or Codex on your computer]
+  C -- uses tools --> M[BlendWMe tools server]
+  M -- local connection, this computer only --> B
+  B --> J[(Project journal, saved with your .blend)]
 ```
 
-- Claude Code runs as `claude -p` with streaming JSON, its own session (`--session-id`, then `--resume`), only BlendWMe's MCP tools allowed (no shell, no file editing) and BlendWMe's instructions appended to its system prompt.
-- Codex runs as `codex exec --json` in a read-only sandbox, with BlendWMe's MCP server added for that run only (`-c` overrides; your Codex config is never edited), and resumes its own thread.
-- Both brains start in the workspace folder, which holds the shared instructions (`CLAUDE.md` and `AGENTS.md`), the MCP config and the socket's connection file.
-- Pay-per-token API keys in your environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and similar) are removed before a brain starts, so the brains always use your subscription sign-in.
+When you send a message, the add-on starts Claude Code (`claude -p`) or Codex (`codex exec`) in a
+workspace folder on your computer. The brain does its work only through BlendWMe's tools: run a
+Python step on the live scene, look at the viewport, read the scene, write a plan, teach a step,
+point at a control. The tools server passes each call to Blender over a local connection, and
+Blender runs it on its main thread with an undo step. Every step and every hand-over is written to
+the project journal. You sign in only inside Claude Code and Codex; BlendWMe never sees your login.
+Everything runs on your computer except the AI itself.
 
-| File | Job |
+## Requirements
+
+| You need | Notes |
 |---|---|
-| `relay.py` | The panel's one entry point: active brain, turns, hand-over, limits |
-| `engines/` | `claude_code.py`, `codex.py`, `api.py` (the 1.0.5 loop), `limits.py` (usage-limit messages), `base.py` |
-| `journal.py` | The project journal and the handoff brief, saved in the .blend and next to it |
-| `socket_bridge.py`, `workspace.py` | The local socket for the MCP server, the workspace folder |
-| `tool_host.py` | BlendWMe's tools for outside brains (the same behaviour as the 1.0.5 tools) |
-| `setup_checks.py`, `mcp_probe.py` | The setup buttons; a tiny MCP client to check the server |
-| `blendwme_mcp/` | The MCP server program (official `mcp` SDK, stdio) |
-| `agent.py`, `llm.py` | The 1.0.5 agent loop and client: the API brain |
-| `tools.py`, `prompts.py` | The tool list and the shared instructions for every brain |
-| `executor.py`, `repair.py`, `precheck.py` | Run code on the live scene; repair mechanical API slips; reject what cannot be repaired |
-| `look.py`, `scene_info.py` | Captures; scene summaries, your edits, who made each object |
-| `knowledge.py` + `skills/` | Skill cards and live API lookup |
-| `helpers.py`, `shapes.py`, `furniture.py`, `coerce.py` | The bwm modelling kit |
-| `overlay.py`, `ui.py`, `prefs.py`, `state.py`, `bridge.py`, `credentials.py`, `logs.py` | Overlay, panel, settings, threading, key storage (API brain), logs |
+| Blender 4.2 LTS | Tested with 4.2.3. |
+| Windows 10 or 11 | Tested on Windows 11. macOS and Linux are untested. |
+| Claude Code, signed in with a Claude plan **or** Codex CLI, signed in with a ChatGPT plan | One is enough. Both lets you use the relay. Claude Code needs a Pro, Max, Team or Enterprise plan. |
+| Python 3.10 or newer for the tools server | Optional. BlendWMe installs the tools server into its own environment with any Python it finds, or with Blender's own Python. It needs an internet connection once to download the `mcp` package. |
 
-## The project journal
+## Install
 
-BlendWMe, not the AI, holds the memory. The journal records the brief and your decisions, the plan with the brain that built each part, every step (code and result), who made each object (Claude, Codex, API or you), struggles that stay open until a later step solves them, the latest art director review and the brain's verdict, handoff notes and every switch.
+1. **Install Claude Code and sign in.** Open PowerShell and run the official installer
+   ([docs](https://code.claude.com/docs/en/setup)):
 
-From this it builds a compact handoff brief (with a size limit) for the brain that takes over: the brief, open struggles first, the latest note, what changed since that brain last worked here, the plan, who made each object, the latest review, and the rule to build on the other brain's work and never undo it. Any brain can also call `read_journal` at any time.
+   ```powershell
+   irm https://claude.ai/install.ps1 | iex
+   ```
 
-It is saved as a Text block named *BlendWMe Journal* inside the .blend, and as `<file>_blendwme/journal.json` next to it. When you open the file, the newer copy wins.
+   Open a new terminal, run `claude`, and follow the browser prompts to sign in with your Claude plan.
+2. **(Optional) Install Codex CLI and sign in.** In PowerShell
+   ([official README](https://github.com/openai/codex)):
 
-## The bwm modelling kit
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+   ```
 
-Instead of making the brain fight bmesh, BlendWMe gives it a tested, forgiving kit, available inside run_python as `bwm.<name>`:
+   Or, if you have Node.js: `npm install -g @openai/codex`. Then run `codex` and choose
+   **Sign in with ChatGPT**.
+3. Download `blendwme-2.1.0.zip` from [Releases](../../releases). Do not unzip it.
+4. In Blender: **Edit > Preferences > Get Extensions**, open the drop-down menu in the top right,
+   choose **Install from Disk**, and pick the zip.
+5. **Save Preferences** (the menu at the bottom left of the Preferences window > Save Preferences),
+   so BlendWMe stays on after Blender restarts.
+6. Open BlendWMe: press **Ctrl+Alt+M** with the mouse over the 3D Viewport, or open the sidebar
+   (**N**) > **BlendWMe** tab > **Open BlendWMe**.
+7. Click **Settings** at the bottom of the panel. The checks run by themselves. If the tools server
+   is missing, press **Install the tools server**. Every line should show a ✓.
 
-| Group | Functions |
+<details>
+<summary><b>Make Blender find Claude Code and Codex</b></summary>
+
+Blender started from the Start menu may not see the same PATH as your terminal. BlendWMe looks for
+`claude` on the PATH and in `%USERPROFILE%\.local\bin`, where the official installer puts it.
+If the check still says it cannot find a program:
+
+1. Open a terminal and run `where claude` (or `where codex`). Copy the path it prints.
+2. In BlendWMe: **Settings > Advanced settings**. Paste the path into **Claude Code program** (or
+   **Codex program**).
+3. Run the checks again.
+
+</details>
+
+<details>
+<summary><b>Upgrading</b></summary>
+
+Install the new zip the same way (Install from Disk). It replaces the old version. Restart Blender.
+Your journal, logs and settings stay.
+
+</details>
+
+## Quick start
+
+1. Open BlendWMe (**Ctrl+Alt+M**). The first view shows one input, three example ideas and the
+   mode tabs.
+2. Stay on **Together**. Type `Make a cosy cottage with a red tiled roof` and press **Enter**.
+3. Watch the first step appear, then press **Next**. Move or reshape something yourself between
+   steps; BlendWMe notices and keeps your change.
+4. Switch to **Teach** and type `Teach me to bevel the table edges` (on a scene with a table or a
+   box). Follow the card; press **Check my work** when you have done it.
+5. Try **Auto** with `Model me a simple ice cream cone` and watch the plan tick off.
+
+## Using BlendWMe
+
+### Modes
+
+| Mode | Who does the work | Example prompt |
+|---|---|---|
+| Together | The AI, one step at a time, waiting for Next | `Add a chimney on the left of the roof` |
+| Teach | You, guided one action at a time | `Teach me to bevel the table edges` |
+| Auto | The AI, part by part, checking as it goes | `A cosy low poly cottage with a stone base and a small path` |
+
+Asking for camera help ("How do I aim the camera at my scene?") in Teach gives a short lesson with
+pointers, and **Do it for me** aligns the camera to your view, frames the scene or sets the lens.
+
+<details>
+<summary><b>The tools the brains use</b></summary>
+
+| Tool | What it is for |
 |---|---|
-| Shapes | `box`, `cylinder`, `cone`, `sphere` (or ellipsoid), `torus`, `prism`, `wedge`, `extrude_profile`, `loft`, `lathe`, `tube`, `limb`, `gable_roof` |
-| Modifiers, kept live | `bevel`, `mirror`, `array`, `subdivide`, `solidify`, `boolean` |
-| Placement | `bounds`, `top`, `place_on`, `align`, `rotate`, `duplicate`, `parent`, `group` |
-| Architecture | `wall`, `floor`, `opening`, `window`, `door`, `path` |
-| Furniture | `bed`, `desk`, `table`, `chair`, `wardrobe` / `closet`, `shelf`, `monitor`, `keyboard`, `pc_tower`, `rug`, `lamp`, `plant` |
+| `run_python` | Run one Python step on the live scene, with an undo step. A failed step is rolled back |
+| `look` | Pictures of the scene: several angles, the viewport, or through the camera |
+| `get_scene_info`, `get_object_info` | Exact facts: sizes, positions, modifiers, materials |
+| `plan` | The build checklist, and marking parts done or skipped with a reason |
+| `teach_step` | One action for you to do, with a pointer, and a check that sees when it is done |
+| `point_at` | A radar ring or pencil circle on an object, a tab or a part of the window |
+| `ask_user` | A short question when a wrong guess would waste work |
+| `load_skill`, `inspect_api` | Technique cards and Blender API lookups |
+| `finish` | End the task. Refused while plan parts are open |
+| `handoff_note`, `read_journal` | The baton between Claude and Codex |
 
-Every function takes `name, sizes, location, collection, material` in that order and everything else by keyword. Arguments are forgiving (numbers as text, colours in many forms, common alias names). Re-running a step with the same names replaces the AI's own earlier objects; your objects are never replaced. `inspect_api('bwm.gable_roof')` shows the full help.
+</details>
 
-### Making it a better artist
+### The plan
 
-Add or improve cards in `skills/`. Each card is a short Markdown file: the workflow, good settings, code patterns, common mistakes and how to teach it. The first line is the description the AI sees. A card is only kept after its code runs cleanly in Blender 4.2.
+In Auto the brain writes a plan first. Each part ticks off when it is built. A part can also be
+marked done after the brain has looked at it, or skipped with a reason you can read. The task can
+only finish when every part is settled, and a finished, stopped or new task closes the plan card.
 
-## The art director
+### Pausing and taking control
 
-- **References first.** Reference images are looked at before anything is built.
-- **Reviews without being asked.** After the first build steps and then every few steps, BlendWMe sends the brain four angles of the scene with a rubric: match to the brief and reference, silhouette and proportions, contact, shape detail, colour and value, then the most valuable fixes. The review lists every AI-made object with its exact size, so leftovers and wrong scale are easy to spot.
-- **One check before finishing.** The first time the brain calls finish, the result is reviewed once more if anything changed.
+**Pause** (or **Esc**) stops the AI before its next action. Move, edit or delete anything, then
+press **Resume**; the AI is told what you changed and keeps it. **Esc** twice stops the task.
+Everything already built stays in your scene, and **Undo step** removes the last AI step.
 
-## When things go wrong
+### Hand over (the relay)
 
-| Problem | What happens |
+The brain card has a **Hand over** button. The working brain writes a short handoff note, then the
+other brain starts with the journal brief and a fresh look at the scene. When a brain reaches its
+usage limit, a card offers the hand-over. In Auto, BlendWMe can hand over by itself (Settings >
+Relay and pace).
+
+### The journal
+
+Open it from the panel footer (**Journal**). It shows the brief, every step signed by who made it,
+the hand-overs, who made which objects, open and solved problems, and what is next.
+**Open as Blender text** shows the raw journal; **Export** saves a copy to the logs folder.
+
+### Themes
+
+Settings > Theme: **Graphite** (white paper and pencil), **Red**, or **Blender** (Blender's grey).
+Animations follow your system's "reduce motion" setting; you can force them on or off in
+Advanced settings.
+
+## Keyboard shortcuts
+
+| Key | Action |
 |---|---|
-| A small mechanical API slip in the code | It is repaired and the step runs. The brain is told what was fixed |
-| A step's code crashes | Everything that step created is removed, the brain gets the failing line and a plain-language hint, and the struggle goes into the journal |
-| The same step keeps failing | It is told to change approach, then it pauses and hands you the wheel |
-| A brain reaches its usage limit | A card offers the hand-over (automatic in Auto mode if you allow it). Nothing is lost: the journal was written all along |
-| A brain lost its saved conversation | It starts a fresh one with the full context |
-| A brain or the MCP server is missing or not signed in | The setup checks say what to do, in one sentence |
-| Something still goes wrong | Press Pause or Stop at any time. Undo AI Step (Ctrl+Z) reverses any step |
+| Ctrl+Alt+M | Open or focus BlendWMe (with the mouse over a 3D Viewport) |
+| Enter | Send |
+| Shift+Enter | New line |
+| Esc | Pause the AI while it works. Otherwise close the top card |
+| Esc twice | Stop |
+| Up / Down | Previous / next message you sent |
+| Shift+Tab | Next mode: Together, Teach, Auto |
+| Ctrl+L | Clear the conversation view (the journal keeps everything) |
+| `/` | Commands: `/handover`, `/look`, `/undo`, `/journal`, `/logs`, `/settings`, `/new`, `/stop`, `/help` |
+| `?` | Show all shortcuts (in an empty input) |
 
-## Full logs
+The panel keys act only while the BlendWMe panel has focus, because Blender uses most of them
+elsewhere. Esc while the AI works also pauses it from the viewport, except while an animation
+plays. Change the keys in **Edit > Preferences > Keymap > Window**: "Open BlendWMe" and the
+"BlendWMe Panel Key" items.
 
-After every task, BlendWMe saves the whole conversation to **Documents/BlendWMe Logs**: a readable `.md` file (every message, the code of every step, every result) and a `.json` file. Use **Save Full Log** to save at any moment and **Open Logs Folder** to find them.
+## Where things are saved
 
-## Safety and limits
+| What | Where |
+|---|---|
+| Project journal | Inside the .blend as the Text block `BlendWMe Journal`, and as `<file name>_blendwme\journal.json` next to the .blend |
+| BlendWMe logs | `Documents\BlendWMe Logs`: `session_*.log`, one log per task, `python-crash-trace.txt` and crash reports |
+| Workspace for Claude Code and Codex | `Documents\BlendWMe Workspace`: their instructions, the tools server settings and its Python environment |
+| Blender crash log (Windows) | `%TEMP%\blender.crash.txt` |
 
-- Code runs on your live scene, like MCP for Blender. Every step is undoable. A small blocklist stops file access, system commands and closing Blender. This is a guardrail, not a sandbox, so save your work first.
-- The socket listens on 127.0.0.1 only and needs a random token that changes each time the bridge starts.
-- Claude Code gets only BlendWMe's tools. Codex runs in a read-only sandbox (Codex has no switch to remove its shell completely).
-- Freehand sculpt strokes are not automated. BlendWMe prepares meshes and teaches sculpting instead.
-- Quality depends on the brain and on the skill cards.
+Type `/logs` in the panel, or use the sidebar > BlendWMe > More > **Open Logs Folder**. Both folders
+can be changed in Settings > Advanced settings.
 
-## Tests
+## Troubleshooting
 
-Run these from `BlendWMe-Source/`. None of them use a subscription or an API key.
+| Problem | Fix |
+|---|---|
+| BlendWMe is gone after Blender crashed | Enable it again in Preferences > Add-ons, then **Save Preferences**. The sidebar's BlendWMe tab reminds you while preferences are unsaved |
+| "Claude is not signed in" or "Codex is not signed in" | Open a terminal, run `claude` or `codex`, and sign in. Then run the checks again |
+| A program is not found | See [Make Blender find Claude Code and Codex](#install) |
+| "Claude's limit is reached" | Press **Hand over to Codex**, or wait for the reset time shown on the card |
+| The tools server check fails | Settings > **Install the tools server**. It needs an internet connection once |
+| The AI's result looks wrong | **Undo step**, or ask it to look again (`/look`) and fix it. Pause and fix it yourself; it keeps your version |
+| Blender crashed | Sidebar > BlendWMe > More > **Make Crash Report**. It zips BlendWMe's latest logs, the Python crash trace and Blender's crash log. For a detailed run, start `blender_debug_log.cmd` from the Blender install folder and repeat the steps |
 
-- `tests/test_v2_headless.py`: the socket bridge, the tool host and the real MCP server end to end; the relay with a fake `claude` and a fake `codex` (streaming, limits, stop, lost sessions, the hand-over in both directions, the journal on save and reopen, auto-relay); the setup checks. Needs the `mcp` package in `BlendWMe-Source/.venv` for the MCP parts:
-  `blender -b --factory-startup --python-exit-code 1 --python tests/test_v2_headless.py`
-- `tests/test_agent_headless.py`: the 1.0.5 agent loop (the API brain) against a fake model server, the bwm kit and the example cards (192 checks).
-- `tests/test_mcp_server.py`: the MCP server with a fake Blender socket (run with the venv's Python).
-- `tests/test_llm.py`: the client helpers.
-- `tools/package.py` builds `dist/blendwme-<version>.zip` (the add-on plus the MCP server).
+## Limitations
 
-## Credits
+> [!WARNING]
+> The AI runs Python in your Blender. Save your work often. Every AI step has its own undo step,
+> and a failed step is rolled back, but a wrong step can still change your scene.
 
-The offscreen capture and multi-angle framing in `look.py` adapt MCP for Blender by Siddharth Ahuja (MIT). See `LICENSE-THIRD-PARTY`. The MCP server uses the official MCP Python SDK.
+- The AI can make mistakes. It does better on scenes and props than on complex characters,
+  rigging, simulation and detailed sculpting, which are still weak.
+- It uses your plan's usage limits. Heavy Auto sessions use them faster.
+- It needs an internet connection for the AI.
+- Tested on Blender 4.2.3 LTS and Windows 11 only.
+- Version 2.1 was tested end to end with stand-in programs in place of Claude Code and Codex
+  (the real tools server, the real Blender, the real journal). Full runs on real Claude and
+  ChatGPT accounts are in progress. Codex's command-line flags follow its official documentation.
+- Some laptops have no numpad. Teach steps that use numpad keys also give the menu path.
+- Not affiliated with Blender, Anthropic or OpenAI.
 
-## Changelog
+## Privacy and security
 
-- **2.0.0**: Claude Code and Codex as brains on your subscriptions; BlendWMe's MCP server and the local socket bridge; the project journal saved with the .blend; Hand over between brains with handoff notes and a handoff brief; usage-limit detection and auto-relay in Auto mode; setup checks and Install MCP server in the panel; the pay-per-token API brain is off by default with a hard token budget.
-- **1.0.5**: the reliability floor. `import bwm` works. Mechanical API slips are repaired instead of rejected. The forgiving bwm kit. Worked example cards for the cottage, room and ice cream cone. Harness-driven art director reviews with an object inventory, a final check and converging critique. Smarter stuck guard. Tool calls written as text are recovered. The 1.0.5 notes are in `docs/NEBIUS_NOTES.md`.
-- **1.0.4**: tool arguments sent as text are converted using each tool's schema.
-- **1.0.3**: Python-as-tool calls are rescued; hidden collections relinked; checks for swapped `modifiers.new` arguments and wrong node types.
-- **1.0.2**: plan checklist, Piece by Piece / Full Build, quiet self-correction.
-- **1.0.1**: vision model discovery, pre-check of API names, full logs.
-- **1.0.0**: rebuild on the MCP pattern: native tool calling, run_python on the live scene, look, skills, Auto / Watch / Teach, rollback of failed steps.
+- BlendWMe stores no passwords, API keys or logins. It removes API-key environment variables before
+  starting Claude Code or Codex, so they always use your plan sign-in.
+- The tools server talks to Blender on this computer only (`127.0.0.1`), with a random token that
+  changes every time Blender starts.
+- Claude Code runs with its own built-in tools turned off; only BlendWMe's tools are allowed.
+  Codex runs with a read-only sandbox.
+- What the AI receives: your messages, scene information, and the viewport pictures it asks for.
+- BlendWMe sends no telemetry. The journal and the logs stay on your computer.
+
+## Project status and versions
+
+- Current version: **2.1.0**. See [CHANGELOG.md](CHANGELOG.md).
+- Branches: `main` (this version), `v2.0.0-full` (2.0.0, which also had a pay-per-token API engine),
+  `nebius-nemotron` (the original Nemotron build from the Nebius x NVIDIA hackathon).
+- Roadmap:
+  - A character pipeline: references, blockout, refinement, materials, rig and pose.
+  - Measured checks against your reference image (silhouette comparison).
+  - More tested technique cards: sculpting, animation, Grease Pencil, geometry nodes.
+  - Teaching replay: turn a finished build into a lesson.
+
+## Contributing and feedback
+
+Report a bug in [Issues](../../issues). Please attach:
+
+1. The crash report zip (sidebar > BlendWMe > More > Make Crash Report), or the newest
+   `session_*.log` from the logs folder.
+2. Your Blender version and Windows version.
+3. The steps that lead to the problem, and which brain and mode you used.
+
+## Licence and credits
+
+- BlendWMe is released under the [MIT licence](BlendWMe-Source/blendwme/LICENSE).
+- [MCP for Blender](https://github.com/ahujasid/mcp-for-blender) by Siddharth Ahuja (MIT licence)
+  for the local socket pattern and the viewport capture technique. Its notice is in
+  [LICENSE-THIRD-PARTY](BlendWMe-Source/blendwme/LICENSE-THIRD-PARTY).
+- Fonts: Archivo and Archivo Black (Omnibus-Type) and Patrick Hand (Patrick Wagesreiter), SIL Open
+  Font License 1.1.
+- Blender is a registered trademark of the Blender Foundation. Claude and Claude Code are trademarks
+  of Anthropic. ChatGPT and Codex are trademarks of OpenAI. BlendWMe is an independent project and
+  is not affiliated with or endorsed by them.
+- Author: [definitelynotironman](https://github.com/definitelynotironman).

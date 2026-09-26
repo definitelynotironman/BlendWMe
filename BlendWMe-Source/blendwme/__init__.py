@@ -1,4 +1,4 @@
-"""BlendWMe 2.0 - an AI Blender artist that builds, demonstrates and teaches.
+"""BlendWMe 2.1 - an AI Blender artist that builds, demonstrates and teaches.
 
 It runs on the plans you already have: Claude Code (main brain) and Codex CLI
 (second brain). BlendWMe never sees your logins and needs no API key.

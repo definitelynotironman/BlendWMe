@@ -135,7 +135,7 @@ def install_mcp():
                       "-r", requirements], timeout=900)
     if code != 0:
         return ERROR, f"Installing the MCP package failed: {out.strip()[-240:]}"
-    return OK, "The MCP server is installed in the workspace folder. Press Check MCP server."
+    return OK, "The tools server is installed in the workspace folder."
 
 
 # ----------------------------------------------------------------------

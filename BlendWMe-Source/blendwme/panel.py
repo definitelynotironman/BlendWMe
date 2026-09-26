@@ -1112,6 +1112,8 @@ class Painter:
         checks = self._check_lines()
         cw = w - self.px(70)
         checks_h = self.px(72) + sum(d.paragraph_height("HAND", self.px(18), t, cw) + self.px(6) for _, t in checks)
+        if self._needs_install():
+            checks_h += self.px(52)
         blocks.append((checks_h, lambda x, top, w: self._checks_card(x, top, w, checks_h, checks, cw)))
         # The lock note and Advanced
         note = "You sign in inside Claude Code and Codex. BlendWMe never sees your login."
@@ -1223,6 +1225,12 @@ class Painter:
         lines.append((True, "Coach instructions shared by both brains"))
         return lines
 
+    def _needs_install(self):
+        from . import setup_checks
+        level = setup_checks.results.get("mcp", (None, ""))[0]
+        busy = setup_checks.results.get("install", (None, ""))[0] == setup_checks.RUNNING
+        return level in (setup_checks.ERROR, setup_checks.WARN) and not busy
+
     def _checks_card(self, x, top, w, h, checks, cw):
         p = self.p
         y = top - h
@@ -1242,6 +1250,9 @@ class Painter:
             elif ok is False:
                 d.cross(x + self.px(25), iy + self.px(6), self.px(10), p.hot, self.px(2.2))
             cursor -= d.paragraph("HAND", self.px(18), x + self.px(44), cursor, words, p.ink, cw) + self.px(6)
+        if self._needs_install():
+            self.button(x + self.px(18), y + self.px(14), w - self.px(39), self.px(40), "Install the tools server",
+                        "install", primary=True, size=13)
 
     # -- the baton journal (screen 25) ------------------------------------------
     def journal_screen(self, x0, y0, x1, y1):

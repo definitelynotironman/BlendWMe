@@ -23,7 +23,6 @@ import bpy  # noqa: E402
 import addon_utils  # noqa: E402
 
 addon_utils.enable("blendwme", default_set=True)      # enabled as an add-on, so it has its preferences
-import blendwme  # noqa: E402,F401  (registered by addon_utils above)
 
 from blendwme import draw2d, panel, panel_ops, prefs, theme  # noqa: E402
 from blendwme.relay import relay  # noqa: E402
@@ -314,6 +313,9 @@ outcome = executor.run(code, "Camera from the card")
 check("the camera-help card's code runs cleanly in Blender", outcome.get("ok"), outcome.get("error", ""))
 check("the camera helpers are in the bwm kit list", {"camera_to_view", "frame_camera", "focal_length"}
       <= set(bwm.public_names()))
+
+from blendwme.relay import addon_version  # noqa: E402
+check("saved logs carry the manifest's version", addon_version() == "2.1.0", addon_version())
 
 # ----------------------------------------------------------------------
 # Export and the launcher

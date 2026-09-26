@@ -23,6 +23,7 @@ itself. Nothing is lost without a note, because the journal was written all alon
 """
 
 import json
+import os
 import threading
 import time
 import traceback
@@ -38,6 +39,19 @@ from .tool_host import host, label
 MAX_SCENE_CHARS = 5000
 NOTE_TIMEOUT = 180          # seconds the old brain gets to write its handoff note
 
+
+
+def addon_version():
+    """The version in blender_manifest.toml (one source of truth for logs)."""
+    path = os.path.join(os.path.dirname(__file__), "blender_manifest.toml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("version"):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return "unknown"
 
 class Relay:
     def __init__(self):
@@ -458,7 +472,7 @@ class Relay:
         """Write the full conversation (every message, all code and results) to the log folder."""
         if not self.transcript:
             return ""
-        info = {"title": self.brief[:60], "version": "2.0.0", "blender": self.config.get("blender_version"),
+        info = {"title": self.brief[:60], "version": addon_version(), "blender": self.config.get("blender_version"),
                 "model": ", ".join(sorted({t.get("brain", "") for t in self.trace if t.get("brain")})),
                 "mode": session.mode, "level": session.level, "status": session.status,
                 "steps": len(session.steps)}
