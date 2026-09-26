@@ -41,8 +41,7 @@ PLAN = _fn(
 
 LOOK = _fn(
     "look",
-    "See the scene. A vision model studies the picture and reports what it sees, problems and "
-    "fixes. mode 'angles' frames the target from several sides (best for judging form). "
+    "See the scene. mode 'angles' frames the target from several sides (best for judging form). "
     "'viewport' is what the user sees. 'camera' is through the scene camera.",
     {"question": {"type": "string", "description": "What you want judged, e.g. 'Do all parts touch where they should?'"},
      "mode": {"type": "string", "enum": ["angles", "viewport", "camera"]},

@@ -274,8 +274,6 @@ else:
 # ----------------------------------------------------------------------
 # M2: the engine layer and the claude_code adapter (a fake `claude` program)
 # ----------------------------------------------------------------------
-from blendwme.agent import agent as api_agent  # noqa: E402
-from blendwme import llm  # noqa: E402
 from blendwme.engines import limits  # noqa: E402
 from blendwme.engines.claude_code import ClaudeCodeEngine  # noqa: E402
 from blendwme.relay import relay  # noqa: E402
@@ -292,7 +290,16 @@ def script(*turns):
 
 def runs():
     path = os.path.join(WORKSPACE, "fake_runs.json")
-    return json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
+    # The fake brain may be writing the file right now: try again on a half-written file.
+    for _ in range(50):
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except ValueError:
+            time.sleep(0.02)
+    raise AssertionError("fake_runs.json stayed unreadable")
 
 
 def turn(text, brain="claude", **extra):
@@ -388,6 +395,7 @@ turn("Continue")
 check("Claude's limit message becomes limit_reached", relay.limit and relay.limit["brain"] == "claude"
       and relay.limit["resets"].startswith("resets"), relay.limit)
 check("the panel says the limit is reached and nothing is lost", "limit is reached" in session.card["title"]
+      and "Nothing is lost" in session.card["text"] and session.card["kind"] == "limit"
       and session.status == state.IDLE)
 engine = ClaudeCodeEngine()
 check("a rejected rate_limit_event is a limit too", engine.parse({"type": "rate_limit_event", "rate_limit_info": {
@@ -399,6 +407,15 @@ check("limit wording: Codex 'usage limit ... try again in'",
       and "try again in 2 hours" in limits.reset_hint("try again in 2 hours 13 minutes."))
 check("normal replies are never mistaken for a limit", not limits.is_limit("The roof is done.")
       and not limits.is_limit("the usage limit of a modifier " * 200))
+
+# A message sent while the last turn's thread is still ending waits for it instead of failing.
+ending = threading.Thread(target=time.sleep, args=(0.4,))
+ending.start()
+relay.engines["claude"].thread = ending
+script([{"say": "Picked up right away."}])
+turn("Next one")
+check("a message right after a turn ends is not refused", session.status != state.ERROR
+      and "Picked up right away." in ai_texts(), session.last_error)
 
 # The program fails: a clear error, the scene stays.
 script([{"stderr": "boom: something broke"}, {"exit": 1}])
@@ -424,19 +441,11 @@ argv = runs()[-1]["argv"]
 check("a lost session is restarted fresh with the scene", "--session-id" in argv and "[Current scene]" in argv[1]
       and "Fresh start." in ai_texts() and session.status != state.ERROR)
 
-# The pay-per-token brain is off by default, and has a hard budget when on.
-relay.send("Build with the API", dict(CFG, brain="api", api_enabled=False))
-pump_until(lambda: not relay.is_running())
-check("the API brain is off by default", "switched off" in session.last_error)
-api_agent.config = {"token_budget": 50}
-session.tokens = 60
-try:
-    api_agent._ask_model(None)
-    budget_stopped = False
-except llm.LLMError as e:
-    budget_stopped = "budget" in str(e)
-check("the API brain stops at its token budget", budget_stopped)
-session.tokens = 0
+# 2.1: only Claude and Codex ship. There is no pay-per-token brain and no API key anywhere.
+check("only Claude and Codex are brains", sorted(relay.engines) == ["claude", "codex"])
+check("no setting asks for an API key",
+      not any("key" in p.identifier or "api" in p.identifier
+              for p in prefs.BWM_Preferences.bl_rna.properties if p.identifier != "rna_type"))
 relay.reset()
 del os.environ["ANTHROPIC_API_KEY"]
 
@@ -595,7 +604,8 @@ relay.send("Show me the next step", dict(CFG, brain="codex", auto_relay=True))
 pump_until(lambda: not relay.is_running(), 60)
 time.sleep(0.5)
 check("Watch mode: a limit asks before handing over", len(runs()) == count + 1 and relay.limit
-      and relay.limit["brain"] == "codex" and "Hand over to Claude?" in session.card["text"])
+      and relay.limit["brain"] == "codex" and session.card["target"] == "claude"
+      and "Claude can carry on" in session.card["text"])
 check("Codex's limit wording is understood", "Try again in 3 hours" in relay.limit["resets"], relay.limit)
 session.mode = "AUTO"
 
@@ -622,9 +632,18 @@ check("a long project still gives a brief within the limit", len(text) <= journa
       and "older lines left out" in text and "THE BRIEF:\nA huge castle" in text
       and "the gate keeps failing" in text and "RULES" in text, len(text))
 
-# 9. The API brain's steps are signed in the journal too.
-relay._api_step("Wall", "", "bwm.box('W', 1)", {"ok": True}, {"added": [], "modified": []}, None)
-check("API steps are recorded and signed", journal.data["events"][-1]["by"] == "api")
+# 9. Settings: no hand-over card when it is switched off; the brief without "review first".
+session.mode = "WATCH"
+script([{"line": {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}}])
+relay.send("Next", dict(CFG, brain="codex", offer_handover=False))
+pump_until(lambda: not relay.is_running(), 60)
+time.sleep(0.3)
+check("'Offer a hand-over' off: the limit is said, but no card", relay.limit and session.card is None
+      and any("limit is reached" in e["text"] for e in session.log if e["who"] == "error"))
+plain = big.handoff_brief("claude", {}, review_first=False)
+check("'Returning brain reviews first' off: the brief has no review-first rule",
+      "Call look (mode angles) first" not in plain and "never undo" in plain)
+session.mode = "AUTO"
 relay.reset()
 del os.environ["OPENAI_API_KEY"]
 

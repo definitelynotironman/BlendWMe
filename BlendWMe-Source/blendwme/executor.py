@@ -33,7 +33,7 @@ _BLOCKED = [
     (r"wm\.(quit_blender|read_homefile|read_factory_settings|open_mainfile|save_mainfile|save_as_mainfile)",
      "closing or replacing your file"),
     (r"preferences\.addons|extensions\.package|addon_utils", "add-on internals"),
-    (r"\bcredentials\b|\.clipboard\b|sys\.modules|\bkeyring\b|getenv|bl_ext", "your API key or system secrets"),
+    (r"\bcredentials\b|\.clipboard\b|sys\.modules|\bkeyring\b|getenv|bl_ext", "system secrets"),
     (r"__builtins__|__subclasses__|__globals__|__code__", "Python internals"),
 ]
 

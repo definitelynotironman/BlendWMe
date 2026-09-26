@@ -32,7 +32,7 @@ FILE_NAME = "journal.json"
 MAX_EVENTS = 600
 MAX_CODE = 1500
 BRIEF_LIMIT = 6000
-LABELS = {"claude": "Claude", "codex": "Codex", "api": "the API brain", "user": "the user", "ai": "BlendWMe"}
+LABELS = {"claude": "Claude", "codex": "Codex", "user": "the user", "ai": "BlendWMe"}
 
 
 def _label(who):
@@ -223,8 +223,12 @@ class Journal:
             return f"New task: {event.get('text', '')[:200]}"
         return f"{who}: {kind} {event.get('text', '')[:120]}"
 
-    def handoff_brief(self, brain, makers=None, limit=BRIEF_LIMIT):
-        """The compact text a brain gets when it takes over or comes back."""
+    def handoff_brief(self, brain, makers=None, limit=BRIEF_LIMIT, review_first=True):
+        """The compact text a brain gets when it takes over or comes back.
+
+        review_first (the "Returning brain reviews the other's work first" setting): the brain
+        looks at the scene and fixes the open struggles before anything new.
+        """
         with self.lock:
             d = self.data
             others = sorted({e["by"] for e in d["events"] if e["by"] not in (brain, "user")})
@@ -274,11 +278,16 @@ class Journal:
                 if review.get("verdict"):
                     lines.append(review["verdict"])
                 sections.append(("LATEST ART DIRECTOR REVIEW", lines, True))
-            rules = ["RULES: 1) Call look (mode angles) first and compare the scene with THE BRIEF. "
-                     "2) Review what the others changed against the brief. 3) Fix the open struggles first. "
-                     "4) Build on the other brain's and the user's work like a collaborator's edits: never undo "
-                     "it unless the user asks. 5) Continue the plan. 6) Call handoff_note before you stop with "
-                     "work left."]
+            if review_first:
+                rules = ["RULES: 1) Call look (mode angles) first and compare the scene with THE BRIEF. "
+                         "2) Review what the others changed against the brief. 3) Fix the open struggles first. "
+                         "4) Build on the other brain's and the user's work like a collaborator's edits: never "
+                         "undo it unless the user asks. 5) Continue the plan. 6) Call handoff_note before you "
+                         "stop with work left."]
+            else:
+                rules = ["RULES: 1) Continue with what the user asks next. 2) Build on the other brain's and the "
+                         "user's work like a collaborator's edits: never undo it unless the user asks. 3) Call "
+                         "handoff_note before you stop with work left."]
         return _fit(head, sections, rules, limit)
 
     # ------------------------------------------------------------------

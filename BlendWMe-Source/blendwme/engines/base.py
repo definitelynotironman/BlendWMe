@@ -31,7 +31,7 @@ TERMINAL = ("done", "error", "limit_reached")
 # Never forwarded to a brain program: it must use the user's subscription sign-in,
 # never a pay-per-token key, and Blender's own Python settings would break the MCP server.
 _DROP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
-             "NEBIUS_API_KEY", "PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONNOUSERSITE")
+             "PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONNOUSERSITE")
 
 
 def clean_env(extra=None):
@@ -90,6 +90,10 @@ class ProcessEngine(Engine):
 
     # -- the turn ---------------------------------------------------------
     def start(self, message, on_event, config):
+        # The last turn sends "done" from inside its thread just before that thread ends.
+        # A message sent in that moment waits briefly instead of being refused.
+        if self.is_running() and self.thread is not threading.current_thread():
+            self.thread.join(timeout=5)
         if self.is_running():
             raise RuntimeError(f"{self.label} is already working.")
         self._stop.clear()

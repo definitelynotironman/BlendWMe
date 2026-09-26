@@ -21,13 +21,14 @@ the red pointers work the same whichever brain is active:
 """
 
 import base64
+import json
 import os
+import re
 import threading
 import time
 import traceback
 
 from . import bridge, executor, helpers, knowledge, look, prompts, scene_info, tools
-from .agent import _coerce_types, _eval_check, _is_probe, _plan_parts, _step_key
 from .state import ASKING, DONE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
 
 WAIT_CAP = 45 * 60        # seconds one tool call may wait for the user (tool timeouts are 60 min)
@@ -311,9 +312,9 @@ class ToolHost:
             else:
                 result["user"] = "The step was shown to the user; it advanced by itself."
             session.set_pointers([])
-        elif mode == "AUTO" and session.build_style == "PIECE" and result["ok"] and targets:
+        elif mode == "AUTO" and session.build_style == "PIECE" and result["ok"] and targets and session.pace > 0:
             session.set_pointers([{"object": n} for n in targets[:3]])
-            time.sleep(0.9)
+            time.sleep(min(session.pace, 10.0))
             session.set_pointers([])
 
         images = []
@@ -559,6 +560,103 @@ class ToolHost:
         section = str(args.get("section") or "brief")
         data = self.journal.section(section, brain, bridge.call(scene_info.makers))
         return (data if data is not None else {"journal": "No journal yet: this is a fresh project."}), []
+
+
+# ----------------------------------------------------------------------
+# Helpers for the tools (moved here from the 1.0.5 agent loop)
+# ----------------------------------------------------------------------
+
+# Steps that only probe the environment ("is bwm available?") instead of building.
+_PROBE_CODE = re.compile(r"dir\(\s*(bwm|bpy|bmesh|bpy\.ops)\s*\)|hasattr\(\s*(bwm|bpy|bmesh)\s*,"
+                         r"|sys\.modules|except\s+\(?\s*(ImportError|ModuleNotFoundError)|globals\(\)|locals\(\)")
+_PROBE_TITLE = re.compile(r"\b(test|testing|availab|probe|debug|explore|environment)", re.I)
+_BUILDS = re.compile(r"\bbwm\.(?!bounds|top\b|obj\b|col\b|mat\b)\w+\(|bpy\.ops\.|\.new\(|\.link\(|from_pydata|"
+                     r"\.location|\.scale|\.rotation|modifiers|default_value")
+
+
+def _plan_parts(args):
+    """The plan's parts, however the model sent them.
+
+    Models send the parts under different names and shapes, so parts, steps, items or plan are accepted, as a list, a JSON string
+    or one part per line; dicts become their text.
+    """
+    value = None
+    for key in ("parts", "steps", "items", "plan", "tasks"):
+        if args.get(key):
+            value = args[key]
+            break
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            value = json.loads(text)
+        except ValueError:
+            value = [line.strip(" -*0123456789.)\t") for line in text.splitlines()]
+    if isinstance(value, dict):
+        value = list(value.values())
+    out = []
+    for p in value or []:
+        if isinstance(p, dict):
+            p = p.get("name") or p.get("part") or p.get("title") or " ".join(str(v) for v in p.values())
+        p = str(p).strip()
+        if p:
+            out.append(p)
+    return out
+
+
+def _step_key(title, part):
+    """Which plan step an attempt belongs to, so failures are counted per step."""
+    if part:
+        return f"part {part}"
+    title = (title or "").strip().lower()
+    return title if title and title != "step" else "(untitled)"
+
+
+def _is_probe(title, code):
+    """True for steps that only test the environment instead of building something."""
+    if _PROBE_CODE.search(code):
+        return not _BUILDS.search(_PROBE_CODE.sub("", code)) or "sys.modules" in code
+    return bool(_PROBE_TITLE.search(title or "")) and not _BUILDS.search(code)
+
+
+def _coerce_types(name, args):
+    """Fix values sent as text ("2.0", "[1, 2]", "true") using the tool's schema.
+
+    MCP servers get this for free from their schema validation. Open models on
+    OpenAI-style endpoints sometimes send every value as a string.
+    """
+    schema = next((t["function"]["parameters"]["properties"] for t in tools.ALL
+                   if t["function"]["name"] == name), None)
+    if not schema or not isinstance(args, dict):
+        return args
+    fixed = dict(args)
+    for key, value in args.items():
+        want = (schema.get(key) or {}).get("type")
+        if not isinstance(value, str) or want in (None, "string"):
+            continue
+        try:
+            if want == "integer":
+                fixed[key] = int(float(value))
+            elif want == "number":
+                fixed[key] = float(value)
+            elif want == "boolean":
+                fixed[key] = value.strip().lower() in ("true", "1", "yes")
+            elif want in ("array", "object"):
+                fixed[key] = json.loads(value)
+        except (ValueError, TypeError):
+            pass
+    return fixed
+
+
+def _eval_check(expression):
+    import bpy
+    try:
+        return bool(eval(expression, {"bpy": bpy, "C": bpy.context, "D": bpy.data,
+                                      "__builtins__": {"any": any, "all": all, "len": len,
+                                                       "abs": abs, "round": round, "min": min,
+                                                       "max": max, "sum": sum, "next": next,
+                                                       "True": True, "False": False}}))
+    except Exception:
+        return False
 
 
 host = ToolHost()

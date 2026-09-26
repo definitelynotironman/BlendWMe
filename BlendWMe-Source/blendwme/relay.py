@@ -8,7 +8,7 @@ the plan checklist, Auto / Watch / Teach, pause and take control, the overlay.
     you type in the panel -> relay.send()
         -> message = [BlendWMe] mode header + (first turn: scene summary)
                      + edits you made since the last turn + your words
-        -> engine.start()  (Claude Code or Codex in the background, or the API agent)
+        -> engine.start()  (Claude Code or Codex in the background)
         -> events: text (streamed into the panel), tool_call, tool_result, done / error / limit_reached
     the brain's tool calls arrive through the MCP server -> socket_bridge -> tool_host
 
@@ -28,8 +28,6 @@ import time
 import traceback
 
 from . import bridge, logs, prompts, scene_info, socket_bridge, workspace
-from .agent import agent
-from .engines.api import ApiEngine
 from .engines.base import TERMINAL
 from .engines.claude_code import ClaudeCodeEngine
 from .engines.codex import CodexEngine
@@ -43,7 +41,7 @@ NOTE_TIMEOUT = 180          # seconds the old brain gets to write its handoff no
 
 class Relay:
     def __init__(self):
-        self.engines = {"claude": ClaudeCodeEngine(), "codex": CodexEngine(), "api": ApiEngine(agent)}
+        self.engines = {"claude": ClaudeCodeEngine(), "codex": CodexEngine()}
         self.active = "claude"
         self.running = None          # the brain working right now, or None
         self.entry = None            # the conversation entry being streamed into
@@ -63,7 +61,6 @@ class Relay:
         self.trace = []
         self.brief = ""
         host.journal = journal
-        agent.on_step = self._api_step
 
     # ------------------------------------------------------------------
     # Called from the panel (main thread)
@@ -176,8 +173,7 @@ class Relay:
             pending = []
             while not session.inbox.empty():
                 pending.append(session.inbox.get_nowait())
-            if (not limited and source in self.told and source != "api"
-                    and self.config.get("ask_handoff_note", True)):
+            if not limited and source in self.told and self.config.get("ask_handoff_note", True):
                 session.add("info", f"Asking {label(source)} for a handoff note ...")
                 end = self._quiet_turn(source, prompts.HANDOFF_REQUEST.format(target=label(target)))
                 if end != "done":
@@ -188,7 +184,7 @@ class Relay:
             self.active = target
             self.told.discard(target)          # fresh scene facts for the brain taking over
             self.limit = None
-            brief = journal.handoff_brief(target, bridge.call(scene_info.makers))
+            brief = self._brief(target)
             text = ("\n".join(pending) if pending else
                     f"{label(source)} handed the work to you. Take over and continue the task.")
         except Exception as e:
@@ -242,11 +238,12 @@ class Relay:
         else:
             socket_bridge.prepare_workspace()
         config = dict(self.config, workspace=workspace.folder(), new_task=brain not in self.told)
-        if brain in ("claude", "codex"):
-            config["mcp_config"] = workspace.write_mcp_config(brain)
-        if brain == "api":
-            config["token_budget"] = self.config.get("api_token_budget", 0)
+        config["mcp_config"] = workspace.write_mcp_config(brain)
         return config
+
+    def _brief(self, brain):
+        return journal.handoff_brief(brain, bridge.call(scene_info.makers),
+                                     review_first=self.config.get("returning_reviews", True))
 
     def compose(self, brain, text, handoff=""):
         """The message a brain gets: mode header, scene facts the first time, the user's edits, the text."""
@@ -273,13 +270,10 @@ class Relay:
         engine = self.engine(brain)
         self.last_text = text
         if not handoff and self.resumed_project and brain not in self.told and journal.has_history():
-            handoff = journal.handoff_brief(brain, bridge.call(scene_info.makers))
+            handoff = self._brief(brain)
         try:
             config = self._engine_config(brain)
-            if getattr(engine, "raw_messages", False):
-                message = (handoff + "\n\n" + text) if handoff else text
-            else:
-                message = self.compose(brain, text, handoff)
+            message = self.compose(brain, text, handoff)
             self.told.add(brain)
         except Exception as e:
             traceback.print_exc()
@@ -434,11 +428,12 @@ class Relay:
             session.add("error", f"{label(brain)}'s usage limit is reached.{when}")
             if not quiet:
                 target = self.other(brain)
-                session.set_card({"kind": "ask", "title": f"{label(brain)}'s limit is reached",
-                                  "text": f"Hand over to {label(target)}? Everything so far is in the journal. "
-                                          "Or wait for the limit to reset and press Continue."})
+                if self.config.get("offer_handover", True):
+                    session.set_card({"kind": "limit", "title": f"{label(brain)}'s limit is reached",
+                                      "text": f"{label(target)} can carry on right now. Nothing is lost.",
+                                      "brain": brain, "target": target})
                 session.set_status(IDLE)
-                if self.config.get("auto_relay") and session.mode == "AUTO" and brain != "api":
+                if self.config.get("auto_relay") and session.mode == "AUTO":
                     session.add("info", f"Auto mode: handing over to {label(target)} by itself.")
                     self._later(brain, lambda: self.hand_over(target, self.config, reason="usage limit reached"))
         self._signal_end(kind)
@@ -457,19 +452,9 @@ class Relay:
     def _trace(self, kind, **data):
         self.trace.append(dict({"t": round(time.time(), 2), "type": kind}, **data))
 
-    # -- the API brain's steps go into the journal too -------------------
-    def _api_step(self, title, explain, code, result, changed, part):
-        added = list((changed or {}).get("added", []))
-        if result.get("ok") and added:
-            bridge.call(scene_info.tag_brain, added, "api")
-        journal.record_step("api", title, explain, code, result.get("ok"), result.get("error", ""), added,
-                            (changed or {}).get("modified", []), part)
-
     # ------------------------------------------------------------------
     def save_log(self):
-        """Write the full conversation of the outside brains (the API brain writes its own)."""
-        if self.active == "api":
-            return agent.save_log()
+        """Write the full conversation (every message, all code and results) to the log folder."""
         if not self.transcript:
             return ""
         info = {"title": self.brief[:60], "version": "2.0.0", "blender": self.config.get("blender_version"),

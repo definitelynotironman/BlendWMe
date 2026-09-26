@@ -1,15 +1,14 @@
 """BlendWMe 2.0 - an AI Blender artist that builds, demonstrates and teaches.
 
-It runs on the subscriptions you already have: Claude Code (main brain) and
-Codex CLI (second brain), with no pay-per-token API by default.
+It runs on the plans you already have: Claude Code (main brain) and Codex CLI
+(second brain). BlendWMe never sees your logins and needs no API key.
 
 Architecture (one line each):
     relay.py         the panel's one entry point: active brain, hand-over, limits
-    engines/         the brains: claude_code, codex, api (the 1.0.5 loop, off by default)
+    engines/         the brains: claude_code and codex, behind one small interface
     journal.py       the project journal ("the baton"), saved with the .blend
     socket_bridge.py the local socket the MCP server (blendwme_mcp, outside Blender) calls
     tool_host.py     BlendWMe's tools for the brains: run_python, look, teach_step ...
-    agent.py         the 1.0.5 agent loop (the api brain)
     executor.py      run_python on the live scene, with undo steps and rollback
     look.py          viewport and multi-angle captures
     scene_info.py    scene summaries, snapshots, "what did the user change", who made what
@@ -21,14 +20,13 @@ Architecture (one line each):
 
 import bpy
 
-from . import bridge, credentials, journal, overlay, prefs, socket_bridge, ui
-from .agent import agent
+from . import bridge, journal, overlay, prefs, socket_bridge, ui
+from .relay import relay
 
 
 def _start_bridge():
-    p = prefs.addon_prefs()
-    if p is None or p.start_bridge:
-        print("BlendWMe:", socket_bridge.start())
+    # The brains reach Blender only through this local socket, so it always starts.
+    print("BlendWMe:", socket_bridge.start())
     return None   # run once
 
 
@@ -45,9 +43,8 @@ def register():
 def unregister():
     socket_bridge.stop()
     journal.unregister()
-    agent.stop()
+    relay.stop()
     overlay.unregister()
     bridge.unregister()
     ui.unregister()
     prefs.unregister()
-    credentials.clear_memory()

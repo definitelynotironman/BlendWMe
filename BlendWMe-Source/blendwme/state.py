@@ -50,10 +50,12 @@ class Session:
         self.changed_flag = True          # UI redraw hint
         self.steps = []                   # [{"title", "explain", "code", "ok"}] construction notebook
         # Live settings mirrored from the panel (read by the agent thread)
-        self.mode = "AUTO"
+        self.mode = "WATCH"               # WATCH is "Together" in the panel | TEACH | AUTO
         self.level = "BEGINNER"
-        self.watch_auto = 0.0             # seconds; 0 = wait for Next
+        self.watch_auto = 0.0             # Together: seconds before the next step starts; 0 = wait for Next
         self.build_style = "PIECE"        # PIECE: part by part | FULL: big stages, fastest
+        self.pace = 1.0                   # Auto: seconds each new part stays in focus
+        self.show_pointers = True
         self.plan = []                    # [{"name": str, "done": bool}] the build checklist
 
     # -- log ---------------------------------------------------------------

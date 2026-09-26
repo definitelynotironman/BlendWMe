@@ -6,8 +6,8 @@ Documents/BlendWMe Logs (or the folder you choose):
     2026-10-15_1552_cosy-low-poly-cottage.md    readable: every message, all code, results, timings
     2026-10-15_1552_cosy-low-poly-cottage.json  the exact messages sent to the model, for debugging
 
-The API key is never in the conversation, and as an extra safety net any
-copy of it is replaced with [API KEY] before writing.
+BlendWMe holds no keys or logins. As an extra safety net, a secret passed to
+save() is replaced with [SECRET] before writing.
 """
 
 import json
@@ -29,7 +29,7 @@ def _slug(text):
 
 def _scrub(text, secret):
     if secret and len(secret) >= 8:
-        text = text.replace(secret, "[API KEY]")
+        text = text.replace(secret, "[SECRET]")
     return text
 
 
@@ -42,7 +42,7 @@ def _pretty(content):
 
 def to_markdown(messages, trace, info):
     out = [f"# BlendWMe log: {info.get('title', 'task')}", ""]
-    for key in ("saved", "version", "blender", "model", "vision_model", "reasoning", "mode", "level",
+    for key in ("saved", "version", "blender", "model", "mode", "level",
                 "status", "model_calls", "tokens", "steps"):
         if key in info:
             out.append(f"- **{key.replace('_', ' ')}**: {info[key]}")

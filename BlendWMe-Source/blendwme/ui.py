@@ -2,12 +2,10 @@
 
 import os
 import textwrap
-import threading
 
 import bpy
 
-from . import bridge, credentials, llm, look, prefs, setup_checks, socket_bridge, workspace
-from .agent import agent
+from . import prefs, setup_checks, socket_bridge, workspace
 from .relay import relay
 from .tool_host import label as brain_label
 from .state import (ASKING, DONE, ERROR, IDLE, PAUSED, STATUS_TEXT, THINKING,
@@ -32,14 +30,6 @@ class BWM_OT_send(bpy.types.Operator):
             self.report({"WARNING"}, "Type what you want first.")
             return {"CANCELLED"}
         config = prefs.gather_config(context)
-        if config["brain"] == "api" and not relay.is_running():
-            if not config["api_enabled"]:
-                self.report({"ERROR"}, "The pay-per-token API brain is off. Pick Claude or Codex, or switch "
-                                       "it on in BlendWMe > Brains.")
-                return {"CANCELLED"}
-            if not config["api_key"]:
-                self.report({"ERROR"}, "Add your API key: BlendWMe > Brains > Paste Key.")
-                return {"CANCELLED"}
         if self.new_task and relay.is_running():
             relay.stop()
         if self.new_task:
@@ -56,40 +46,6 @@ class BWM_OT_paste(bpy.types.Operator):
 
     def execute(self, context):
         context.window_manager.blendwme.prompt = context.window_manager.clipboard[:12000]
-        return {"FINISHED"}
-
-
-class BWM_OT_paste_key(bpy.types.Operator):
-    bl_idname = "blendwme.paste_key"
-    bl_label = "Paste Key"
-    bl_description = ("Read your API key from the clipboard, store it safely, then clear the clipboard. "
-                      "The key is never saved in Blender files")
-
-    def execute(self, context):
-        p = prefs.addon_prefs(context)
-        text = context.window_manager.clipboard.strip()
-        if not credentials.looks_like_key(text):
-            self.report({"ERROR"}, "The clipboard does not look like an API key. Copy the whole key first.")
-            return {"CANCELLED"}
-        try:
-            message = credentials.set_key(text, p.key_storage)
-        except OSError as e:
-            credentials.set_key(text, "SESSION")
-            self.report({"WARNING"}, f"{e} Kept it for this session only.")
-            return {"FINISHED"}
-        context.window_manager.clipboard = ""   # do not leave the key lying around
-        self.report({"INFO"}, message + " Clipboard cleared.")
-        return {"FINISHED"}
-
-
-class BWM_OT_forget_key(bpy.types.Operator):
-    bl_idname = "blendwme.forget_key"
-    bl_label = "Forget Key"
-    bl_description = "Remove the key from memory and from the password store"
-
-    def execute(self, context):
-        credentials.forget(prefs.addon_prefs(context).key_storage)
-        self.report({"INFO"}, "Key forgotten.")
         return {"FINISHED"}
 
 
@@ -195,131 +151,6 @@ class BWM_OT_new(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _background(fn):
-    threading.Thread(target=fn, daemon=True).start()
-
-
-def _match_id(wanted, available):
-    """Case-insensitive match of a model ID against the provider's list."""
-    low = wanted.lower()
-    for mid in available:
-        if mid.lower() == low:
-            return mid
-    for mid in available:
-        if low.split("/")[-1] in mid.lower():
-            return mid
-    return None
-
-
-class BWM_OT_test_connection(bpy.types.Operator):
-    bl_idname = "blendwme.test_connection"
-    bl_label = "Test Connection"
-    bl_description = "Check your key, find the exact model IDs, and test tool calling"
-
-    def execute(self, context):
-        config = prefs.gather_config(context)
-        p = prefs.addon_prefs(context)
-        session.add("info", f"Testing connection with {config['model']} ...")
-
-        def work():
-            client = llm.Client(config["api_key"], config["base_url"], timeout=120)
-            try:
-                models = client.list_models()
-            except llm.LLMError as e:
-                session.add("error", f"Connection failed: {e}")
-                return
-            session.add("info", f"Key works. {len(models)} models available.")
-            nvidia = [m for m in models if "nemotron" in m.lower() or m.lower().startswith("nvidia/")]
-            if nvidia:
-                session.add("info", "NVIDIA models: " + ", ".join(nvidia[:12]))
-            model = _match_id(config["model"], models) or config["model"]
-            if model != config["model"]:
-                def fix():
-                    p.agent_preset = "CUSTOM"
-                    p.custom_model = model
-                bridge.call(fix)
-                session.add("info", f"Using exact ID {model}.")
-            elif model not in models:
-                session.add("error", f"{model} is not in your catalogue. Pick another model.")
-                return
-            probe = [{"type": "function", "function": {
-                "name": "add_numbers", "description": "Add two numbers",
-                "parameters": {"type": "object", "properties": {
-                    "a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}}}]
-            try:
-                import time as _t
-                t0 = _t.time()
-                msg, usage = client.chat(model, [{"role": "user", "content": "Use the tool to add 2 and 3."}],
-                                         probe, max_tokens=1024, reasoning=config["reasoning"])
-                took = _t.time() - t0
-            except llm.LLMError as e:
-                session.add("error", f"Model test failed: {e}")
-                return
-            if msg.get("tool_calls"):
-                session.add("info", f"Tool calling works with {model} ({took:.1f}s). You are ready.")
-            else:
-                session.add("error", f"{model} answered without calling the tool. It may struggle as an agent. "
-                                     "Try another model.")
-
-        _background(work)
-        return {"FINISHED"}
-
-
-class BWM_OT_test_vision(bpy.types.Operator):
-    bl_idname = "blendwme.test_vision"
-    bl_label = "Test Vision"
-    bl_description = "Capture the viewport and find a vision model on your account that can describe it"
-
-    def execute(self, context):
-        config = prefs.gather_config(context)
-        p = prefs.addon_prefs(context)
-        shot = look.capture("viewport", max_size=512)
-        if shot.get("error"):
-            self.report({"ERROR"}, shot["error"])
-            return {"CANCELLED"}
-        session.last_capture = shot["path"]
-        session.add("info", "Testing vision models ...")
-
-        def work():
-            client = llm.Client(config["api_key"], config["base_url"], timeout=120)
-            try:
-                models = client.list_models_detailed()
-            except llm.LLMError as e:
-                session.add("error", f"Could not list models: {e}")
-                return
-            seeing = [m["id"] for m in models if m["vision"]]
-            if seeing:
-                session.add("info", "Models on your account that accept images: " + ", ".join(seeing[:10]))
-            current = p.vision_model.strip()
-            order = []
-            first = llm.pick_vision_model(models, current)
-            for cand in [first] + llm.VISION_PREFERENCE + seeing:
-                match = _match_id(cand, [m["id"] for m in models]) if cand else None
-                if match and match not in order and "nemotron" not in match.lower():
-                    order.append(match)
-            for model in order[:5]:
-                try:
-                    import time as _t
-                    t0 = _t.time()
-                    text = client.describe_image(model, "In one sentence, what is in this Blender viewport?",
-                                                 [shot["path"]], max_tokens=200)
-                    took = _t.time() - t0
-                except llm.LLMError as e:
-                    session.add("info", f"{model}: no ({str(e)[:80]})")
-                    continue
-                if text:
-                    def fix(m=model):
-                        p.vision_model = m
-                    bridge.call(fix)
-                    session.add("info", f"Vision works with {model} ({took:.1f}s): \"{text[:160]}\"")
-                    return
-            session.add("error", "No vision model worked. BlendWMe will still build, using scene data. "
-                                 "Type a vision model ID from your catalogue and test again.")
-
-        _background(work)
-        return {"FINISHED"}
-
-
 class BWM_OT_notebook(bpy.types.Operator):
     bl_idname = "blendwme.notebook"
     bl_label = "Construction Notebook"
@@ -347,7 +178,7 @@ class BWM_OT_notebook(bpy.types.Operator):
 class BWM_OT_copy_log(bpy.types.Operator):
     bl_idname = "blendwme.copy_log"
     bl_label = "Copy Log"
-    bl_description = "Copy the conversation and activity (no API key) for debugging"
+    bl_description = "Copy the conversation and activity for debugging"
 
     def execute(self, context):
         lines = [f"BlendWMe | brain {brain_label(relay.active)} | steps {len(session.steps)}"]
@@ -367,8 +198,6 @@ class BWM_OT_save_log(bpy.types.Operator):
         if not relay.has_conversation():
             self.report({"WARNING"}, "Nothing to save yet.")
             return {"CANCELLED"}
-        if relay.active == "api":
-            agent.config.update(prefs.gather_config(context))
         path = relay.save_log()
         if path:
             self.report({"INFO"}, f"Saved {path}")
@@ -541,9 +370,6 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         row = box.row()
         row.alert = status in (WAIT_USER, ASKING, ERROR, WAIT_NEXT)
         row.label(text=STATUS_TEXT.get(status, status), icon=_STATUS_ICON.get(status, "DOT"))
-        if session.calls:
-            box.label(text=f"{len(session.steps)} steps  |  {session.calls} calls  |  "
-                           f"{session.tokens:,} tokens", icon="BLANK1")
 
         if session.plan:
             plan_box = layout.box()
@@ -559,11 +385,6 @@ class BWM_PT_main(_Base, bpy.types.Panel):
                 elif item["done"]:
                     row.enabled = False
                 row.label(text=item["name"][:48], icon="CHECKMARK" if item["done"] else "DOT")
-
-        if p and not p.vision_enabled:
-            eye = layout.row()
-            eye.alert = True
-            eye.prop(p, "vision_enabled", text="Vision is OFF: the AI builds blind. Turn on", icon="HIDE_ON")
 
         row = layout.row(align=True)
         row.label(text="Brain", icon="OUTLINER_OB_LIGHT")
@@ -581,17 +402,8 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         elif relay.is_running() and relay.running != s.brain:
             layout.label(text=f"{brain_label(relay.running)} is working. The switch applies to your next message.",
                          icon="INFO")
-        if s.brain == "api" and p and (not p.api_enabled or not p.key()):
-            warn = layout.box()
-            warn.alert = True
-            warn.label(text="The API brain is off or has no key: Brains > Pay-per-token API.", icon="ERROR")
 
         layout.row().prop(s, "mode", expand=True)
-        if s.mode == "AUTO":
-            layout.row().prop(s, "build_style", expand=True)
-        layout.prop(s, "level")
-        if s.mode == "WATCH":
-            layout.prop(s, "watch_auto")
 
         # What to do right now
         if status == WAIT_NEXT:
@@ -735,7 +547,7 @@ class BWM_PT_connection(_Base, bpy.types.Panel):
             for line in lines[1:6]:
                 col.label(text=line, icon="BLANK1")
         if p:
-            prefs.draw_brains(layout, p)
+            prefs.draw_settings(layout, p, context)
 
 
 class BWM_PT_activity(_Base, bpy.types.Panel):
@@ -753,8 +565,6 @@ class BWM_PT_activity(_Base, bpy.types.Panel):
         col.operator("blendwme.open_logs", icon="FILE_FOLDER")
         col.operator("blendwme.copy_log", icon="COPYDOWN")
         col.operator("blendwme.new_task", icon="TRASH")
-        if session.last_latency:
-            layout.label(text=f"Last model reply: {session.last_latency}s")
         if session.last_log:
             layout.label(text="Last log: " + os.path.basename(session.last_log), icon="FILE_TEXT")
         if session.last_error:
@@ -765,8 +575,8 @@ class BWM_PT_activity(_Base, bpy.types.Panel):
 
 
 classes = (
-    BWM_OT_send, BWM_OT_paste, BWM_OT_paste_key, BWM_OT_forget_key, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
-    BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new, BWM_OT_test_connection, BWM_OT_test_vision,
+    BWM_OT_send, BWM_OT_paste, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
+    BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
     BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal, BWM_OT_setup_check,
     BWM_PT_main, BWM_PT_conversation, BWM_PT_references, BWM_PT_connection, BWM_PT_activity,

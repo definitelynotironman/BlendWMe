@@ -1,6 +1,6 @@
 """Repair mechanical Blender API slips instead of rejecting the step.
 
-Open models (Nemotron included) write Blender Python that is right in spirit
+Models write Blender Python that is right in spirit
 but wrong in small mechanical ways: a colour with 3 values where Blender wants
 4, modifier arguments swapped, a renamed Principled input, a 2.7x property.
 Rejecting that code costs a model call and, after a few, a "stuck" pause.

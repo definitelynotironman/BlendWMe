@@ -1,20 +1,25 @@
-"""Settings: connection and models (saved in Blender preferences) and
-per-session options (mode, level, prompt, references)."""
+"""Settings (saved in Blender's preferences) and per-session options (mode, prompt, references).
+
+2.1 keeps settings to the few that matter. They all live on one screen, the
+panel's "Brains and settings" screen:
+
+- the theme (Graphite Paper, Red on Paper, Blender Grey)
+- the relay options (offer a hand-over at a limit, hand over by itself in Auto,
+  the returning brain reviews the other's work first)
+- the Auto pace and whether pointers show in the viewport
+
+Everything else sits behind a closed "Advanced" section. BlendWMe never asks
+for an API key: the brains sign in inside the official Claude Code and Codex
+programs, and BlendWMe never sees those logins.
+"""
 
 import bpy
 
-from . import credentials, llm
 from .state import session
 
-# Model choices. NVIDIA Nemotron is the default so the build meets the
-# hackathon rule (at least one NVIDIA open model on Nebius).
-AGENT_PRESETS = [
-    ("ULTRA", "Nemotron 3 Ultra (recommended)", "nvidia/Nemotron-3-Ultra-550b-a55b"),
-    ("SUPER", "Nemotron 3 Super", "nvidia/nemotron-3-super-120b-a12b"),
-    ("KIMI", "Kimi K2.6 (can see)", "moonshotai/Kimi-K2.6"),
-    ("CUSTOM", "Custom model ID", ""),
-]
-VISION_CANDIDATES = llm.VISION_PREFERENCE   # Nemotron on Nebius is text only
+THEMES = [("GRAPHITE", "Graphite", "Graphite Paper: pencil on paper. Red only when you need to look"),
+          ("RED", "Red", "Red on Paper: bold and warm"),
+          ("BLENDER", "Blender", "Blender Grey: sits quietly in Blender's dark interface, orange indicators")]
 
 
 def addon_prefs(context=None):
@@ -23,64 +28,55 @@ def addon_prefs(context=None):
     return addon.preferences if addon else None
 
 
+def _redraw(self, context):
+    session.changed_flag = True
+
+
 class BWM_Preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
-    # The key itself is NEVER stored here. Only where to keep it.
-    key_storage: bpy.props.EnumProperty(
-        name="Keep my key in",
-        items=[("KEYCHAIN", "Password store (recommended)",
-                "Your system's encrypted password store, e.g. Windows Credential Manager. Survives restarts"),
-               ("SESSION", "This session only", "Memory only. Paste it again after restarting Blender"),
-               ("ENV", "Environment variable", "Read NEBIUS_API_KEY from your system environment")],
-        default="KEYCHAIN")
-    base_url: bpy.props.StringProperty(name="Endpoint", default=llm.DEFAULT_BASE_URL)
-    agent_preset: bpy.props.EnumProperty(
-        name="Agent model",
-        items=[(k, label, mid or "Type any model ID from your Nebius catalogue") for k, label, mid in AGENT_PRESETS],
-        default="ULTRA")
-    custom_model: bpy.props.StringProperty(name="Custom model ID")
-    vision_enabled: bpy.props.BoolProperty(
-        name="Vision (the AI can see)", default=True,
-        description="Let BlendWMe look at the viewport with a vision model")
-    agent_vision: bpy.props.BoolProperty(
-        name="Agent sees pictures itself", default=True,
-        description="If the agent model accepts images (e.g. Kimi K2.6), send it the pictures directly "
-                    "instead of a description from a separate vision model")
-    vision_model: bpy.props.StringProperty(
-        name="Vision model", default="",
-        description="Model that looks at the viewport. Leave empty and BlendWMe picks one that accepts images")
-    reasoning: bpy.props.EnumProperty(
-        name="Nemotron reasoning",
-        items=[("LOW", "Low effort", "Think briefly. Good balance of speed and quality"),
-               ("ON", "Full", "Think fully. Slower, sometimes better plans"),
-               ("OFF", "Off", "No thinking. Fastest"),
-               ("DEFAULT", "Provider default", "Send no reasoning settings")],
-        default="LOW")
-    temperature: bpy.props.FloatProperty(name="Temperature", default=0.4, min=0.0, max=1.5)
-    max_tokens: bpy.props.IntProperty(name="Max output tokens", default=8192, min=1024, max=32768)
-    auto_save_logs: bpy.props.BoolProperty(
-        name="Save full logs", default=True,
-        description="After every task, save the whole conversation (code, results, timings) to the log folder")
-    log_folder: bpy.props.StringProperty(
-        name="Log folder", subtype="DIR_PATH",
-        description="Where logs go. Empty means Documents/BlendWMe Logs")
-    # 2.0: the outside brains and the MCP bridge
-    start_bridge: bpy.props.BoolProperty(
-        name="Start the MCP bridge with Blender", default=True,
-        description="Open BlendWMe's local socket (127.0.0.1 only, with a random token) so Claude Code and "
-                    "Codex can use BlendWMe's tools")
-    workspace_folder: bpy.props.StringProperty(
-        name="Workspace folder", subtype="DIR_PATH",
-        description="Where the brains run and read BlendWMe's instructions. Empty means Documents/BlendWMe Workspace")
-    mcp_python: bpy.props.StringProperty(
-        name="Python for the MCP server", subtype="FILE_PATH",
-        description="A Python with the 'mcp' package. Empty: the workspace venv made by 'Install MCP server', "
-                    "or a Python on PATH")
-    # The brains (2.0). Sign-in happens only in the official programs, never here.
+    # -- the settings screen -------------------------------------------------
+    theme: bpy.props.EnumProperty(name="Theme", items=THEMES, default="GRAPHITE", update=_redraw)
+    offer_handover: bpy.props.BoolProperty(
+        name="Offer a hand-over when a limit is reached", default=True,
+        description="When Claude or Codex reaches its usage limit, show a card that offers the other one")
+    auto_relay: bpy.props.BoolProperty(
+        name="Hand over by itself in Auto", default=True,
+        description="In Auto, when one brain reaches its usage limit, the other takes over without asking. "
+                    "In Together and Teach you are always asked")
+    returning_reviews: bpy.props.BoolProperty(
+        name="Returning brain reviews the other's work first", default=True,
+        description="A brain that takes the work back first looks at what the other brain changed and fixes "
+                    "its open problems, before anything new")
+    pace: bpy.props.FloatProperty(
+        name="Pace", default=1.0, min=0.0, max=10.0, precision=1, step=50,
+        description="Auto: seconds each new part stays in focus before the next one starts. 0 is fastest",
+        update=_redraw)
+    show_pointers: bpy.props.BoolProperty(
+        name="Show pointers in the viewport", default=True,
+        description="Radar rings, pencil circles and notes on the viewport and the editors", update=_redraw)
+
+    # -- Advanced (closed by default) -----------------------------------------
+    show_advanced: bpy.props.BoolProperty(name="Advanced", default=False)
+    level: bpy.props.EnumProperty(
+        name="Your level",
+        items=[("BEGINNER", "Beginner", "Explain the idea and give exact menus, shortcuts and values"),
+               ("INTERMEDIATE", "Intermediate", "Short technique cues"),
+               ("EXPERT", "Expert", "Be direct. Advanced techniques")],
+        default="BEGINNER")
+    reduce_motion: bpy.props.EnumProperty(
+        name="Motion",
+        items=[("SYSTEM", "Follow the system", "Use your computer's 'reduce motion' setting"),
+               ("REDUCE", "Reduce motion", "No blinking or moving indicators: show their still state"),
+               ("FULL", "Full motion", "Always animate the indicators")],
+        default="SYSTEM", update=_redraw)
+    ask_handoff_note: bpy.props.BoolProperty(
+        name="Ask for a handoff note when handing over", default=True,
+        description="Before a switch, the current brain writes a short note (uses a little of its usage). "
+                    "The journal is complete without it")
     claude_path: bpy.props.StringProperty(
         name="Claude Code program", subtype="FILE_PATH",
-        description="Path to claude(.exe). Empty: found on PATH")
+        description="Path to claude(.exe). Empty: found automatically")
     claude_model: bpy.props.StringProperty(
         name="Claude model", default="",
         description="Optional model alias (e.g. 'sonnet' or 'opus'). Empty: your Claude Code default")
@@ -91,190 +87,135 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         default="")
     codex_path: bpy.props.StringProperty(
         name="Codex program", subtype="FILE_PATH",
-        description="Path to codex(.cmd/.exe). Empty: found on PATH")
+        description="Path to codex(.cmd/.exe). Empty: found automatically")
     codex_model: bpy.props.StringProperty(
-        name="Codex model", default="",
-        description="Optional model name. Empty: your Codex default")
-    auto_relay: bpy.props.BoolProperty(
-        name="Auto mode: hand over by itself at a usage limit", default=True,
-        description="In Auto mode, when one brain reaches its usage limit, the other brain takes over "
-                    "without asking. In Watch and Teach you are always asked")
-    ask_handoff_note: bpy.props.BoolProperty(
-        name="Ask for a handoff note when handing over", default=True,
-        description="Before the switch, the current brain writes a short note (it uses a little of its usage). "
-                    "The journal is complete without it")
-    api_enabled: bpy.props.BoolProperty(
-        name="Allow the pay-per-token API brain", default=False,
-        description="Off by default. BlendWMe 2.0 runs on your Claude and ChatGPT subscriptions. Switch on "
-                    "only to use an OpenAI-compatible endpoint you pay per token (or a local Ollama model)")
-    api_token_budget: bpy.props.IntProperty(
-        name="API token budget", default=300000, min=10000, max=20000000,
-        description="Hard limit: the API brain stops when a conversation has used this many tokens")
-    max_steps: bpy.props.IntProperty(name="Steps before check-in", default=60, min=5, max=400,
-                                     description="BlendWMe pauses after this many tool calls so costs never run away")
-
-    def model_id(self):
-        if self.agent_preset == "CUSTOM":
-            return self.custom_model.strip()
-        return next(mid for k, _, mid in AGENT_PRESETS if k == self.agent_preset)
-
-    def key(self):
-        return credentials.get_key(self.key_storage)
+        name="Codex model", default="", description="Optional model name. Empty: your Codex default")
+    workspace_folder: bpy.props.StringProperty(
+        name="Workspace folder", subtype="DIR_PATH",
+        description="Where the brains run and read BlendWMe's instructions. Empty: Documents/BlendWMe Workspace")
+    mcp_python: bpy.props.StringProperty(
+        name="Python for the tools server", subtype="FILE_PATH",
+        description="A Python with the 'mcp' package. Empty: the one 'Install' made, or a Python on PATH")
+    log_folder: bpy.props.StringProperty(
+        name="Log folder", subtype="DIR_PATH",
+        description="Where conversation and crash logs go. Empty: Documents/BlendWMe Logs")
+    auto_save_logs: bpy.props.BoolProperty(
+        name="Save a log after every task", default=True,
+        description="Save the whole conversation (every message, all code and results) to the log folder")
+    # One-time note after the first enable (see register_note in __init__.py)
+    prefs_note_done: bpy.props.BoolProperty(default=False, options={"HIDDEN"})
 
     def draw(self, context):
-        draw_brains(self.layout, self)
+        draw_settings(self.layout, self, context)
 
 
-def draw_brains(layout, p):
-    """Settings for the brains, the MCP bridge and the optional pay-per-token API."""
+def draw_settings(layout, p, context=None):
+    """The same settings as the panel's settings screen, in Blender's own widgets."""
     col = layout.column()
+    col.label(text="Theme")
+    col.row().prop(p, "theme", expand=True)
+    col.separator()
+    col.label(text="Relay")
+    col.prop(p, "offer_handover")
+    col.prop(p, "auto_relay")
+    col.prop(p, "returning_reviews")
+    col.separator()
+    col.prop(p, "pace", text="Pace (s a step)")
+    col.prop(p, "show_pointers")
+    col.separator()
     box = col.box()
-    box.label(text="Claude Code (main brain)", icon="OUTLINER_OB_LIGHT")
-    box.prop(p, "claude_path")
-    row = box.row(align=True)
+    box.prop(p, "show_advanced", icon="TRIA_DOWN" if p.show_advanced else "TRIA_RIGHT", emboss=False)
+    if p.show_advanced:
+        draw_advanced(box, p)
+
+
+def draw_advanced(layout, p):
+    col = layout.column()
+    col.prop(p, "level")
+    col.prop(p, "reduce_motion")
+    col.prop(p, "ask_handoff_note")
+    col.separator()
+    col.prop(p, "claude_path")
+    row = col.row(align=True)
     row.prop(p, "claude_model")
     row.prop(p, "claude_effort", text="")
-    draw_codex(col, p)
-    box = col.box()
-    box.label(text="MCP bridge", icon="LINKED")
-    box.prop(p, "start_bridge")
-    box.prop(p, "workspace_folder")
-    box.prop(p, "mcp_python")
-    box = col.box()
-    box.label(text="Pay-per-token API (off by default)", icon="FUND")
-    box.prop(p, "api_enabled")
-    if p.api_enabled:
-        box.prop(p, "api_token_budget")
-        draw_connection(box, p)
-
-
-def draw_codex(layout, p):
-    box = layout.box()
-    box.label(text="Codex (second brain)", icon="OUTLINER_OB_LIGHT")
-    box.prop(p, "codex_path")
-    box.prop(p, "codex_model")
-    box = layout.box()
-    box.label(text="Relay", icon="FILE_REFRESH")
-    box.prop(p, "auto_relay")
-    box.prop(p, "ask_handoff_note")
-
-
-def draw_connection(layout, p):
-    col = layout.column(align=False)
-    col.prop(p, "key_storage")
-    key = p.key()
-    if p.key_storage == "ENV":
-        col.label(text=("NEBIUS_API_KEY found " + credentials.masked(key)) if key
-                  else "NEBIUS_API_KEY is not set. Set it, then restart Blender.",
-                  icon="CHECKMARK" if key else "ERROR")
-    else:
-        if p.key_storage == "KEYCHAIN" and not credentials.keychain_name():
-            col.label(text="No password store on this system. Use 'This session only'.", icon="ERROR")
-        row = col.row(align=True)
-        row.label(text="Key: " + credentials.masked(key), icon="LOCKED" if key else "UNLOCKED")
-        row.operator("blendwme.paste_key", text="Paste Key", icon="PASTEDOWN")
-        if key:
-            row.operator("blendwme.forget_key", text="", icon="TRASH")
-        if not key:
-            col.label(text="Copy your API key, then press Paste Key.", icon="INFO")
-    col.prop(p, "agent_preset")
-    if p.agent_preset == "CUSTOM":
-        col.prop(p, "custom_model")
-    else:
-        col.label(text=p.model_id(), icon="BLANK1")
-    col.prop(p, "reasoning")
+    col.prop(p, "codex_path")
+    col.prop(p, "codex_model")
     col.separator()
-    col.prop(p, "vision_enabled")
-    sub = col.column()
-    sub.enabled = p.vision_enabled
-    sub.prop(p, "vision_model")
-    sub.prop(p, "agent_vision")
-    col.separator()
-    row = col.row(align=True)
-    row.operator("blendwme.test_connection", icon="LINKED")
-    row.operator("blendwme.test_vision", icon="HIDE_OFF")
-    box = col.box()
-    box.use_property_split = True
-    box.prop(p, "base_url")
-    box.prop(p, "max_steps")
-    box.prop(p, "max_tokens")
-    box.prop(p, "temperature")
-    box.prop(p, "auto_save_logs")
-    box.prop(p, "log_folder")
+    col.prop(p, "workspace_folder")
+    col.prop(p, "mcp_python")
+    col.prop(p, "log_folder")
+    col.prop(p, "auto_save_logs")
 
 
 # ----------------------------------------------------------------------
 # Session options (not saved into your .blend)
 # ----------------------------------------------------------------------
 
+MODES = [("WATCH", "Together", "You and the AI work on the same scene. It builds step by step and you can "
+                               "take over any time"),
+         ("TEACH", "Teach", "You do the work. BlendWMe guides, points and checks"),
+         ("AUTO", "Auto", "BlendWMe carries the brief through. Pause any time to take over")]
+
+
 def _sync(self, context):
     session.mode = self.mode
-    session.level = self.level
-    session.watch_auto = self.watch_auto
-    session.build_style = self.build_style
+    session.changed_flag = True
 
 
 class BWM_Session(bpy.types.PropertyGroup):
     prompt: bpy.props.StringProperty(name="", description="Tell BlendWMe what to make, or ask it something")
     brain: bpy.props.EnumProperty(
         name="Brain",
-        items=[("claude", "Claude", "Claude Code with your Claude subscription (main brain)"),
-               ("codex", "Codex", "Codex CLI with your ChatGPT account (second brain)"),
-               ("api", "API", "The pay-per-token API brain (switch it on in the preferences first)")],
-        default="claude")
-    mode: bpy.props.EnumProperty(
-        name="Mode",
-        items=[("AUTO", "Auto", "BlendWMe builds at full speed. Pause any time to take over"),
-               ("WATCH", "Watch", "BlendWMe builds step by step like a person would, and explains each step"),
-               ("TEACH", "Teach", "You do the work. BlendWMe guides, points and checks")],
-        default="AUTO", update=_sync)
-    build_style: bpy.props.EnumProperty(
-        name="Build",
-        items=[("PIECE", "Piece by Piece", "Each part lands one at a time, following a visible plan"),
-               ("FULL", "Full Build", "Build in a few big stages, as fast as possible (like MCP)")],
-        default="PIECE", update=_sync)
-    level: bpy.props.EnumProperty(
-        name="Level",
-        items=[("BEGINNER", "Beginner", ""), ("INTERMEDIATE", "Intermediate", ""), ("EXPERT", "Expert", "")],
-        default="BEGINNER", update=_sync)
-    watch_auto: bpy.props.FloatProperty(
-        name="Auto-advance", default=0.0, min=0.0, max=30.0, subtype="TIME_ABSOLUTE", unit="TIME_ABSOLUTE",
-        description="Watch mode: seconds before the next step starts by itself. 0 waits for Next",
-        update=_sync)
+        items=[("claude", "Claude", "Claude Code with your Claude plan"),
+               ("codex", "Codex", "Codex CLI with your ChatGPT plan")],
+        default="claude", update=_redraw)
+    mode: bpy.props.EnumProperty(name="Mode", items=MODES, default="WATCH", update=_sync)
     reference_1: bpy.props.StringProperty(name="Reference 1", subtype="FILE_PATH")
     reference_2: bpy.props.StringProperty(name="Reference 2", subtype="FILE_PATH")
-    show_log: bpy.props.BoolProperty(default=True)
 
 
-def gather_config(context):
+def sync_session(context=None):
+    """Copy the live settings the brains' tools read into the shared session state."""
+    context = context or bpy.context
     p = addon_prefs(context)
     s = context.window_manager.blendwme
-    _sync(s, context)
+    session.mode = s.mode
+    if p is not None:
+        session.level = p.level
+        session.pace = p.pace
+        session.show_pointers = p.show_pointers
+
+
+def gather_config(context=None):
+    context = context or bpy.context
+    p = addon_prefs(context)
+    s = context.window_manager.blendwme
+    sync_session(context)
     refs = [bpy.path.abspath(r) for r in (s.reference_1, s.reference_2) if r.strip()]
+
+    def path(value):
+        return bpy.path.abspath(value) if value and value.strip() else ""
+
+    if p is None:     # loaded as a plain module (tests): the defaults
+        return {"brain": s.brain, "references": refs, "blender_version": bpy.app.version_string,
+                "offer_handover": True, "auto_relay": True, "returning_reviews": True, "ask_handoff_note": True,
+                "auto_save_logs": True, "log_folder": "", "claude_path": "", "claude_model": "",
+                "claude_effort": "", "codex_path": "", "codex_model": ""}
     return {
         "brain": s.brain,
-        "claude_path": bpy.path.abspath(p.claude_path) if p.claude_path.strip() else "",
+        "claude_path": path(p.claude_path),
         "claude_model": p.claude_model.strip(),
         "claude_effort": p.claude_effort,
-        "codex_path": bpy.path.abspath(p.codex_path) if p.codex_path.strip() else "",
+        "codex_path": path(p.codex_path),
         "codex_model": p.codex_model.strip(),
+        "offer_handover": p.offer_handover,
         "auto_relay": p.auto_relay,
+        "returning_reviews": p.returning_reviews,
         "ask_handoff_note": p.ask_handoff_note,
-        "api_enabled": p.api_enabled,
-        "api_token_budget": p.api_token_budget,
-        "api_key": p.key() if p.api_enabled else "",
-        "base_url": p.base_url,
-        "model": p.model_id(),
-        "vision_enabled": p.vision_enabled,
-        "agent_vision": p.agent_vision,
-        "vision_model": p.vision_model.strip(),
-        "reasoning": p.reasoning,
-        "temperature": p.temperature,
-        "max_tokens": p.max_tokens,
-        "max_steps": p.max_steps,
         "references": refs,
         "auto_save_logs": p.auto_save_logs,
-        "log_folder": bpy.path.abspath(p.log_folder) if p.log_folder.strip() else "",
+        "log_folder": path(p.log_folder),
         "blender_version": bpy.app.version_string,
     }
 
@@ -289,6 +230,8 @@ def register():
 
 
 def unregister():
-    del bpy.types.WindowManager.blendwme
+    if hasattr(bpy.types.WindowManager, "blendwme"):
+        del bpy.types.WindowManager.blendwme
     for c in reversed(classes):
-        bpy.utils.unregister_class(c)
+        if getattr(c, "is_registered", False):
+            bpy.utils.unregister_class(c)
