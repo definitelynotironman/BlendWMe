@@ -23,6 +23,8 @@ What MCP does not have, and BlendWMe does: it lives in Blender, so you need no o
 
 ## Install
 
+Download `blendwme-1.0.5.zip` from this repo's **Releases** page (or build it yourself: `python tools/package.py` inside `BlendWMe-Source` writes it to `BlendWMe-Source/dist/`).
+
 1. Edit > Preferences > Add-ons. Disable any older BlendWMe. Restart Blender.
 2. Top-right menu > **Install from Disk** > choose `blendwme-1.0.5.zip`.
 3. Make sure **Allow Online Access** is on (Preferences > System > Network).
