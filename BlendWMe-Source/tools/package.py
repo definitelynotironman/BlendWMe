@@ -3,7 +3,8 @@
     python tools/package.py
 
 The zip holds the CONTENTS of blendwme/ (blender_manifest.toml at the zip
-root), without caches. The version comes from blender_manifest.toml.
+root) and the MCP server as blendwme_mcp/, without caches. The version comes
+from blender_manifest.toml.
 """
 
 import os
@@ -12,6 +13,7 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADDON = os.path.join(ROOT, "blendwme")
+SERVER = os.path.join(ROOT, "blendwme_mcp")
 
 
 def main():
@@ -21,14 +23,17 @@ def main():
     target = os.path.join(ROOT, "dist", f"blendwme-{version}.zip")
     count = 0
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
-        for folder, dirs, files in os.walk(ADDON):
-            dirs[:] = [d for d in dirs if d != "__pycache__"]
-            for name in sorted(files):
-                if name.endswith((".pyc", ".pyo")):
-                    continue
-                path = os.path.join(folder, name)
-                z.write(path, os.path.relpath(path, ADDON).replace(os.sep, "/"))
-                count += 1
+        # The add-on itself, plus the MCP server program inside it as blendwme_mcp/
+        # (the brains start it from there; Blender never imports it).
+        for source, prefix in ((ADDON, ""), (SERVER, "blendwme_mcp/")):
+            for folder, dirs, files in os.walk(source):
+                dirs[:] = [d for d in dirs if d != "__pycache__"]
+                for name in sorted(files):
+                    if name.endswith((".pyc", ".pyo")):
+                        continue
+                    path = os.path.join(folder, name)
+                    z.write(path, prefix + os.path.relpath(path, source).replace(os.sep, "/"))
+                    count += 1
     print(f"{target}: {count} files")
 
 

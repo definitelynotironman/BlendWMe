@@ -173,7 +173,7 @@ class Agent:
         """Write the full conversation to a file. Returns the path or ''."""
         if not self.messages:
             return ""
-        info = {"title": self.brief[:60], "version": "1.0.5",
+        info = {"title": self.brief[:60], "version": "2.0.0 (API brain)",
                 "blender": self.config.get("blender_version"), "model": self.config.get("model"),
                 "vision_model": self.config.get("vision_model") or "(auto)",
                 "reasoning": self.config.get("reasoning"), "mode": session.mode, "level": session.level,

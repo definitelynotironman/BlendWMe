@@ -1,238 +1,201 @@
-# BlendWMe 1.0.5
+# BlendWMe 2.0
 
-An AI Blender artist that lives inside Blender. It can build at full speed, slow down and show you how, or coach you while you do it yourself.
+An AI Blender artist that lives inside Blender. It can build at full speed, slow down and show you how, or coach you while you do it yourself. You can let go of the wheel and take it back at any moment: it continues from your version.
 
-Built for the Nebius x NVIDIA Global AI Hackathon. It runs on Nebius Token Factory with NVIDIA Nemotron as the default agent.
+2.0 runs on the subscriptions you may already have. **Claude Code** (Claude Pro or Max) is the main brain and **Codex CLI** (ChatGPT Plus or Pro) is the second brain. There is no pay-per-token API by default. When one brain reaches its usage limit, the other takes over from the same project journal.
 
-## What changed from 0.6 (and why)
+## What is new in 2.0
 
-Version 1.0 is a rebuild. The old version wrapped a smaller model in a strict custom protocol: one JSON action per call, a 6,000-character rulebook, and recipes run on a copy of the scene. Each rule was another way for the model to fail.
-
-MCP for Blender showed a better pattern, so 1.0 uses it:
-
-| | 0.6 | 1.0 |
+| | 1.0.5 | 2.0 |
 |---|---|---|
-| How the model acts | Custom JSON, one action per call | Native tool calling, many steps in one conversation |
-| How code runs | Filtered recipe language in a second Blender process | Normal Blender Python on the live scene, with an undo step before each run |
-| Memory | Rebuilt context every call | One continuous conversation |
-| Seeing | Viewport review | Multi-angle contact sheets judged by a vision model "art director" |
-| Knowledge | Long prompt rules | Skill cards loaded on demand + live Blender API lookup |
-| Code style | 3,700 dense one-liners | About 3,000 lines of plain, commented code |
+| The brain | One model through a pay-per-token API | Claude Code and Codex on your subscriptions; the API brain stays, off by default |
+| How the brain reaches Blender | The add-on's own loop | BlendWMe's MCP server (`blendwme_mcp`), the same 13 tools for every brain |
+| Memory | The conversation | The **project journal**, saved with the .blend: the brief, your decisions, the plan, every step signed by the brain that made it, open struggles, reviews, handoff notes |
+| Switching brains | Not possible | **Hand over to Codex / Claude** in the panel. The other brain gets a handoff brief and a fresh look at the scene, fixes the open struggles first and builds on the other brain's work |
+| Usage limits | Not relevant | Detected. A card offers the hand-over; in Auto mode it can switch by itself |
+| Setup | Paste an API key | Setup checks in the panel: is Claude installed and signed in, is Codex, does the MCP server start |
 
-What MCP does not have, and BlendWMe does: it lives in Blender, so you need no outside chat app. It has a Watch mode that builds the way a person would and explains each step. It has a Teach mode where you do the work and it checks you. You can take the wheel at any time and it continues from your version.
+Everything else stays the same whichever brain works: Auto / Watch / Teach, Piece by Piece / Full Build with the plan checklist, Pause and Take Control, the Graphite Paper card and the red pointers.
 
 ## Install
 
-Download `blendwme-1.0.5.zip` from this repo's **Releases** page (or build it yourself: `python tools/package.py` inside `BlendWMe-Source` writes it to `BlendWMe-Source/dist/`).
+1. Install **Claude Code** and sign in once: open a terminal, run `claude` and sign in with your Claude account.
+2. Optional, for the relay: install the **Codex CLI** and sign in once: run `codex` and choose **Sign in with ChatGPT**.
+3. Download `blendwme-2.0.0.zip` from this repo's **Releases** page (or build it: `python tools/package.py` inside `BlendWMe-Source` writes it to `BlendWMe-Source/dist/`).
+4. Blender 4.2 or newer: Edit > Preferences > Add-ons. Disable any older BlendWMe. Restart Blender.
+5. Top-right menu > **Install from Disk** > choose `blendwme-2.0.0.zip`.
+6. In the 3D Viewport press **N** and open the **BlendWMe** tab.
+7. Open the **Brains** panel and press **Install MCP server** once. It makes a small Python environment in the workspace folder (`Documents/BlendWMe Workspace`) and installs the official `mcp` package (this needs the internet once). You need Python 3.10 or newer on your PC; if none is found, Blender's own Python is used.
+8. Press **Check All**. You should see three green lines: Claude, Codex (if you installed it) and the MCP server.
 
-1. Edit > Preferences > Add-ons. Disable any older BlendWMe. Restart Blender.
-2. Top-right menu > **Install from Disk** > choose `blendwme-1.0.5.zip`.
-3. Make sure **Allow Online Access** is on (Preferences > System > Network).
-4. In the 3D Viewport press **N** and open the **BlendWMe** tab.
-5. Open **Connection**. Copy your Nebius key, then press **Paste Key**. Press **Test Connection**. It finds the exact model IDs on your account and checks that tool calling works.
-6. Optional: press **Test Vision**. It lists the models on your account that accept images, tests them and keeps the first that works. If you skip this, BlendWMe picks one by itself the first time it looks.
+BlendWMe never reads, copies or stores your Claude or ChatGPT sign-in. Sign-in happens only inside the official `claude` and `codex` programs. The setup checks use their own status commands and never show your e-mail.
 
-**Why vision is a separate model:** no Nemotron model on Nebius accepts images. Nemotron is the agent (the brain and hands). A vision model such as Kimi K2.6 or Qwen3.8-27B is its eyes. If vision fails, BlendWMe keeps building from scene data instead of stopping.
+## First test (the cottage)
 
-## Your API key
-
-The key is **never** saved in Blender's preferences or in any `.blend` file. You choose where it lives:
-
-| Option | Where | When to use |
-|---|---|---|
-| Password store (default) | Windows Credential Manager, macOS Keychain or Linux Secret Service, encrypted for your user account | Your own PC |
-| This session only | Memory only, gone when Blender closes | Shared or lab PCs, live demos |
-| Environment variable | `NEBIUS_API_KEY` | If you already manage keys that way |
-
-How it stays safe:
-- **Paste Key** reads the clipboard, stores the key, then clears the clipboard.
-- The panel only shows the last 4 characters.
-- The AI's own code is blocked from reading the clipboard, environment variables, the password store or BlendWMe's internals. The model can never print your key into the conversation.
-- Copy Log never includes the key.
-- **Forget Key** (bin icon) deletes it from memory and the password store. On Windows you can also see it under Credential Manager > Windows Credentials > `BlendWMe-Nebius`.
-
-Good habits: make a separate Nebius key just for BlendWMe, so you can revoke it alone. Never paste it into code, GitHub, Devpost or a screen recording. If it leaks, revoke it in the Nebius console and paste a new one.
-
-## First test (the house)
-
-1. Open a new General scene. Choose **Auto**.
+1. Open a new General scene. Choose **Auto** and the **Claude** brain.
 2. Type: *A cosy low poly cottage with a red tiled roof, a chimney, wooden door, four windows, a stone base and a small path. Stylised, warm colours.*
-3. Press **New Task**. Watch the card at the bottom of the viewport.
-4. When it finishes, type a follow-up: *Make the chimney taller and add a fence.* It remembers the whole project.
+3. Press **New Task**. Claude's reply streams into the panel while the cottage is built piece by piece.
+4. Type a follow-up: *Make the chimney taller and add a fence.* It remembers the whole project.
 
-Then try the other modes on the same scene:
+Then try the relay:
 
-- **Watch:** *Show me how you would build a wooden fence.* Press **Next** after each step. Each step uses the operators a person would use (loop cut, extrude, modifiers), and the card tells you the shortcut.
+- Press **Hand over to Codex**. Claude writes a short handoff note, and Codex continues from the journal and a fresh look at the scene.
+- Press **Hand over to Claude**. Claude comes back to its own conversation, is told exactly what Codex changed, fixes anything Codex struggled with first, and does not undo Codex's work.
+- Save the .blend, close Blender and open the file again. The journal comes back with it, and each brain resumes where it left off.
+
+And the other modes on the same scene:
+
+- **Watch:** *Show me how you would build a wooden fence.* Press **Next** after each step. Each step uses the operators a person would use, and the card tells you the shortcut.
 - **Pause and Take Control:** while it works, press Pause. Move or reshape something. Press **Resume**. It is told exactly what you changed and builds around your version.
 - **Teach:** *Teach me to model a simple table.* You do each step. It points at what matters, and the step completes by itself when your scene shows it is done. Press **Show me** if you are stuck.
 
-## Build styles (Auto mode)
+### Testing the MCP server from a terminal
 
-- **Piece by Piece** (default): BlendWMe first writes a **plan**, a checklist of parts with sizes, shown in the panel. Then each part lands one at a time with a red pointer, and the checklist ticks off. This is the BlendWMe way: you can follow along, pause at any part and take over.
-- **Full Build**: MCP-style. Few, big steps, as fast as possible. Best when you just want the result.
-
-Watch mode is piece by piece with a Next button and an explanation for every step. Teach mode is you doing each piece.
+The **Brains** panel has **Copy Terminal Command**. Paste it into a terminal: it starts an ordinary interactive `claude` session in the workspace folder with BlendWMe's tools. Ask it to build something and watch it appear in Blender.
 
 ## Controls
 
 | Button | What it does |
 |---|---|
-| Send / New Task | Send continues the conversation. New Task starts fresh. |
-| Tell BlendWMe | While it works, your message steers it at the next step. |
-| Pause and Take Control | It stops after the current action. The scene is yours. |
-| Resume / Continue | Hand back. It reads your changes first. |
-| Next Step | Watch mode: go to the next step. Or set Auto-advance seconds. |
-| I did it / Show me / Skip | Teach mode answers. |
-| Undo AI Step | Same as Ctrl+Z. Every AI step is its own undo step. |
-| Construction Notebook | Every step it ran, with its code, in a Text block. Good for learning and judges. |
-| What the AI Saw | Opens the last picture the vision model judged. |
+| Brain (Claude / Codex / API) | Which brain answers your next message |
+| Send / New Task | Send continues the conversation. New Task starts fresh |
+| Tell BlendWMe | While it works, your message reaches it with its next tool result |
+| Hand over to Codex / Claude | Pass the work to the other brain. It turns red when a usage limit is reached |
+| Pause and Take Control | It stops after the current action. The scene is yours |
+| Resume / Continue | Hand back. It reads your changes first |
+| Next Step | Watch mode: go to the next step. Or set Auto-advance seconds |
+| I did it / Show me / Skip | Teach mode answers |
+| Undo AI Step | Same as Ctrl+Z. Every AI step is its own undo step |
+| Construction Notebook | Every step it ran, with its code, in a Text block |
+| Project Journal | The journal and the handoff brief, in a Text block |
+| What the AI Saw | Opens the last picture the art director judged |
 
-## Models
+## Settings (Preferences > Add-ons > BlendWMe)
 
-- **Agent:** **Nemotron 3 Ultra** by default. In a one-shot cottage test it was the fastest (12 s for 154 lines of code). Its mistakes were small API slips, which the pre-check now catches. Nemotron 3 Super also works but is slower and weaker. Nemotron 3.5 Lightning ran out of tokens without finishing, so it is not recommended. **Kimi K2.6** is available too: it can see pictures itself, which is the setup closest to Claude + MCP.
-- **Vision:** picked automatically from models that accept images (Kimi K2.6, Qwen3.8-27B, GLM-5.3-Flash and others). Nebius reports this in its model list, so BlendWMe never guesses. Thinking is switched off for vision calls (about 2 s each). Before this, Kimi sometimes thought so long that it returned an empty answer, which left the agent blind.
-- **Agent sees pictures itself:** if your agent model accepts images (e.g. Kimi K2.6), the picture goes straight to it, like Claude in MCP, instead of being described by a second model.
-- **Reasoning:** Low effort is the default. Use Full for hard briefs and Off for speed.
-
-Do a quick bake-off: give the same house prompt to Super and Ultra and compare the result and the time. Pick the winner for your demo.
+- **Claude:** program path (empty: found automatically), model and effort (empty: your Claude Code defaults).
+- **Codex:** program path and model.
+- **Relay:** *Auto mode: hand over by itself at a usage limit* (on by default; in Watch and Teach you are always asked) and *Ask for a handoff note when handing over* (uses a little of the old brain's usage; the journal is complete without it).
+- **MCP bridge:** start automatically, workspace folder, the Python for the MCP server.
+- **API brain:** off by default. If you switch it on, it uses an OpenAI-compatible endpoint with your key (pay per token) and stops at a hard token budget. A local Ollama model can use it through Ollama's OpenAI-compatible endpoint.
 
 ## How it works
 
 ```
-you ─► panel ─► agent thread ──► Nebius (Nemotron, tool calling)
-                    │  ▲
-         tool calls │  │ results
-                    ▼  │
-        bridge (Blender main thread)
-          ├─ get_scene_info / get_object_info   facts
-          ├─ run_python                          hands (undo step first)
-          ├─ look ─► vision model                eyes + art director
-          ├─ load_skill / inspect_api            knowledge
-          ├─ point_at / teach_step               teaching
-          └─ ask_user / finish
+you ─► panel ─► relay ─► engine ─► claude -p / codex exec (your subscription)
+                  ▲                        │ MCP (stdio)
+         events: text, tool_call,          ▼
+         tool_result, done, error,   blendwme_mcp server (outside Blender)
+         limit_reached                     │ local socket, 127.0.0.1 + a random token
+                                           ▼
+                           socket_bridge ─► tool_host ─► bridge (Blender main thread)
+                                              │  ├─ run_python      hands (undo step first, rollback on failure)
+                                              │  ├─ look            eyes (multi-angle pictures to the brain)
+                                              │  ├─ get_scene_info / get_object_info / inspect_api / load_skill
+                                              │  ├─ plan / point_at / teach_step / ask_user / finish
+                                              │  └─ handoff_note / read_journal
+                                              ▼
+                                         journal ("the baton", saved with the .blend)
 ```
+
+- Claude Code runs as `claude -p` with streaming JSON, its own session (`--session-id`, then `--resume`), only BlendWMe's MCP tools allowed (no shell, no file editing) and BlendWMe's instructions appended to its system prompt.
+- Codex runs as `codex exec --json` in a read-only sandbox, with BlendWMe's MCP server added for that run only (`-c` overrides; your Codex config is never edited), and resumes its own thread.
+- Both brains start in the workspace folder, which holds the shared instructions (`CLAUDE.md` and `AGENTS.md`), the MCP config and the socket's connection file.
+- Pay-per-token API keys in your environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and similar) are removed before a brain starts, so the brains always use your subscription sign-in.
 
 | File | Job |
 |---|---|
-| `agent.py` | The loop. Notices your edits, asks the model, runs tools, waits in Watch/Teach |
-| `llm.py` | OpenAI-compatible client for Nebius. Recovers tool calls written as text |
-| `tools.py` | The tool list the model sees |
-| `prompts.py` | The system prompt: workflow, quality bar, Python rules, mode rules |
-| `executor.py` | Runs code on the live scene, reports errors with line numbers and what changed |
-| `look.py` | Viewport, camera and multi-angle captures (ignores huge ground planes) |
-| `scene_info.py` | Scene summaries, snapshots, and the diff that tells the AI what you changed |
+| `relay.py` | The panel's one entry point: active brain, turns, hand-over, limits |
+| `engines/` | `claude_code.py`, `codex.py`, `api.py` (the 1.0.5 loop), `limits.py` (usage-limit messages), `base.py` |
+| `journal.py` | The project journal and the handoff brief, saved in the .blend and next to it |
+| `socket_bridge.py`, `workspace.py` | The local socket for the MCP server, the workspace folder |
+| `tool_host.py` | BlendWMe's tools for outside brains (the same behaviour as the 1.0.5 tools) |
+| `setup_checks.py`, `mcp_probe.py` | The setup buttons; a tiny MCP client to check the server |
+| `blendwme_mcp/` | The MCP server program (official `mcp` SDK, stdio) |
+| `agent.py`, `llm.py` | The 1.0.5 agent loop and client: the API brain |
+| `tools.py`, `prompts.py` | The tool list and the shared instructions for every brain |
+| `executor.py`, `repair.py`, `precheck.py` | Run code on the live scene; repair mechanical API slips; reject what cannot be repaired |
+| `look.py`, `scene_info.py` | Captures; scene summaries, your edits, who made each object |
 | `knowledge.py` + `skills/` | Skill cards and live API lookup |
-| `overlay.py` | The Graphite Paper card and red radar pointers |
-| `ui.py`, `prefs.py` | Panel, buttons, settings |
-| `credentials.py` | Keeps your API key in the OS password store, never in Blender files |
-| `repair.py` | Repairs mechanical API slips (3 vs 4 colour values, swapped modifier arguments, renamed inputs, 2.7x calls) before a step runs |
-| `precheck.py` | Rejects only what cannot be repaired, before it runs |
-| `shapes.py`, `furniture.py` | The bwm modelling kit |
-| `logs.py` | Writes the full conversation logs |
-| `bridge.py` | Runs Blender work safely on the main thread |
+| `helpers.py`, `shapes.py`, `furniture.py`, `coerce.py` | The bwm modelling kit |
+| `overlay.py`, `ui.py`, `prefs.py`, `state.py`, `bridge.py`, `credentials.py`, `logs.py` | Overlay, panel, settings, threading, key storage (API brain), logs |
 
-### The bwm modelling kit (new in 1.0.5)
+## The project journal
 
-Open models write plausible but wrong low-level Blender Python. So instead of making the model fight bmesh, BlendWMe gives it a tested, forgiving kit, available inside run_python as `bwm.<name>`:
+BlendWMe, not the AI, holds the memory. The journal records the brief and your decisions, the plan with the brain that built each part, every step (code and result), who made each object (Claude, Codex, API or you), struggles that stay open until a later step solves them, the latest art director review and the brain's verdict, handoff notes and every switch.
+
+From this it builds a compact handoff brief (with a size limit) for the brain that takes over: the brief, open struggles first, the latest note, what changed since that brain last worked here, the plan, who made each object, the latest review, and the rule to build on the other brain's work and never undo it. Any brain can also call `read_journal` at any time.
+
+It is saved as a Text block named *BlendWMe Journal* inside the .blend, and as `<file>_blendwme/journal.json` next to it. When you open the file, the newer copy wins.
+
+## The bwm modelling kit
+
+Instead of making the brain fight bmesh, BlendWMe gives it a tested, forgiving kit, available inside run_python as `bwm.<name>`:
 
 | Group | Functions |
 |---|---|
-| Shapes | `box`, `cylinder`, `cone` (point-down too), `sphere` (or ellipsoid), `torus`, `prism`, `wedge`, `extrude_profile` (2D outline to solid), `loft` (smooth body through sections), `lathe`, `tube`, `limb`, `gable_roof` (with tile rows) |
+| Shapes | `box`, `cylinder`, `cone`, `sphere` (or ellipsoid), `torus`, `prism`, `wedge`, `extrude_profile`, `loft`, `lathe`, `tube`, `limb`, `gable_roof` |
 | Modifiers, kept live | `bevel`, `mirror`, `array`, `subdivide`, `solidify`, `boolean` |
-| Placement | `bounds`, `top`, `place_on` (ray-cast onto sloped roofs, `sink=True` for chimneys), `align`, `rotate`, `duplicate`, `parent`, `group` |
-| Architecture | `wall`, `floor`, `opening`, `window` and `door` (they snap onto a thin wall or a solid house body, cut a live hole and face outwards), `path` |
-| Furniture | `bed`, `desk`, `table`, `chair(at='Desk')`, `wardrobe` / `closet`, `shelf`, `monitor(on='Desk')`, `keyboard(on='Desk')`, `pc_tower`, `rug`, `lamp`, `plant`; `against='WallName'` turns a piece to face the room with its back on that wall |
+| Placement | `bounds`, `top`, `place_on`, `align`, `rotate`, `duplicate`, `parent`, `group` |
+| Architecture | `wall`, `floor`, `opening`, `window`, `door`, `path` |
+| Furniture | `bed`, `desk`, `table`, `chair`, `wardrobe` / `closet`, `shelf`, `monitor`, `keyboard`, `pc_tower`, `rug`, `lamp`, `plant` |
 
-Every function takes `name, sizes, location, collection, material` in that order and everything else by keyword. Arguments are forgiving: numbers as text, colours as 3 or 4 values, 0-255, `'#hex'` or `'red'`, common alias names (`color=`, `position=`, `height=`), and unknown extras are ignored with a note. Re-running a step with the same names replaces the AI's own earlier objects instead of making `Roof.001` copies; the user's objects are never replaced. `inspect_api('bwm.gable_roof')` shows the full help.
-
-Three worked example cards (`example-cottage`, `example-room`, `example-ice-cream-cone`) show complete builds with the kit. The test suite runs every step of every example card in Blender 4.2.
+Every function takes `name, sizes, location, collection, material` in that order and everything else by keyword. Arguments are forgiving (numbers as text, colours in many forms, common alias names). Re-running a step with the same names replaces the AI's own earlier objects; your objects are never replaced. `inspect_api('bwm.gable_roof')` shows the full help.
 
 ### Making it a better artist
 
-Add or improve cards in `skills/`. Each card is a short Markdown file: the workflow, good settings, code patterns and common mistakes. The first line is the description the AI sees. Test each card's code in Blender before you keep it. This is the main way to raise quality in new areas (characters, animation, sculpting) without touching the engine.
+Add or improve cards in `skills/`. Each card is a short Markdown file: the workflow, good settings, code patterns, common mistakes and how to teach it. The first line is the description the AI sees. A card is only kept after its code runs cleanly in Blender 4.2.
+
+## The art director
+
+- **References first.** Reference images are looked at before anything is built.
+- **Reviews without being asked.** After the first build steps and then every few steps, BlendWMe sends the brain four angles of the scene with a rubric: match to the brief and reference, silhouette and proportions, contact, shape detail, colour and value, then the most valuable fixes. The review lists every AI-made object with its exact size, so leftovers and wrong scale are easy to spot.
+- **One check before finishing.** The first time the brain calls finish, the result is reviewed once more if anything changed.
 
 ## When things go wrong
 
-BlendWMe expects mistakes and is built to recover on its own:
-
 | Problem | What happens |
 |---|---|
-| The code has a small mechanical API slip (`diffuse_color` with 3 values, `modifiers.new('SOLIDIFY', 'Solidify')`, `inputs['Specular']`, `scene.objects.link`, `bpy.active_object`, `create_cone(radius=)`, `obj.select = True`, a removed 2.7x property) | It is repaired and the step runs. The model is told what was fixed, and the step counts as a success. Line numbers in errors still match the model's code. |
-| The model writes tool calls as text (tags, bare JSON, XML, YAML, code in python fences) or calls MCP-style tools like `execute_blender_code` | They are recovered and run. In Auto mode BlendWMe asks the provider for a tool call every turn (`tool_choice=required`), which stopped Nemotron from answering in broken text. |
-| The model only tests the environment ("is bwm available?") | The step is not run and not counted as a failure; the model gets the answer (everything is ready, plus the bwm list). |
-| A step's code crashes | Everything that step created is removed, so the retry never leaves duplicates like `Roof.001`. The AI gets the failing line, the error and a plain-language hint (for example "you passed a name where Blender needs the object"), then runs the whole step again. You see STEP FAILED, then STEP (retry). |
-| The same step fails twice | It is told to change approach (and, if the error repeats exactly, that it is the same error). Failures are counted per step, not across different steps. |
-| The same step fails 4 times | It pauses and hands you the wheel with the error on the card. Pre-check rejections (nothing ran) count separately, with a limit of 6. |
-| A step half-changed objects that already existed | It is told exactly which ones, so it can fix them instead of guessing. |
-| Network trouble or the provider is busy | Automatic retry after 3, 8 and 20 seconds. |
-| The conversation gets too long | Older steps are shortened and the request is retried. |
-| The code uses a Blender name that does not exist and cannot be repaired (like `bm.new` or `bmesh.ops.cube`) | A pre-check reads the code before it runs, compares it with the real API of your Blender, and sends back the right name. Nothing runs, so nothing needs undoing. |
-| A step fails and gets fixed | Shown as a quiet grey SELF-CORRECTING line ("fixed a code error, 2 tries"), not a red problem. Red is kept for real trouble. |
-| The vision model is missing or fails | Another model that accepts images is found automatically. If none works, BlendWMe keeps building and checks its work with scene data. |
-| The model calls Python as if it were a tool (`bwm.mesh(...)`, `bpy.ops...` as tool calls) | BlendWMe runs those calls together as one real Python step (materials and collections first) and tells the model to use run_python. Unknown tool names get a reply listing the real tools and an example. At most 8 tool calls run per turn. |
-| New objects end up outside the scene (e.g. in a collection that was removed from the scene) | bwm.collection links the collection back into the scene, and any new object that is still not in the scene is reported to the AI. |
-| The model writes a broken tool call | It is recovered when possible, or the model is asked to resend it. |
-| The model only talks and stops working | It is nudged once to carry on. |
-| Something still goes wrong | Press Pause or Stop at any time. Undo AI Step (Ctrl+Z) reverses any step. Copy Log gives a full report to share. |
-
-## The art director (new in 1.0.5)
-
-In Auto mode the harness drives vision, not the model:
-
-- **References first.** Reference images become a written build spec (style, parts with counts and relative sizes, proportions, colours) before anything is built.
-- **Reviews without being asked.** After the first build step (with a reference) or the third (without), and then every 4 steps, BlendWMe captures the scene from four angles and a vision model judges it with a rubric: match to the brief and reference, silhouette and proportions, contact, shape detail, colour and value, then the most valuable fixes. The review restates the brief and lists every AI-made object with its exact size, so leftovers and wrong scale are easy to spot.
-- **One check before finishing.** The first time the model calls finish, the result is reviewed once more if anything changed.
-- **Critique converges.** At most 3 periodic reviews per task. When every plan part is built (or after 20 build steps without a plan), the model is told to fix only clear problems and finish.
-
-## Live evaluation
-
-`tools/live_eval.py` runs one real task in background Blender against real Nebius (key from `NEBIUS_API_KEY`). When nobody is at the keyboard it presses Resume and answers questions, and counts each time. It saves the full log, a four-angle picture, the `.blend` and a summary line.
-
-```
-blender -b --factory-startup --python tools/live_eval.py -- --task cottage      # or room, cone, cottage_ref
-```
+| A small mechanical API slip in the code | It is repaired and the step runs. The brain is told what was fixed |
+| A step's code crashes | Everything that step created is removed, the brain gets the failing line and a plain-language hint, and the struggle goes into the journal |
+| The same step keeps failing | It is told to change approach, then it pauses and hands you the wheel |
+| A brain reaches its usage limit | A card offers the hand-over (automatic in Auto mode if you allow it). Nothing is lost: the journal was written all along |
+| A brain lost its saved conversation | It starts a fresh one with the full context |
+| A brain or the MCP server is missing or not signed in | The setup checks say what to do, in one sentence |
+| Something still goes wrong | Press Pause or Stop at any time. Undo AI Step (Ctrl+Z) reverses any step |
 
 ## Full logs
 
-After every task, BlendWMe saves the whole conversation to **Documents/BlendWMe Logs**:
-
-- a `.md` file you can read: every message, the full code of every step, every result, errors, and a timeline with how long each model call took
-- a `.json` file with the exact messages sent to the model, for debugging
-
-Use **Learn and Debug > Save Full Log** to save at any moment, and **Open Logs Folder** to find them. Turn auto-saving off or pick another folder in Connection. The key is never in the conversation, and any copy of it is replaced with `[API KEY]` before saving.
-
-## What it can do in Blender
-
-Anything Blender can do from Python is in reach: modelling, materials and shader nodes, lighting, cameras, render setup, rigging, keyframe animation, shape keys, geometry nodes, Grease Pencil, physics settings, compositing and the video sequencer. Skill cards currently cover modelling, low-poly scenes, characters, materials, lighting, rigging, animation, sculpting (preparing and teaching), video editing and hard surface. Modelling is the most tested. The other areas work but have not been tuned yet.
-
-Limits: it cannot paint freehand sculpt or texture strokes like a person with a tablet (it prepares the mesh and teaches instead). It judges animation from still frames, not by watching playback. It can point at editors and panels, but not at one exact button.
+After every task, BlendWMe saves the whole conversation to **Documents/BlendWMe Logs**: a readable `.md` file (every message, the code of every step, every result) and a `.json` file. Use **Save Full Log** to save at any moment and **Open Logs Folder** to find them.
 
 ## Safety and limits
 
 - Code runs on your live scene, like MCP for Blender. Every step is undoable. A small blocklist stops file access, system commands and closing Blender. This is a guardrail, not a sandbox, so save your work first.
+- The socket listens on 127.0.0.1 only and needs a random token that changes each time the bridge starts.
+- Claude Code gets only BlendWMe's tools. Codex runs in a read-only sandbox (Codex has no switch to remove its shell completely).
 - Freehand sculpt strokes are not automated. BlendWMe prepares meshes and teaches sculpting instead.
-- Video editing is supported through the sequencer API, but needs your own footage paths.
-- Quality depends on the model. Nemotron 3 Super is a mid-size model. If results are weak, try Ultra and Full reasoning before changing code.
+- Quality depends on the brain and on the skill cards.
 
 ## Tests
 
-- `tests/test_agent_headless.py` runs the real agent loop in headless Blender 4.2.3 against a fake model server: building, error recovery, user-edit detection, pause mid-thought, Watch gating, Teach checks, Stop, auto-repair, the bwm kit (with geometry checks), the example cards, harness-driven reviews, the stuck guard and text tool-call recovery. 192 checks:
-  `"C:\Program Files\Blender Foundation\Blender 4.2\blender.exe" -b --factory-startup --python-exit-code 1 --python tests/test_agent_headless.py`
-- `tests/test_llm.py` tests the client helpers, including every text tool-call format seen in live runs.
-- `tools/live_eval.py` runs real tasks against Nebius (see Live evaluation).
-- `tools/package.py` builds `dist/blendwme-<version>.zip`.
+Run these from `BlendWMe-Source/`. None of them use a subscription or an API key.
+
+- `tests/test_v2_headless.py`: the socket bridge, the tool host and the real MCP server end to end; the relay with a fake `claude` and a fake `codex` (streaming, limits, stop, lost sessions, the hand-over in both directions, the journal on save and reopen, auto-relay); the setup checks. Needs the `mcp` package in `BlendWMe-Source/.venv` for the MCP parts:
+  `blender -b --factory-startup --python-exit-code 1 --python tests/test_v2_headless.py`
+- `tests/test_agent_headless.py`: the 1.0.5 agent loop (the API brain) against a fake model server, the bwm kit and the example cards (192 checks).
+- `tests/test_mcp_server.py`: the MCP server with a fake Blender socket (run with the venv's Python).
+- `tests/test_llm.py`: the client helpers.
+- `tools/package.py` builds `dist/blendwme-<version>.zip` (the add-on plus the MCP server).
 
 ## Credits
 
-The offscreen capture and multi-angle framing in `look.py` adapt MCP for Blender by Siddharth Ahuja (MIT). See `LICENSE-THIRD-PARTY`.
+The offscreen capture and multi-angle framing in `look.py` adapt MCP for Blender by Siddharth Ahuja (MIT). See `LICENSE-THIRD-PARTY`. The MCP server uses the official MCP Python SDK.
 
 ## Changelog
 
-- **1.0.5**: the reliability floor (Phase A). `import bwm` works. Mechanical API slips are repaired instead of rejected. The forgiving bwm modelling kit (shapes, placement, architecture, furniture). Worked example cards for the cottage, room and ice cream cone. Harness-driven vision: reference spec, art director reviews with an object inventory, a final check, converging critique. Smarter stuck guard (per step; pre-check and test steps not counted). inspect_api for bmesh and mathutils. Auto mode requires a tool call every turn, and tool calls written as text are recovered in five formats. look works in background Blender, and captures show node materials in their real colour. Blender's default cube is flagged. Live evaluation script.
-
-- **1.0.4**: tool arguments sent as text ("2.0", "[1, 2]", "True") are converted using each tool's schema, like MCP servers do; long-conversation shortening no longer adds a fake code field to non-code tool calls.
-
-- **1.0.3**: rescue Python-as-tool calls; clear "tools vs Python" section in the prompt (Nemotron 3 Ultra then used run_python correctly in 3 of 3 live trials); hidden collections relinked; warning for objects outside the scene; checks for swapped `modifiers.new` arguments and wrong node types; inspect_api lists operator groups and bwm helpers; red "Vision is OFF" warning in the panel; max 8 tool calls per turn.
-- **1.0.2**: plan checklist, Piece by Piece / Full Build, quiet self-correction, vision without thinking, agent sees images itself, legacy API and argument checks, Nemotron 3 Ultra default.
-- **1.0.1**: vision model auto-discovery, never stops on vision errors, pre-check of API names, bwm.box / bwm.mesh, full logs.
-- **1.0.0**: rebuild on the MCP pattern: native tool calling, run_python on the live scene, look, skills, Auto / Watch / Teach, safe key storage, rollback of failed steps.
+- **2.0.0**: Claude Code and Codex as brains on your subscriptions; BlendWMe's MCP server and the local socket bridge; the project journal saved with the .blend; Hand over between brains with handoff notes and a handoff brief; usage-limit detection and auto-relay in Auto mode; setup checks and Install MCP server in the panel; the pay-per-token API brain is off by default with a hard token budget.
+- **1.0.5**: the reliability floor. `import bwm` works. Mechanical API slips are repaired instead of rejected. The forgiving bwm kit. Worked example cards for the cottage, room and ice cream cone. Harness-driven art director reviews with an object inventory, a final check and converging critique. Smarter stuck guard. Tool calls written as text are recovered. The 1.0.5 notes are in `docs/NEBIUS_NOTES.md`.
+- **1.0.4**: tool arguments sent as text are converted using each tool's schema.
+- **1.0.3**: Python-as-tool calls are rescued; hidden collections relinked; checks for swapped `modifiers.new` arguments and wrong node types.
+- **1.0.2**: plan checklist, Piece by Piece / Full Build, quiet self-correction.
+- **1.0.1**: vision model discovery, pre-check of API names, full logs.
+- **1.0.0**: rebuild on the MCP pattern: native tool calling, run_python on the live scene, look, skills, Auto / Watch / Teach, rollback of failed steps.

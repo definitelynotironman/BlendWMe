@@ -628,6 +628,71 @@ check("API steps are recorded and signed", journal.data["events"][-1]["by"] == "
 relay.reset()
 del os.environ["OPENAI_API_KEY"]
 
+# ----------------------------------------------------------------------
+# M4: the setup checks (a fake program that answers the status commands)
+# ----------------------------------------------------------------------
+from blendwme import setup_checks  # noqa: E402
+
+STATUS = os.path.join(HERE, "fake_status.py")
+fake_dir = tempfile.mkdtemp(prefix="bwm_fake_programs_")
+if os.name == "nt":
+    fake_program = os.path.join(fake_dir, "fakeprog.cmd")
+    with open(fake_program, "w", encoding="utf-8") as f:
+        f.write(f'@"{sys.executable}" "{STATUS}" %*\n')
+else:
+    fake_program = os.path.join(fake_dir, "fakeprog")
+    with open(fake_program, "w", encoding="utf-8") as f:
+        f.write(f'#!/bin/sh\nexec "{sys.executable}" "{STATUS}" "$@"\n')
+    os.chmod(fake_program, 0o755)
+
+
+def status_check(fn, key, **fake):
+    os.environ["BWM_FAKE_STATUS"] = json.dumps(fake)
+    return fn({key: fake_program})
+
+
+SIGNED_IN = {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "pro", "email": "someone@example.com"}
+level, message = status_check(setup_checks.check_claude, "claude_path", version="2.1.302 (Claude Code)", auth=SIGNED_IN)
+check("Claude check: installed and signed in with the subscription", level == setup_checks.OK
+      and "signed in with your Claude Pro subscription" in message, message)
+check("the setup check never shows the account e-mail", "example.com" not in message)
+level, message = status_check(setup_checks.check_claude, "claude_path", auth={"loggedIn": False})
+check("Claude check: not signed in, with what to do", level == setup_checks.ERROR and "run `claude`" in message)
+level, message = status_check(setup_checks.check_claude, "claude_path",
+                              auth={"loggedIn": True, "authMethod": "api_key"})
+check("Claude check: an API-key sign-in is flagged (pay per token)", level == setup_checks.WARN
+      and "not your Claude subscription" in message, message)
+level, message = status_check(setup_checks.check_claude, "claude_path", help="-p --print", auth=SIGNED_IN)
+check("Claude check: a missing flag is named", level == setup_checks.WARN and "--mcp-config" in message, message)
+saved_find = setup_checks.claude_code.find_program
+setup_checks.claude_code.find_program = lambda configured="": ""
+level, message = setup_checks.check_claude({})
+setup_checks.claude_code.find_program = saved_find
+check("Claude check: not installed says how to install and sign in", level == setup_checks.ERROR
+      and "not installed" in message and "sign in" in message)
+
+level, message = status_check(setup_checks.check_codex, "codex_path", version="codex-cli 0.50.0")
+check("Codex check: installed and signed in with ChatGPT", level == setup_checks.OK
+      and "signed in with ChatGPT" in message, message)
+level, message = status_check(setup_checks.check_codex, "codex_path", login="Not logged in", login_code=1)
+check("Codex check: not signed in says to run codex", level == setup_checks.ERROR
+      and "run `codex` to sign in with ChatGPT" in message, message)
+level, message = status_check(setup_checks.check_codex, "codex_path",
+                              login="Logged in using an API key - sk-proj-***ABCDE")
+check("Codex check: an API key is flagged, and the key is never shown", level == setup_checks.WARN
+      and "sk-" not in message and "pay per token" in message, message)
+level, message = status_check(setup_checks.check_codex, "codex_path", resume_code=2)
+check("Codex check: a Codex without exec resume is flagged", level == setup_checks.WARN and "exec resume" in message)
+del os.environ["BWM_FAKE_STATUS"]
+
+if os.path.isfile(dev_python):
+    saved = workspace.server_python
+    workspace.server_python = lambda: dev_python
+    level, message = wait(in_thread(setup_checks.check_mcp), 60)
+    workspace.server_python = saved
+    check("MCP check: the server starts and lists its tools", level == setup_checks.OK and "13 BlendWMe tools" in message,
+          message)
+
 socket_bridge.stop()
 check("stopping the bridge removes the connection file",
       not os.path.exists(os.path.join(WORKSPACE, "connection.json")))

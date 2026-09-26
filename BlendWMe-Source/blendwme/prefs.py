@@ -176,7 +176,7 @@ def draw_connection(layout, p):
         if key:
             row.operator("blendwme.forget_key", text="", icon="TRASH")
         if not key:
-            col.label(text="Copy your Nebius key, then press Paste Key.", icon="INFO")
+            col.label(text="Copy your API key, then press Paste Key.", icon="INFO")
     col.prop(p, "agent_preset")
     if p.agent_preset == "CUSTOM":
         col.prop(p, "custom_model")

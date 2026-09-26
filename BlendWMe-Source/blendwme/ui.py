@@ -6,7 +6,7 @@ import threading
 
 import bpy
 
-from . import bridge, credentials, llm, look, prefs, socket_bridge, workspace
+from . import bridge, credentials, llm, look, prefs, setup_checks, socket_bridge, workspace
 from .agent import agent
 from .relay import relay
 from .tool_host import label as brain_label
@@ -62,7 +62,7 @@ class BWM_OT_paste(bpy.types.Operator):
 class BWM_OT_paste_key(bpy.types.Operator):
     bl_idname = "blendwme.paste_key"
     bl_label = "Paste Key"
-    bl_description = ("Read your Nebius key from the clipboard, store it safely, then clear the clipboard. "
+    bl_description = ("Read your API key from the clipboard, store it safely, then clear the clipboard. "
                       "The key is never saved in Blender files")
 
     def execute(self, context):
@@ -455,6 +455,23 @@ class BWM_OT_journal(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BWM_OT_setup_check(bpy.types.Operator):
+    bl_idname = "blendwme.setup_check"
+    bl_label = "Setup Check"
+    bl_description = ("Check that Claude Code and Codex are installed and signed in, and that the MCP server "
+                      "starts. Uses each program's own status command; your sign-in is never read")
+
+    which: bpy.props.EnumProperty(items=[("ALL", "All", ""), ("claude", "Claude", ""), ("codex", "Codex", ""),
+                                         ("mcp", "MCP server", ""), ("install", "Install MCP server", "")])
+
+    def execute(self, context):
+        names = ["claude", "codex", "mcp"] if self.which == "ALL" else [self.which]
+        if self.which == "install":
+            names = ["install", "mcp"]
+        setup_checks.run_in_background(names, prefs.gather_config(context))
+        return {"FINISHED"}
+
+
 class BWM_OT_bridge(bpy.types.Operator):
     bl_idname = "blendwme.bridge"
     bl_label = "MCP Bridge"
@@ -693,6 +710,30 @@ class BWM_PT_connection(_Base, bpy.types.Panel):
         if running:
             row.operator("blendwme.bridge", text="Stop", icon="PAUSE").action = "STOP"
         bridge_box.operator("blendwme.copy_terminal_command", icon="CONSOLE")
+
+        setup = layout.box()
+        setup.label(text="Setup checks", icon="CHECKBOX_HLT")
+        row = setup.row(align=True)
+        row.scale_y = 1.3
+        row.operator("blendwme.setup_check", text="Check All", icon="VIEWZOOM").which = "ALL"
+        row = setup.row(align=True)
+        row.operator("blendwme.setup_check", text="Claude").which = "claude"
+        row.operator("blendwme.setup_check", text="Codex").which = "codex"
+        row.operator("blendwme.setup_check", text="MCP server").which = "mcp"
+        setup.operator("blendwme.setup_check", text="Install MCP server", icon="IMPORT").which = "install"
+        width = _wrap_width(context)
+        icons = {setup_checks.OK: "CHECKMARK", setup_checks.WARN: "ERROR", setup_checks.ERROR: "CANCEL",
+                 setup_checks.RUNNING: "SORTTIME"}
+        for name in ("claude", "codex", "mcp", "install"):
+            if name not in setup_checks.results:
+                continue
+            level, message = setup_checks.results[name]
+            col = setup.column(align=True)
+            col.alert = level in (setup_checks.ERROR, setup_checks.WARN)
+            lines = textwrap.wrap(f"{setup_checks.NAMES[name]}: {message}", width) or [""]
+            col.label(text=lines[0], icon=icons.get(level, "DOT"))
+            for line in lines[1:6]:
+                col.label(text=line, icon="BLANK1")
         if p:
             prefs.draw_brains(layout, p)
 
@@ -727,7 +768,7 @@ classes = (
     BWM_OT_send, BWM_OT_paste, BWM_OT_paste_key, BWM_OT_forget_key, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new, BWM_OT_test_connection, BWM_OT_test_vision,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
-    BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal,
+    BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal, BWM_OT_setup_check,
     BWM_PT_main, BWM_PT_conversation, BWM_PT_references, BWM_PT_connection, BWM_PT_activity,
 )
 

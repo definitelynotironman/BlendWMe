@@ -103,10 +103,10 @@ class Probe:
             self.proc.kill()
 
 
-def check_server(command, cwd=None):
+def check_server(command, cwd=None, env=None):
     """(ok, message, tool names). Starts the server, lists its tools, stops it."""
     try:
-        probe = Probe(command, cwd=cwd)
+        probe = Probe(command, cwd=cwd, env=env)
     except ProbeError as e:
         return False, str(e), []
     try:
