@@ -57,6 +57,7 @@ class Session:
         self.pace = 1.0                   # Auto: seconds each new part stays in focus
         self.show_pointers = True
         self.plan = []                    # [{"name": str, "done": bool}] the build checklist
+        self.sink = None                  # fn(who, text): the session log on disk (set at register)
 
     # -- log ---------------------------------------------------------------
     def add(self, who, text, **extra):
@@ -67,7 +68,9 @@ class Session:
             if len(self.log) > 400:
                 del self.log[:100]
             self.changed_flag = True
-            return entry
+        if self.sink is not None:
+            self.sink(who, entry["text"])
+        return entry
 
     def set_plan(self, parts):
         with self.lock:

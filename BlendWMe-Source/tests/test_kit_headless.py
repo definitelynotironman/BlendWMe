@@ -20,6 +20,8 @@ sys.stdout.reconfigure(line_buffering=True)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+# Never write test logs into the real logs folder.
+os.environ["BLENDWME_LOG_FOLDER"] = os.path.join(tempfile.gettempdir(), "bwm_logs_test")
 
 import bpy  # noqa: E402
 

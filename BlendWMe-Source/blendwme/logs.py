@@ -1,19 +1,29 @@
-"""Full conversation logs, saved as files you can read or share.
+"""Logs: one folder (Documents/BlendWMe Logs, or the folder you choose) holds them all.
 
-After every task (finished, stopped or failed) BlendWMe writes two files to
-Documents/BlendWMe Logs (or the folder you choose):
+After every task (finished, stopped or failed) BlendWMe writes two files:
 
     2026-10-15_1552_cosy-low-poly-cottage.md    readable: every message, all code, results, timings
-    2026-10-15_1552_cosy-low-poly-cottage.json  the exact messages sent to the model, for debugging
+    2026-10-15_1552_cosy-low-poly-cottage.json  the exact messages, for debugging
+
+While Blender runs, a session log is written line by line (session_<time>.log), so
+something is on disk even if Blender crashes. python-crash-trace.txt holds the
+Python stack of a crash (faulthandler). make_crash_report() zips these together
+with Blender's own crash file.
 
 BlendWMe holds no keys or logins. As an extra safety net, a secret passed to
 save() is replaced with [SECRET] before writing.
 """
 
+import glob
 import json
 import os
 import re
+import tempfile
+import threading
 import time
+import zipfile
+
+SESSION_LOGS_KEPT = 10
 
 
 def default_folder():
@@ -116,3 +126,98 @@ def save(messages, trace, info, folder="", secret=""):
     with open(base + ".json", "w", encoding="utf-8") as f:
         f.write(raw)
     return base + ".md"
+
+
+# ----------------------------------------------------------------------
+# The session log: written line by line, so it survives a crash
+# ----------------------------------------------------------------------
+class SessionLog:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.file = None
+        self.path = ""
+
+    def open(self, folder=""):
+        """Start a new session log in the log folder, keeping the newest few."""
+        self.close()
+        folder = folder or default_folder()
+        try:
+            os.makedirs(folder, exist_ok=True)
+            old = sorted(glob.glob(os.path.join(folder, "session_*.log")))
+            for path in old[:max(0, len(old) - (SESSION_LOGS_KEPT - 1))]:
+                os.remove(path)
+            self.path = os.path.join(folder, time.strftime("session_%Y-%m-%d_%H%M%S.log"))
+            self.file = open(self.path, "a", encoding="utf-8")
+        except OSError as e:
+            print("BlendWMe: could not open the session log:", e)
+            self.file = None
+        return self.path
+
+    def write(self, kind, text):
+        """One line per event; safe from any thread. Never raises."""
+        if self.file is None:
+            return
+        line = str(text).replace("\r", "").replace("\n", "\n    ")
+        with self.lock:
+            try:
+                self.file.write(f"{time.strftime('%H:%M:%S')}  {kind:<6} {line}\n")
+                self.file.flush()
+            except (OSError, ValueError):
+                pass
+
+    def close(self):
+        with self.lock:
+            if self.file is not None:
+                try:
+                    self.file.close()
+                except OSError:
+                    pass
+            self.file = None
+
+
+session_log = SessionLog()
+
+
+def crash_trace_path(folder=""):
+    return os.path.join(folder or default_folder(), "python-crash-trace.txt")
+
+
+def blender_crash_files(temp_dirs=None):
+    """Blender's own crash reports (<file name>.crash.txt in the temporary folder), newest first."""
+    found = []
+    for folder in temp_dirs or [tempfile.gettempdir()]:
+        if folder and os.path.isdir(folder):
+            found += glob.glob(os.path.join(folder, "*.crash.txt"))
+    return sorted(set(found), key=os.path.getmtime, reverse=True)
+
+
+def make_crash_report(folder="", temp_dirs=None):
+    """Zip the newest session logs, the Python crash trace and Blender's crash file.
+
+    Returns the zip's path. The two newest session logs go in: after a crash and a
+    restart, the crashed session is the second newest.
+    """
+    folder = folder or default_folder()
+    os.makedirs(folder, exist_ok=True)
+    sessions = sorted(glob.glob(os.path.join(folder, "session_*.log")), reverse=True)[:2]
+    tasks = sorted(glob.glob(os.path.join(folder, "20*.md")), key=os.path.getmtime, reverse=True)[:1]
+    trace = [crash_trace_path(folder)] if os.path.isfile(crash_trace_path(folder)) else []
+    crashes = blender_crash_files(temp_dirs)[:2]
+    path = os.path.join(folder, time.strftime("BlendWMe-crash-report_%Y-%m-%d_%H%M%S.zip"))
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sessions + tasks + trace + crashes:
+            try:
+                z.write(f, os.path.basename(f))
+            except OSError:
+                pass
+        z.writestr("README.txt", "\n".join([
+            "BlendWMe crash report",
+            "",
+            f"Session logs: {len(sessions)}",
+            f"Latest task log: {len(tasks)}",
+            f"Python crash trace: {'yes' if trace else 'none'}",
+            f"Blender crash files: {len(crashes)}",
+            "",
+            "These files can contain your file names and folder paths. Check them before sharing.",
+            ""]))
+    return path

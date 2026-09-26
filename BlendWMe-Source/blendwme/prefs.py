@@ -13,6 +13,8 @@ for an API key: the brains sign in inside the official Claude Code and Codex
 programs, and BlendWMe never sees those logins.
 """
 
+import os
+
 import bpy
 
 from .state import session
@@ -26,6 +28,24 @@ def addon_prefs(context=None):
     context = context or bpy.context
     addon = context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
+
+
+def log_folder(context=None):
+    """The one folder for every BlendWMe log, crash trace and crash report.
+
+    BLENDWME_LOG_FOLDER overrides it (the tests use this, so they never write
+    into your real logs folder).
+    """
+    from . import logs
+    if os.environ.get("BLENDWME_LOG_FOLDER"):
+        return os.environ["BLENDWME_LOG_FOLDER"]
+    try:
+        p = addon_prefs(context)
+    except AttributeError:
+        p = None
+    if p and p.log_folder.strip():
+        return bpy.path.abspath(p.log_folder.strip())
+    return logs.default_folder()
 
 
 def _redraw(self, context):

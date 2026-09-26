@@ -445,7 +445,8 @@ def _on_save_post(*_args):
         print("BlendWMe: journal save failed:", e)
 
 
-def _on_load_post(*_args):
+def on_file_loaded():
+    """Called by lifecycle.py after a file is loaded: pick up that file's journal."""
     try:
         load_for_file()
         from .relay import relay
@@ -454,23 +455,27 @@ def _on_load_post(*_args):
         print("BlendWMe: journal load failed:", e)
 
 
-def register():
+def _handlers():
     import bpy
     from bpy.app.handlers import persistent
-    global _save_handler, _load_handler
-    _save_handler = persistent(_on_save_post)
-    _load_handler = persistent(_on_load_post)
-    bpy.app.handlers.save_post.append(_save_handler)
-    bpy.app.handlers.load_post.append(_load_handler)
+    # persistent: the handler stays registered when a file is loaded.
+    persistent(_on_save_post)
+    return ((bpy.app.handlers.save_post, _on_save_post),)
+
+
+def register():
+    import bpy
+    for handlers, fn in _handlers():
+        if fn not in handlers:
+            handlers.append(fn)
     if not bpy.app.timers.is_registered(_flush_timer):
         bpy.app.timers.register(_flush_timer, first_interval=2.0, persistent=True)
 
 
 def unregister():
     import bpy
-    for handlers, fn in ((bpy.app.handlers.save_post, globals().get("_save_handler")),
-                         (bpy.app.handlers.load_post, globals().get("_load_handler"))):
-        if fn in handlers:
+    for handlers, fn in _handlers():
+        while fn in handlers:
             handlers.remove(fn)
     if bpy.app.timers.is_registered(_flush_timer):
         bpy.app.timers.unregister(_flush_timer)

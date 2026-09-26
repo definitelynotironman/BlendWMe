@@ -16,35 +16,52 @@ Architecture (one line each):
     overlay.py       Graphite Paper card and red pointers in the viewport
     ui.py            the sidebar panel and buttons; setup_checks.py the setup buttons
     bridge.py        runs Blender work safely on Blender's main thread
+    lifecycle.py     file loads, undo, crash trace, safe startup, the Save Preferences note
+    keymaps.py       the shortcuts, in Blender's add-on keyconfig
+    logs.py          one log folder: task logs, the session log, crash reports
 """
 
 import bpy
 
-from . import bridge, journal, overlay, prefs, socket_bridge, ui
+from . import bridge, journal, keymaps, lifecycle, overlay, prefs, socket_bridge, ui
 from .relay import relay
 
 
 def _start_bridge():
     # The brains reach Blender only through this local socket, so it always starts.
-    print("BlendWMe:", socket_bridge.start())
+    try:
+        print("BlendWMe:", socket_bridge.start())
+    except Exception as e:
+        lifecycle.problems.append(("Connection to the brains", str(e)))
     return None   # run once
 
 
+# The parts, in order. Each registers on its own: one failing part is shown in the
+# panel and the others keep working, instead of the whole add-on staying off.
+_PARTS = (
+    ("Settings", prefs),
+    ("Safety handlers and logs", lifecycle),     # early, so later failures reach the session log
+    ("Panel", ui),
+    ("Main-thread bridge", bridge),
+    ("Viewport overlay", overlay),
+    ("Project journal", journal),
+    ("Shortcuts", keymaps),
+)
+
+
 def register():
-    prefs.register()
-    ui.register()
-    bridge.register()
-    overlay.register()
-    journal.register()
+    lifecycle.problems.clear()
+    for name, part in _PARTS:
+        lifecycle.safe_register(name, part.register)
     # Start after registration finished, when the preferences exist.
-    bpy.app.timers.register(_start_bridge, first_interval=0.5)
+    if not bpy.app.timers.is_registered(_start_bridge):
+        bpy.app.timers.register(_start_bridge, first_interval=0.5)
 
 
 def unregister():
-    socket_bridge.stop()
-    journal.unregister()
-    relay.stop()
-    overlay.unregister()
-    bridge.unregister()
-    ui.unregister()
-    prefs.unregister()
+    lifecycle.safe_unregister("Connection to the brains", socket_bridge.stop)
+    lifecycle.safe_unregister("Brain", relay.stop)
+    if bpy.app.timers.is_registered(_start_bridge):
+        bpy.app.timers.unregister(_start_bridge)
+    for name, part in reversed(_PARTS):
+        lifecycle.safe_unregister(name, part.unregister)

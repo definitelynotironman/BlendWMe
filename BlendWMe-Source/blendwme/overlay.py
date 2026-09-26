@@ -312,6 +312,8 @@ def _redraw_timer():
 
 
 def register():
+    if _handles:            # registered twice: start clean
+        unregister()
     _handles.append((bpy.types.SpaceView3D,
                      bpy.types.SpaceView3D.draw_handler_add(_draw_view3d_main, (), "WINDOW", "POST_PIXEL"),
                      "WINDOW"))

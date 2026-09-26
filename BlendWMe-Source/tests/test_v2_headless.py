@@ -22,6 +22,8 @@ sys.stdout.reconfigure(line_buffering=True)
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+# Never write test logs into the real logs folder.
+os.environ["BLENDWME_LOG_FOLDER"] = os.path.join(tempfile.gettempdir(), "bwm_logs_test")
 
 import bpy  # noqa: E402
 
@@ -561,7 +563,9 @@ check("every switch is in the journal", [e["to"] for e in journal.data["events"]
       == ["codex", "claude"])
 
 # 4. The journal travels with the .blend (Text block + sidecar) and the brains resume after reopening.
+from blendwme import lifecycle  # noqa: E402
 journal_module.register()
+lifecycle.register()          # its load_post handler picks up the journal of the opened file
 journal_module.save()
 check("the journal is mirrored into a Text block", journal_module.TEXT_NAME in bpy.data.texts
       and json.loads(bpy.data.texts[journal_module.TEXT_NAME].as_string())["seq"] == journal.data["seq"])
@@ -580,6 +584,7 @@ turn("Add a door")
 argv = runs()[-1]["argv"]
 check("after reopening, the first message carries the handoff brief and the scene",
       argv[argv.index("--resume") + 1] == claude_session and "HANDOFF BRIEF" in argv[1] and "[Current scene]" in argv[1])
+lifecycle.unregister()
 journal_module.unregister()
 
 # 5. A usage limit in Auto mode: the other brain takes over by itself (no note: the limited brain cannot answer).

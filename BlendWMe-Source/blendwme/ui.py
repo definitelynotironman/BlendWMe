@@ -1,6 +1,7 @@
 """The BlendWMe sidebar (3D Viewport > N > BlendWMe) and its buttons."""
 
 import os
+import tempfile
 import textwrap
 
 import bpy
@@ -211,12 +212,70 @@ class BWM_OT_open_logs(bpy.types.Operator):
     bl_description = "Open the folder with the saved conversation logs"
 
     def execute(self, context):
-        from . import logs
-        p = prefs.addon_prefs(context)
-        folder = bpy.path.abspath(p.log_folder) if p and p.log_folder.strip() else logs.default_folder()
+        folder = prefs.log_folder(context)
         os.makedirs(folder, exist_ok=True)
         bpy.ops.wm.path_open(filepath=folder)
         return {"FINISHED"}
+
+
+class BWM_OT_crash_report(bpy.types.Operator):
+    bl_idname = "blendwme.crash_report"
+    bl_label = "Make Crash Report"
+    bl_description = ("Zip the latest BlendWMe logs with Blender's crash file into the logs folder, "
+                      "ready to share. Check it first: it can contain file names and folders")
+
+    def execute(self, context):
+        from . import logs
+        temp_dirs = [tempfile.gettempdir(), bpy.path.abspath(context.preferences.filepaths.temporary_directory)]
+        try:
+            path = logs.make_crash_report(prefs.log_folder(context), temp_dirs)
+        except OSError as e:
+            self.report({"ERROR"}, f"Could not make the crash report: {e}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Crash report saved: {os.path.basename(path)}")
+        bpy.ops.wm.path_open(filepath=os.path.dirname(path))
+        return {"FINISHED"}
+
+
+class BWM_OT_save_prefs(bpy.types.Operator):
+    bl_idname = "blendwme.save_prefs"
+    bl_label = "Save Preferences"
+    bl_description = "Save Blender's preferences now, so BlendWMe and its shortcut stay on after a restart or a crash"
+
+    def execute(self, context):
+        p = prefs.addon_prefs(context)
+        if p:
+            p.prefs_note_done = True
+        bpy.ops.wm.save_userpref()
+        self.report({"INFO"}, "Preferences saved. BlendWMe stays on.")
+        return {"FINISHED"}
+
+
+class BWM_OT_dismiss_prefs_note(bpy.types.Operator):
+    bl_idname = "blendwme.dismiss_prefs_note"
+    bl_label = "Not Now"
+    bl_description = "Hide this note"
+
+    def execute(self, context):
+        p = prefs.addon_prefs(context)
+        if p:
+            p.prefs_note_done = True
+        return {"FINISHED"}
+
+
+class BWM_OT_open(bpy.types.Operator):
+    bl_idname = "blendwme.open"
+    bl_label = "Open BlendWMe"
+    bl_description = "Open or focus BlendWMe in the 3D Viewport"
+
+    def execute(self, context):
+        for area in context.window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.spaces.active.show_region_ui = True
+                area.tag_redraw()
+                return {"FINISHED"}
+        self.report({"WARNING"}, "Open a 3D Viewport first: BlendWMe lives there.")
+        return {"CANCELLED"}
 
 
 class BWM_OT_show_capture(bpy.types.Operator):
@@ -354,6 +413,30 @@ def _wrap_width(context):
     return max(20, int(context.region.width / (6.5 * context.preferences.system.ui_scale)))
 
 
+def _wrapped(layout, text, width):
+    col = layout.column(align=True)
+    for line in textwrap.wrap(text, width) or [""]:
+        col.label(text=line)
+
+
+def _draw_safety_notes(layout, p):
+    """Parts that failed to start, and the one-time 'Save Preferences' note."""
+    from . import lifecycle
+    if lifecycle.problems:
+        box = layout.box()
+        box.alert = True
+        box.label(text="Part of BlendWMe did not start:", icon="ERROR")
+        for part, message in lifecycle.problems[:4]:
+            _wrapped(box, f"{part}: {message}", 44)
+        box.operator("blendwme.crash_report", icon="PACKAGE")
+    if lifecycle.needs_prefs_note(p):
+        box = layout.box()
+        _wrapped(box, "Save Preferences so BlendWMe stays on after restarts.", 44)
+        row = box.row(align=True)
+        row.operator("blendwme.save_prefs", icon="FILE_TICK")
+        row.operator("blendwme.dismiss_prefs_note")
+
+
 class BWM_PT_main(_Base, bpy.types.Panel):
     bl_label = "BlendWMe"
 
@@ -370,6 +453,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         row = box.row()
         row.alert = status in (WAIT_USER, ASKING, ERROR, WAIT_NEXT)
         row.label(text=STATUS_TEXT.get(status, status), icon=_STATUS_ICON.get(status, "DOT"))
+        _draw_safety_notes(layout, p)
 
         if session.plan:
             plan_box = layout.box()
@@ -563,6 +647,7 @@ class BWM_PT_activity(_Base, bpy.types.Panel):
         col.operator("blendwme.show_capture", icon="IMAGE_DATA")
         col.operator("blendwme.save_log", icon="FILE_TICK")
         col.operator("blendwme.open_logs", icon="FILE_FOLDER")
+        col.operator("blendwme.crash_report", icon="PACKAGE")
         col.operator("blendwme.copy_log", icon="COPYDOWN")
         col.operator("blendwme.new_task", icon="TRASH")
         if session.last_log:
@@ -578,16 +663,25 @@ classes = (
     BWM_OT_send, BWM_OT_paste, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
+    BWM_OT_crash_report, BWM_OT_save_prefs, BWM_OT_dismiss_prefs_note, BWM_OT_open,
     BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal, BWM_OT_setup_check,
     BWM_PT_main, BWM_PT_conversation, BWM_PT_references, BWM_PT_connection, BWM_PT_activity,
 )
 
 
 def register():
+    # One class at a time: a class that fails is reported, the rest still work.
+    failed = []
     for c in classes:
-        bpy.utils.register_class(c)
+        try:
+            bpy.utils.register_class(c)
+        except Exception as e:
+            failed.append(f"{c.__name__}: {e}")
+    if failed:
+        raise RuntimeError("; ".join(failed))
 
 
 def unregister():
     for c in reversed(classes):
-        bpy.utils.unregister_class(c)
+        if getattr(c, "is_registered", False):
+            bpy.utils.unregister_class(c)
