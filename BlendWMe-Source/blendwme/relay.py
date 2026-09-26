@@ -108,6 +108,7 @@ class Relay:
             self.engine(self.running).interrupt()
             session.set_card(None)
             session.set_pointers([])
+            session.set_plan([])        # the plan card closes; the journal keeps the plan
             session.add("info", "Stopped. Everything already built stays in your scene.")
 
     def reset(self):
@@ -415,7 +416,7 @@ class Relay:
                 return
             journal.record_error(brain, text)
             if quiet:
-                session.add("info", f"{label(brain)}: {text[:200]}")
+                session.add("info", f"{label(brain)}: {text}")
             else:
                 self._fail(text)
                 session.set_card({"kind": "ask", "title": f"{label(brain)} stopped",

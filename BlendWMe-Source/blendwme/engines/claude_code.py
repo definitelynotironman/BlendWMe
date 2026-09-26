@@ -152,14 +152,14 @@ def short_tool_name(name):
 
 def _result_text(content):
     if isinstance(content, str):
-        return content[:2000]
+        return content
     parts = []
     for item in content or []:
         if isinstance(item, dict) and item.get("type") == "text":
             parts.append(item.get("text", ""))
         elif isinstance(item, dict) and item.get("type") == "image":
             parts.append("[image]")
-    return "\n".join(parts)[:2000]
+    return "\n".join(parts)
 
 
 def _reset_from_epoch(value):

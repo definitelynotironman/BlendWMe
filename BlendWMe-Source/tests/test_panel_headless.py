@@ -23,7 +23,7 @@ import bpy  # noqa: E402
 import addon_utils  # noqa: E402
 
 addon_utils.enable("blendwme", default_set=True)      # enabled as an add-on, so it has its preferences
-import blendwme  # noqa: E402
+import blendwme  # noqa: E402,F401  (registered by addon_utils above)
 
 from blendwme import draw2d, panel, panel_ops, prefs, theme  # noqa: E402
 from blendwme.relay import relay  # noqa: E402
@@ -197,6 +197,123 @@ check("Read more opens a long message", 99 in panel.state.expanded)
 panel.state.cleared_at = 0.0
 panel_ops.do_action(bpy.context, "screen:journal")
 check("the footer opens the journal", panel.state.screen == "journal")
+
+# ----------------------------------------------------------------------
+# Behaviour: the plan cannot get stuck, done is never self-declared
+# ----------------------------------------------------------------------
+from blendwme.tool_host import host, _numpad_note, TEACH_WORDS  # noqa: E402
+from blendwme import executor, knowledge  # noqa: E402
+from blendwme.journal import journal as jr  # noqa: E402
+
+fresh()
+session.mode = "WATCH"
+host.reset_task("A small table", [])
+long_name = ("Table top " + "with a very long description " * 8).strip()
+parts = [long_name] + [f"Leg {i}" for i in range(1, 46)]
+host._tool_plan({"parts": parts}, "claude")
+check("a long plan keeps every part and every word", len(session.plan) == 46 and session.plan[0]["name"] == long_name)
+check("the journal keeps the full plan too", len(jr.data["plan"]) == 46 and jr.data["plan"][0]["name"] == long_name)
+host._tool_plan({"parts": ["Top", "Legs", "Drawer"]}, "claude")
+result, _ = host._tool_finish({"summary": "Table done."}, "claude")
+check("finish is refused while plan parts are open", "not_finished_yet" in result and "1. Top" in result["not_finished_yet"])
+check("a refused finish shows no Done card", (session.card or {}).get("kind") != "done")
+session.tick_plan(1)
+host.ok_steps, host.looked_at_step = 3, 0
+result, _ = host._tool_plan({"done": [2]}, "claude")
+check("marking a part done needs a look after building", "done_refused" in result and not session.plan[1]["done"])
+host.looked_at_step = host.ok_steps
+result, _ = host._tool_plan({"done": [2]}, "claude")
+check("after a look a part can be marked done", result.get("marked_done") == [2] and session.plan[1]["done"])
+result, _ = host._tool_plan({"skip": [{"part": 3}]}, "claude")
+check("a skip needs a reason", "skip_refused" in result and not session.plan[2]["done"])
+host._tool_plan({"skip": [{"part": 3, "reason": "The brief asked for a plain table."}]}, "claude")
+check("a skipped part shows its reason", session.plan[2]["skipped"] and "plain table" in session.plan[2]["reason"]
+      and "plain table" in session.log[-1]["text"])
+check("the journal records the skip", jr.data["plan"][2]["skipped"] == "The brief asked for a plain table.")
+host.ok_steps = 0
+result, _ = host._tool_finish({"summary": "The table is done. Final render saved."}, "claude")
+check("finish is refused when it claims a render that does not exist", "render" in result.get("not_finished_yet", ""))
+scene = bpy.context.scene
+scene.render.engine = "BLENDER_WORKBENCH"
+scene.render.resolution_x = scene.render.resolution_y = 32
+scene.render.filepath = os.path.join(tempfile.mkdtemp(prefix="bwm_render_"), "shot")
+bpy.ops.render.render(write_still=True)
+result, _ = host._tool_finish({"summary": "The table is done. Final render saved."}, "claude")
+check("finish works once every part is settled and the render exists", result.get("ok") is True, result)
+check("the plan card closes when the task finishes", session.plan == [] and session.card["kind"] == "done")
+
+session.set_plan(["A", "B"])
+relay.running = "claude"
+relay.stop()
+relay.running = None
+session.stop_flag.clear()
+check("the plan card closes when the work is stopped", session.plan == [])
+session.set_plan(["A", "B"])
+relay._new_task("A new brief")
+check("the plan card closes when a new brief starts", session.plan == [])
+
+from blendwme.engines import claude_code, codex  # noqa: E402
+long_result = "result " * 1500
+check("Claude's long tool results are kept whole in the log", claude_code._result_text(long_result) == long_result)
+check("Codex's long tool results are kept whole in the log",
+      codex._result_text({"result": {"content": [{"type": "text", "text": long_result}]}}) == long_result)
+jr.record_step("claude", "A step title that is quite a lot longer than eighty characters, to be sure it is whole",
+               "", "", True)
+check("long step titles are kept whole", jr.data["events"][-1]["title"].endswith("to be sure it is whole"))
+
+# ----------------------------------------------------------------------
+# Teaching is short and points at the real control
+# ----------------------------------------------------------------------
+session.mode = "TEACH"
+result, _ = host._tool_teach_step({"title": "Bevel", "instruction": "word " * (TEACH_WORDS + 5),
+                                   "point_tab": "MODIFIER"}, "claude")
+check("a long Teach card is refused", "under 20 words" in result.get("error", ""))
+result, _ = host._tool_teach_step({"title": "Bevel", "instruction": "Add a Bevel modifier."}, "claude")
+check("a Teach card without a pointer is refused", "pointer" in result.get("error", ""))
+bpy.context.preferences.inputs.use_emulate_numpad = False
+why = _numpad_note("Press Numpad 1 for the front view.", "Front view shows the face.")
+check("numpad steps get the menu path and the Emulate Numpad tip", "View > Viewpoint" in why and "Emulate Numpad" in why)
+bpy.context.preferences.inputs.use_emulate_numpad = True
+check("no numpad tip when Emulate Numpad is on", _numpad_note("Press Numpad 1.", "x") == "x")
+bpy.context.preferences.inputs.use_emulate_numpad = False
+check("other steps get no numpad tip", _numpad_note("Press Ctrl+B.", "x") == "x")
+session.mode = "WATCH"
+
+# ----------------------------------------------------------------------
+# Camera help: the bwm helpers and the card's own code
+# ----------------------------------------------------------------------
+from bpy_extras.object_utils import world_to_camera_view  # noqa: E402
+from blendwme import helpers as bwm  # noqa: E402
+from mathutils import Vector  # noqa: E402
+
+
+def inside_frame(cam, objects):
+    corners = [o.matrix_world @ Vector(c) for o in objects for c in o.bound_box]
+    co = [world_to_camera_view(bpy.context.scene, cam, p) for p in corners]
+    return all(-0.001 <= c.x <= 1.001 and -0.001 <= c.y <= 1.001 and c.z > 0 for c in co)
+
+
+bpy.ops.wm.read_homefile(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=2, location=(0, 0, 1))
+house = bpy.context.active_object
+bpy.ops.mesh.primitive_cube_add(size=1, location=(6, 3, 0.5))
+shed = bpy.context.active_object
+cam = bwm.frame_camera()
+check("frame_camera makes a camera when there is none", bpy.context.scene.camera is cam)
+check("frame_camera fits every visible object", inside_frame(cam, [house, shed]))
+cam = bwm.focal_length(85)
+check("focal_length sets the lens and keeps the subject in frame", cam.data.lens == 85 and inside_frame(cam, [house, shed]))
+bwm.frame_camera(house)
+check("frame_camera can frame one subject", inside_frame(cam, [house]) and not inside_frame(cam, [shed]))
+cam = bwm.camera_to_view()
+check("camera_to_view without a viewport frames the scene", inside_frame(cam, [house, shed]))
+card = knowledge.load_skill("camera-help")
+check("the camera-help card loads", "Do it for me" in card and "Emulate Numpad" in card)
+code = card.split("```python", 1)[1].split("```", 1)[0]
+outcome = executor.run(code, "Camera from the card")
+check("the camera-help card's code runs cleanly in Blender", outcome.get("ok"), outcome.get("error", ""))
+check("the camera helpers are in the bwm kit list", {"camera_to_view", "frame_camera", "focal_length"}
+      <= set(bwm.public_names()))
 
 # ----------------------------------------------------------------------
 # Export and the launcher

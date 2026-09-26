@@ -162,7 +162,7 @@ def _result_text(item):
     result = item.get("result")
     if isinstance(result, dict):
         parts = [c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict)]
-        return "\n".join(parts)[:2000]
+        return "\n".join(parts)
     if item.get("aggregated_output"):
-        return str(item["aggregated_output"])[:2000]
-    return str(item.get("error") or result or "")[:2000]
+        return str(item["aggregated_output"])
+    return str(item.get("error") or result or "")

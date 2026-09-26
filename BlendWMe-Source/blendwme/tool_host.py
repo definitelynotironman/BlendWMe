@@ -28,6 +28,8 @@ import threading
 import time
 import traceback
 
+import bpy
+
 from . import bridge, executor, helpers, knowledge, look, prompts, scene_info, tools
 from .state import ASKING, DONE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
 
@@ -94,6 +96,8 @@ class ToolHost:
         self.review_pending = False
         self.ok_steps = self.reviewed_at = self.reviews = 0
         self.plan_done_noted = False
+        self.task_started_at = time.time()
+        self.looked_at_step = 0          # ok_steps when the brain last looked (plan done=[n] needs it)
         self.begin_turn()
 
     def begin_turn(self):
@@ -150,8 +154,7 @@ class ToolHost:
                 if isinstance(result, dict):
                     result = {k: v for k, v in result.items() if not k.startswith("_")}
                     if changes:
-                        session.add("info", "I noticed your changes: " + "; ".join(changes[:4])
-                                    + (" ..." if len(changes) > 4 else ""))
+                        session.add("info", "I noticed your changes: " + "; ".join(changes))
                         result["user_changes"] = ("The user changed the scene themselves before this call. These "
                                                   "are intentional creative decisions: keep them and build around "
                                                   "them.\n" + "\n".join(changes[:40]))
@@ -239,15 +242,55 @@ class ToolHost:
         return {"skill": name, "card": knowledge.load_skill(name)}, []
 
     def _tool_plan(self, args, brain):
+        marks = args.get("done") or args.get("skip")
         parts = _plan_parts(args)
-        if not parts:
+        if not parts and not marks:
             return {"error": "Give the parts as a list of short strings, e.g. "
                              "plan(parts=[\"<part> <size> m on <host>\", \"<next part> ...\"])."}, []
-        session.set_plan(parts)
-        session.add("plan", "Plan: " + "; ".join(p.split(",")[0][:40] for p in parts[:12]), brain=brain)
-        self.journal.record_plan(brain, parts)
-        return {"ok": True, "parts": len(parts),
-                "note": "Build them in order and pass part=<number> to run_python."}, []
+        result = {"ok": True}
+        if parts:
+            session.set_plan(parts)
+            session.add("plan", "Plan: " + "; ".join(p.split(",")[0] for p in parts), brain=brain)
+            self.journal.record_plan(brain, parts)
+            result.update(parts=len(parts), note="Build them in order and pass part=<number> to run_python.")
+        if marks:
+            result.update(self._mark_plan(args, brain))
+        return result, []
+
+    def _mark_plan(self, args, brain):
+        """plan(done=[n]) after a look, plan(skip=[{part, reason}]). Returns notes for the brain."""
+        out = {}
+        done = args.get("done") or []
+        done = [done] if not isinstance(done, list) else done
+        numbers = [int(n) for n in done if str(n).strip().isdigit()]
+        if numbers:
+            if self.ok_steps > self.looked_at_step:
+                out["done_refused"] = ("Look at the result first (look), then mark the parts done. A part counts "
+                                       "as done only after you have seen it.")
+            else:
+                for n in numbers:
+                    session.tick_plan(n)
+                    self.journal.record_plan_tick(n, brain)
+                out["marked_done"] = numbers
+        skips = args.get("skip") or []
+        skips = [skips] if isinstance(skips, dict) else skips
+        skipped = []
+        for item in skips:
+            if not isinstance(item, dict) or not str(item.get("part", "")).strip().isdigit():
+                continue
+            reason = str(item.get("reason") or "").strip()
+            if not reason:
+                out["skip_refused"] = "Give each skipped part a short reason the user can read."
+                continue
+            n = int(item["part"])
+            session.skip_plan(n, reason)
+            self.journal.record_plan_tick(n, brain, skipped=reason)
+            skipped.append(n)
+            if 1 <= n <= len(session.plan):
+                session.add("info", f"Skipped \"{session.plan[n - 1]['name']}\": {reason}", brain=brain)
+        if skipped:
+            out["skipped"] = skipped
+        return out
 
     def _plan_progress(self):
         if not session.plan:
@@ -261,7 +304,7 @@ class ToolHost:
             return {"error": "In Teach mode the user does the work. Use teach_step. "
                              "run_python is only allowed right after teach_step returns show_me."}, []
         self.show_me_allowed = False
-        title = str(args.get("title") or "Step")[:80]
+        title = str(args.get("title") or "Step")
         explain = str(args.get("explain") or "")
         code = str(args.get("code") or "")
         part = args.get("part")
@@ -332,7 +375,7 @@ class ToolHost:
     def _step_failed(self, result, title, key, brain):
         """Count a failure for THIS step, give sharper hints, and pause only when truly stuck."""
         error = result.get("error", "")
-        short = error.strip().splitlines()[-1][:160] if error.strip() else "unknown error"
+        short = error.strip().splitlines()[-1] if error.strip() else "unknown error"
         rejected = error.startswith("Pre-check found")
         counts = self.step_rejects if rejected else self.step_fails
         counts[key] = counts.get(key, 0) + 1
@@ -391,6 +434,7 @@ class ToolHost:
                             "finish."}, []
         mode = args.get("mode") or "angles"
         session.add("look", f"Looking at the scene ({mode})", brain=brain)
+        self.looked_at_step = self.ok_steps
         info, images = self._capture_images(mode, args.get("targets"), args.get("views"), args.get("shading"),
                                             bool(args.get("compare_reference")))
         if info.get("error"):
@@ -424,6 +468,7 @@ class ToolHost:
             return None
         self.reviews += 1
         self.reviewed_at = self.ok_steps
+        self.looked_at_step = self.ok_steps
         self.review_pending = True      # the brain's next words are its verdict (the relay records them)
         session.add("look", "Art director review " + when, brain=brain)
         stock = bridge.call(scene_info.inventory)
@@ -466,8 +511,18 @@ class ToolHost:
 
     def _tool_teach_step(self, args, brain):
         title = str(args.get("title") or "Your turn")
-        session.set_card({"kind": "teach", "title": title, "text": str(args.get("instruction") or ""),
-                          "why": str(args.get("why") or "")})
+        instruction = str(args.get("instruction") or "").strip()
+        why = str(args.get("why") or "").strip()
+        words = len(instruction.split())
+        if words > TEACH_WORDS:
+            return {"error": f"The instruction has {words} words. One action, under {TEACH_WORDS} words, on the "
+                             "card; put the rest in why. Call teach_step again."}, []
+        if not any(args.get(k) for k in ("point_object", "point_editor", "point_tab")):
+            return {"error": "Add a pointer to the real control: point_tab (a Properties tab such as MODIFIER), "
+                             "point_editor + point_region (a toolbar, sidebar or header), or point_object. For a "
+                             "key press in the viewport use point_editor=VIEW_3D."}, []
+        why = _numpad_note(instruction, why)
+        session.set_card({"kind": "teach", "title": title, "text": instruction, "why": why})
         pointers = []
         if args.get("point_object"):
             pointers.append({"object": args["point_object"]})
@@ -532,6 +587,20 @@ class ToolHost:
         return {"answer": "\n".join(answers)}, []
 
     def _tool_finish(self, args, brain):
+        summary = str(args.get("summary") or "Done.")
+        # Done is never self-declared: every plan part is built, checked or skipped with a reason.
+        still_open = session.open_parts()
+        if still_open:
+            listing = "; ".join(f"{n}. {name}" for n, name in still_open)
+            return {"not_finished_yet": "These plan parts are still open: " + listing + ". Build them (run_python "
+                                        "with part=<n>), or look and then plan(done=[n]) if they are already "
+                                        "built, or plan(skip=[{\"part\": n, \"reason\": \"...\"}]) to leave "
+                                        "one out. Then call finish again."}, []
+        if _claims_render(summary) and not bridge.call(_render_exists, self.task_started_at):
+            return {"not_finished_yet": "The summary says a render is done, but there is no render result or "
+                                        "new rendered file. Render and save it (set scene.render.filepath, then "
+                                        "bpy.ops.render.render(write_still=True)) or take the claim out of the "
+                                        "summary."}, []
         # Quality gate: before the first finish, the art director looks at the final result once
         # (only if something changed since the last review). The brain then fixes or finishes again.
         if (session.mode == "AUTO" and not self.final_reviewed and self.ok_steps > 0
@@ -545,9 +614,9 @@ class ToolHost:
                                             "brief, floating or intersecting parts, wrong proportions). If it is "
                                             "good, call finish again.",
                         "art_director": text}, images
-        summary = str(args.get("summary") or "Done.")
         session.add("ai", summary, brain=brain)
         session.set_card({"kind": "done", "title": "Done", "text": summary})
+        session.set_plan([])            # the plan card closes with the task (the journal keeps the plan)
         session.set_pointers([])
         session.set_status(DONE)
         self.finished = True
@@ -573,6 +642,45 @@ class ToolHost:
 # ----------------------------------------------------------------------
 # Helpers for the tools (moved here from the 1.0.5 agent loop)
 # ----------------------------------------------------------------------
+
+TEACH_WORDS = 20      # a Teach cue card holds one action, under this many words
+
+_NUMPAD = re.compile(r"\bnum\s?pad\b|\bnumpad\s?[0-9.]|\bnumpad\b", re.I)
+_RENDER_CLAIM = re.compile(r"\b(rendered|render (is )?(done|finished|complete|saved|ready)|saved (the |a )?render|"
+                           r"final render)\b", re.I)
+
+
+def _numpad_note(instruction, why):
+    """Many laptops have no numpad. Add the menu path unless Emulate Numpad is on."""
+    if not _NUMPAD.search(instruction):
+        return why
+    try:
+        emulated = bpy.context.preferences.inputs.use_emulate_numpad
+    except Exception:
+        emulated = False
+    if emulated:
+        return why
+    note = ("No numpad? Use View > Viewpoint in the viewport header, or turn on Edit > Preferences > Input > "
+            "Emulate Numpad to use the number row.")
+    return (why + " " + note).strip()
+
+
+def _claims_render(summary):
+    return bool(_RENDER_CLAIM.search(summary or ""))
+
+
+def _render_exists(since):
+    """True when the render output file was written after `since` (the task's start).
+    Blender does not tell Python whether its Render Result holds a picture, and an old
+    file from an earlier project proves nothing, so only a fresh file counts."""
+    render = bpy.context.scene.render
+    # An animation frame is saved as <path>0001.png; a still (write_still) as <path>.png.
+    candidates = [bpy.path.abspath(render.frame_path(frame=bpy.context.scene.frame_current))]
+    still = bpy.path.abspath(render.filepath)
+    if still and render.use_file_extension:
+        still = bpy.path.ensure_ext(still, render.file_extension)
+    candidates.append(still)
+    return any(path and os.path.isfile(path) and os.path.getmtime(path) >= since - 1 for path in candidates)
 
 # Steps that only probe the environment ("is bwm available?") instead of building.
 _PROBE_CODE = re.compile(r"dir\(\s*(bwm|bpy|bmesh|bpy\.ops)\s*\)|hasattr\(\s*(bwm|bpy|bmesh)\s*,"

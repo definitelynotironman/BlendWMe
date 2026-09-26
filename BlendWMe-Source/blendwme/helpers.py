@@ -379,6 +379,93 @@ def frame(*objs):
             pass
 
 
+# ----------------------------------------------------------------------
+# Camera help (Teach "do it for me", and any brief that needs a shot)
+# ----------------------------------------------------------------------
+_FRAMEABLE = {"MESH", "CURVE", "SURFACE", "META", "FONT", "GPENCIL", "GREASEPENCIL", "CURVES", "POINTCLOUD", "VOLUME"}
+
+
+def _camera(camera=None):
+    """The camera to work with: the one named, else the scene camera, else a new one."""
+    scene = bpy.context.scene
+    if camera is not None:
+        return obj(camera)
+    if scene.camera is not None:
+        return scene.camera
+    cam = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
+    scene.collection.objects.link(cam)
+    cam.location = (7.4, -6.9, 5.0)
+    cam.rotation_euler = (math.radians(63), 0.0, math.radians(47))
+    scene.camera = cam
+    bpy.context.view_layer.update()      # so matrix_world is current
+    return cam
+
+
+def _half_angle(cam):
+    """Half of the camera's narrower field of view, in radians."""
+    render = bpy.context.scene.render
+    aspect = (render.resolution_x * render.pixel_aspect_x) / max(1e-6, render.resolution_y * render.pixel_aspect_y)
+    wide = cam.data.angle
+    if cam.data.sensor_fit == "VERTICAL":
+        horizontal, vertical = 2 * math.atan(math.tan(wide / 2) * aspect), wide
+    elif aspect >= 1.0 or cam.data.sensor_fit == "HORIZONTAL":
+        horizontal, vertical = wide, 2 * math.atan(math.tan(wide / 2) / aspect)
+    else:
+        horizontal, vertical = 2 * math.atan(math.tan(wide / 2) * aspect), wide
+    return min(horizontal, vertical) / 2
+
+
+def camera_to_view(camera=None):
+    """Put the camera exactly where the user is looking in the 3D Viewport (like Ctrl+Alt+Numpad 0).
+    Without a viewport (background Blender) it frames the whole scene instead."""
+    cam = _camera(camera)
+    window, area, region = find_view3d()
+    if area is None:
+        return frame_camera(camera=cam)
+    rv3d = area.spaces.active.region_3d
+    if rv3d.view_perspective != "CAMERA":
+        cam.matrix_world = rv3d.view_matrix.inverted()
+    bpy.context.scene.camera = cam
+    rv3d.view_perspective = "CAMERA"
+    bpy.context.view_layer.update()
+    return cam
+
+
+def frame_camera(*objs, camera=None, margin=1.15):
+    """Aim the camera at objects (default: everything visible) and move it back until they fit,
+    keeping the direction it already looks from. margin 1.15 leaves a little air around them."""
+    cam = _camera(camera)
+    scene = bpy.context.scene
+    targets = [obj(o) for o in objs] or [o for o in scene.objects if o.type in _FRAMEABLE and o.visible_get()]
+    if not targets:
+        raise ValueError("Nothing to frame: the scene has no visible objects. Pass the objects to frame.")
+    points = [o.matrix_world @ Vector(c) for o in targets for c in o.bound_box]
+    low = Vector((min(p.x for p in points), min(p.y for p in points), min(p.z for p in points)))
+    high = Vector((max(p.x for p in points), max(p.y for p in points), max(p.z for p in points)))
+    centre = (low + high) / 2
+    radius = max(0.05, max((p - centre).length for p in points))
+    back = cam.matrix_world.to_quaternion() @ Vector((0.0, 0.0, 1.0))    # the camera looks along its -Z
+    if back.length < 1e-6:
+        back = Vector((0.6, -0.65, 0.45))
+    distance = radius / math.sin(_half_angle(cam)) * float(margin)
+    cam.location = centre + back.normalized() * distance
+    cam.rotation_euler = (centre - cam.location).to_track_quat("-Z", "Y").to_euler()
+    cam.data.clip_end = max(cam.data.clip_end, distance + radius * 4)
+    scene.camera = cam
+    bpy.context.view_layer.update()
+    return cam
+
+
+def focal_length(mm, *objs, camera=None, reframe=True):
+    """Set the lens in millimetres (35 wide, 50 natural, 85 portrait) and, by default,
+    move the camera so the subject still fits the frame."""
+    cam = _camera(camera)
+    cam.data.lens = max(1.0, float(mm))
+    if reframe:
+        frame_camera(*objs, camera=cam)
+    return cam
+
+
 def public_names():
     """The bwm functions the model should know about (the kit, without internals)."""
     hidden = {"begin_step", "end_step", "claim_name", "find_view3d", "view3d", "obj", "col", "mat",

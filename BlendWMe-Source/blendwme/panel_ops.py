@@ -7,6 +7,12 @@ Window as "BlendWMe Panel Key" items (keymaps.py); this operator reads them from
 user's keymap, so a change there takes effect at once. They act only while the panel
 has focus, so they never take a key away from Blender elsewhere.
 
+Checked against Blender 4.2's default keymap: Enter, Shift+Enter, Up, Down, Shift+Tab,
+Ctrl+L and / are used by Blender elsewhere (file browser, text editor, keyframe jump,
+snapping, select linked, local view), which is why they act only on the focused panel.
+Esc while the AI works is the one key taken outside the panel; it is left to Blender
+while an animation plays (Esc cancels playback there). ? and Ctrl+Alt+M are free.
+
     Enter          send                 Shift+Enter   new line
     Esc            pause while working, otherwise close the top card
     Esc twice      stop                 Up / Down     prompt history
@@ -441,10 +447,12 @@ class BWM_OT_panel(bpy.types.Operator):
             return {"RUNNING_MODAL"} if (state.focused and event.type not in ("TIMER", "TIMER_REPORT",
                                                                               "WINDOW_DEACTIVATE")) else {"PASS_THROUGH"}
 
-        # Esc pauses the AI from anywhere in the viewport while it works.
         from .relay import relay
         action = match(event)
-        if action == "escape" and (state.focused or inside or relay.is_running()):
+        # Esc pauses the AI from anywhere in the viewport, except while an animation plays:
+        # there Blender's Esc cancels the playback (the only clash in 4.2's default keymap).
+        playing = bool(context.screen and context.screen.is_animation_playing)
+        if action == "escape" and (state.focused or inside or (relay.is_running() and not playing)):
             if escape(context):
                 _redraw()
                 return {"RUNNING_MODAL"}

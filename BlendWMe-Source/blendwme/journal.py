@@ -89,22 +89,27 @@ class Journal:
     def record_plan(self, brain, parts):
         with self.lock:
             old = {p["name"]: p for p in self.data["plan"]}
-            self.data["plan"] = [{"name": p[:120], "done": old.get(p[:120], {}).get("done", False),
-                                  "by": old.get(p[:120], {}).get("by", "")} for p in parts][:40]
-            self._add("plan", brain, parts=[p[:120] for p in parts[:40]])
+            self.data["plan"] = [{"name": p, "done": old.get(p, {}).get("done", False),
+                                  "by": old.get(p, {}).get("by", ""), "skipped": old.get(p, {}).get("skipped", ""),
+                                  } for p in parts]
+            self._add("plan", brain, parts=list(parts))
 
-    def record_plan_tick(self, part, brain=""):
+    def record_plan_tick(self, part, brain="", skipped=""):
+        """Part `part` (1 = first) is built, or skipped when `skipped` holds the reason."""
         with self.lock:
             if isinstance(part, int) and 1 <= part <= len(self.data["plan"]):
                 self.data["plan"][part - 1]["done"] = True
+                self.data["plan"][part - 1]["skipped"] = skipped
                 if brain:
                     self.data["plan"][part - 1]["by"] = brain
                 self.dirty = True
+        if skipped:
+            self._add("plan_skip", brain, part=part, text=skipped)
 
     def record_step(self, brain, title, explain, code, ok, error="", added=(), modified=(), part=None):
         if ok and part:
             self.record_plan_tick(part, brain)
-        self._add("step", brain, title=title[:80], explain=explain[:300], code=code[:MAX_CODE],
+        self._add("step", brain, title=title, explain=explain, code=code[:MAX_CODE],
                   ok=bool(ok), error=(error or "")[:400], added=list(added)[:20], modified=list(modified)[:20],
                   part=part)
 
@@ -112,10 +117,10 @@ class Journal:
         with self.lock:
             for s in self.data["struggles"]:
                 if s["open"] and s["key"] == key:
-                    s.update(text=text[:300], by=brain, count=s.get("count", 1) + 1, t=round(time.time()))
+                    s.update(text=text, by=brain, count=s.get("count", 1) + 1, t=round(time.time()))
                     self.dirty = True
                     return s
-            s = {"key": key, "text": text[:300], "by": brain, "count": 1, "open": True, "t": round(time.time())}
+            s = {"key": key, "text": text, "by": brain, "count": 1, "open": True, "t": round(time.time())}
             self.data["struggles"].append(s)
             del self.data["struggles"][:-30]
             self.dirty = True
@@ -148,8 +153,8 @@ class Journal:
 
     def record_handoff(self, brain, summary, next_steps=(), struggles=()):
         with self.lock:
-            note = {"by": brain, "t": round(time.time()), "summary": summary[:800],
-                    "next_steps": [s[:200] for s in next_steps][:10], "struggles": [s[:200] for s in struggles][:10]}
+            note = {"by": brain, "t": round(time.time()), "summary": summary,
+                    "next_steps": list(next_steps), "struggles": list(struggles)}
             self.data["handoffs"].append(note)
             del self.data["handoffs"][:-10]
             for text in note["struggles"]:
@@ -157,7 +162,7 @@ class Journal:
             self._add("handoff_note", brain, text=summary[:400])
 
     def record_finish(self, brain, summary):
-        self._add("finish", brain, text=summary[:400])
+        self._add("finish", brain, text=summary)
 
     def record_switch(self, source, target, reason):
         with self.lock:

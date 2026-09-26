@@ -56,7 +56,7 @@ class Session:
         self.build_style = "PIECE"        # PIECE: part by part | FULL: big stages, fastest
         self.pace = 1.0                   # Auto: seconds each new part stays in focus
         self.show_pointers = True
-        self.plan = []                    # [{"name": str, "done": bool}] the build checklist
+        self.plan = []                    # [{"name", "done", "skipped", "reason"}] the build checklist
         self.sink = None                  # fn(who, text): the session log on disk (set at register)
 
     # -- log ---------------------------------------------------------------
@@ -73,16 +73,33 @@ class Session:
         return entry
 
     def set_plan(self, parts):
+        """A new or revised checklist. Parts that keep their name keep their state."""
         with self.lock:
-            old = {p["name"]: p["done"] for p in self.plan}
-            self.plan = [{"name": str(n)[:120], "done": old.get(str(n)[:120], False)} for n in parts][:40]
+            old = {p["name"]: p for p in self.plan}
+            self.plan = []
+            for n in parts:
+                before = old.get(str(n), {})
+                self.plan.append({"name": str(n), "done": before.get("done", False),
+                                  "skipped": before.get("skipped", False), "reason": before.get("reason", "")})
             self.changed_flag = True
 
     def tick_plan(self, number):
         with self.lock:
             if isinstance(number, int) and 1 <= number <= len(self.plan):
-                self.plan[number - 1]["done"] = True
+                self.plan[number - 1].update(done=True, skipped=False, reason="")
                 self.changed_flag = True
+
+    def skip_plan(self, number, reason):
+        """A part left out on purpose. It counts as settled, and the reason is shown."""
+        with self.lock:
+            if isinstance(number, int) and 1 <= number <= len(self.plan):
+                self.plan[number - 1].update(done=True, skipped=True, reason=str(reason))
+                self.changed_flag = True
+
+    def open_parts(self):
+        """[(number, name)] of plan parts that are neither built nor skipped."""
+        with self.lock:
+            return [(i + 1, p["name"]) for i, p in enumerate(self.plan) if not p["done"]]
 
     def set_status(self, status):
         with self.lock:

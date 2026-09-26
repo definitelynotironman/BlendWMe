@@ -208,7 +208,7 @@ session.set_card(None)
 # Teach mode: the brain waits for the user, the check detects completion.
 reset_session("TEACH")
 box = in_thread(raw, {"op": "call", "tool": "teach_step", "brain": "claude", "args": {
-    "title": "Bevel the base", "instruction": "Add a Bevel modifier",
+    "title": "Bevel the base", "instruction": "Add a Bevel modifier", "point_tab": "MODIFIER",
     "check": "any(m.type=='BEVEL' for m in D.objects['Base'].modifiers)"}})
 pump_until(lambda: session.status == state.WAIT_USER)
 bpy.data.objects["Base"].modifiers.new("Bevel", "BEVEL")
@@ -354,7 +354,9 @@ check("Claude built through BlendWMe's tools", "TableTop" in bpy.data.objects
       and bpy.data.objects["TableTop"].get("blendwme_brain") == "claude")
 check("streamed text becomes one reply in the panel", ai_texts("claude")[:2]
       == ["I will build a small table.", "The table top is in place."], ai_texts())
-check("the plan checklist works with Claude", session.plan and session.plan[0]["done"])
+from blendwme.journal import journal as project_journal  # noqa: E402
+check("the plan checklist works with Claude", project_journal.data["plan"] and project_journal.data["plan"][0]["done"])
+check("the plan card closes when the task finishes", session.plan == [])
 check("finish ends the task", session.status == state.DONE, session.status)
 
 # Second message: the same Claude conversation, plus what the user changed in between.

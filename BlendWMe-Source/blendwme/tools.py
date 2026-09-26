@@ -33,11 +33,19 @@ RUN_PYTHON = _fn(
 PLAN = _fn(
     "plan",
     "Write the build plan BEFORE building: the parts of THE USER'S SUBJECT in build order, each with its "
-    "size and where it attaches. The user sees it as a checklist that ticks off as you build. Call again to revise it.",
+    "size and where it attaches. The user sees it as a checklist that ticks off as you build. Call again to revise it. "
+    "Settle every part before finish: run_python with part=<n> ticks it; done=[n] ticks parts you checked with a "
+    "look after building them; skip=[{part, reason}] leaves a part out and tells the user why.",
     {"parts": {"type": "array", "items": {"type": "string"},
                "description": "One string per part: what it is, size in metres, what it rests on. "
-                              "Format only: '<part> <w x d x h> m on <other part or the ground>'"}},
-    ["parts"])
+                              "Format only: '<part> <w x d x h> m on <other part or the ground>'. "
+                              "Leave out to only mark parts."},
+     "done": {"type": "array", "items": {"type": "integer"},
+              "description": "Part numbers that are built and that you checked with look after building them"},
+     "skip": {"type": "array", "items": {"type": "object", "properties": {
+         "part": {"type": "integer"}, "reason": {"type": "string"}}},
+              "description": "Parts left out on purpose, each with a short reason the user will see"}},
+    [])
 
 LOOK = _fn(
     "look",
@@ -80,8 +88,8 @@ TEACH_STEP = _fn(
     "Show the user ONE action to do themselves, then wait until it is done. Returns how it went "
     "('completed', 'user_said_done', 'show_me' or 'skipped') and what changed in the scene.",
     {"title": {"type": "string", "description": "2-6 words"},
-     "instruction": {"type": "string", "description": "The exact action with shortcut/menu and values. Max 2 sentences."},
-     "why": {"type": "string", "description": "One short sentence: why artists do this"},
+     "instruction": {"type": "string", "description": "ONE action with its shortcut or menu and values. Under 20 words."},
+     "why": {"type": "string", "description": "Everything else: why artists do this, extra detail. Shown smaller."},
      "check": {"type": "string", "description": "Python expression that becomes True when the step is done. Names: bpy, C, D. Empty if it cannot be checked."},
      "point_object": {"type": "string"},
      "point_editor": {"type": "string"},
@@ -96,7 +104,9 @@ ASK_USER = _fn(
 
 FINISH = _fn(
     "finish",
-    "End the task with a short summary of what was made and one useful next idea.",
+    "End the task with a short summary of what was made and one useful next idea. Refused while plan parts are "
+    "open (build, mark done after a look, or skip them with plan), or when the summary claims a render that "
+    "does not exist.",
     {"summary": {"type": "string"}}, ["summary"])
 
 _COMMON = [PLAN, GET_SCENE_INFO, GET_OBJECT_INFO, LOOK, INSPECT_API, LOAD_SKILL, ASK_USER, FINISH]
