@@ -13,8 +13,17 @@ Architecture (one line each):
     bridge.py     runs Blender work safely on Blender's main thread
 """
 
-from . import bridge, credentials, overlay, prefs, ui
+import bpy
+
+from . import bridge, credentials, overlay, prefs, socket_bridge, ui
 from .agent import agent
+
+
+def _start_bridge():
+    p = prefs.addon_prefs()
+    if p is None or p.start_bridge:
+        print("BlendWMe:", socket_bridge.start())
+    return None   # run once
 
 
 def register():
@@ -22,9 +31,12 @@ def register():
     ui.register()
     bridge.register()
     overlay.register()
+    # Start after registration finished, when the preferences exist.
+    bpy.app.timers.register(_start_bridge, first_interval=0.5)
 
 
 def unregister():
+    socket_bridge.stop()
     agent.stop()
     overlay.unregister()
     bridge.unregister()

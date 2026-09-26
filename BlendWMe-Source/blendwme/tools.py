@@ -110,3 +110,56 @@ def for_mode(mode):
 
 
 ALL = _COMMON + [RUN_PYTHON, TEACH_STEP, POINT_AT]
+
+
+# ----------------------------------------------------------------------
+# Tools only the outside brains (Claude Code, Codex) get, through the MCP server.
+# The project journal ("the baton") lets one brain hand the work to the other.
+# ----------------------------------------------------------------------
+
+HANDOFF_NOTE = _fn(
+    "handoff_note",
+    "Write a note for the next brain (or for yourself later): what you did, what is left, and what you "
+    "struggled with. BlendWMe saves it in the project journal. Write one when you are asked to hand over, "
+    "and whenever you stop with work left.",
+    {"summary": {"type": "string", "description": "What you built or changed, 1-4 short sentences"},
+     "next_steps": {"type": "array", "items": {"type": "string"}, "description": "What should happen next, in order"},
+     "struggles": {"type": "array", "items": {"type": "string"},
+                   "description": "Problems you could not solve (errors, parts that look wrong)"}},
+    ["summary"])
+
+READ_JOURNAL = _fn(
+    "read_journal",
+    "Read the project journal: the brief and the user's decisions, the plan, every step (signed by the brain "
+    "that made it), who made each object, open struggles, the latest art director review and handoff notes.",
+    {"section": {"type": "string", "enum": ["brief", "everything", "steps", "objects", "struggles", "handoffs"],
+                 "description": "Default 'brief': the compact handoff brief"}})
+
+BRAIN_ONLY = [HANDOFF_NOTE, READ_JOURNAL]
+
+# What the outside brains are told about look: they see the picture themselves.
+_MCP_DESCRIPTIONS = {
+    "look": ("See the scene: returns the picture itself. mode 'angles' frames the target from several sides "
+             "in one contact sheet (best for judging form). 'viewport' is what the user sees. 'camera' is "
+             "through the scene camera. compare_reference adds the user's reference images."),
+}
+
+# Tools that only read. MCP clients may use this hint to skip approval prompts.
+READ_ONLY = {"get_scene_info", "get_object_info", "inspect_api", "load_skill", "look", "read_journal"}
+
+
+def mcp_tools():
+    """Every tool in MCP form: [{"name", "description", "inputSchema", "readOnly"}]."""
+    out = []
+    for tool in ALL + BRAIN_ONLY:
+        fn = tool["function"]
+        out.append({"name": fn["name"],
+                    "description": _MCP_DESCRIPTIONS.get(fn["name"], fn["description"]),
+                    "inputSchema": fn["parameters"],
+                    "readOnly": fn["name"] in READ_ONLY})
+    return out
+
+
+def names_for_mode(mode):
+    """Tool names a brain may use in this mode (the MCP server lists them all)."""
+    return {t["function"]["name"] for t in for_mode(mode)} | {t["function"]["name"] for t in BRAIN_ONLY}

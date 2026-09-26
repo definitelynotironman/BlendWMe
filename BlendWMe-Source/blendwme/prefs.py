@@ -65,6 +65,18 @@ class BWM_Preferences(bpy.types.AddonPreferences):
     log_folder: bpy.props.StringProperty(
         name="Log folder", subtype="DIR_PATH",
         description="Where logs go. Empty means Documents/BlendWMe Logs")
+    # 2.0: the outside brains and the MCP bridge
+    start_bridge: bpy.props.BoolProperty(
+        name="Start the MCP bridge with Blender", default=True,
+        description="Open BlendWMe's local socket (127.0.0.1 only, with a random token) so Claude Code and "
+                    "Codex can use BlendWMe's tools")
+    workspace_folder: bpy.props.StringProperty(
+        name="Workspace folder", subtype="DIR_PATH",
+        description="Where the brains run and read BlendWMe's instructions. Empty means Documents/BlendWMe Workspace")
+    mcp_python: bpy.props.StringProperty(
+        name="Python for the MCP server", subtype="FILE_PATH",
+        description="A Python with the 'mcp' package. Empty: the workspace venv made by 'Install MCP server', "
+                    "or a Python on PATH")
     max_steps: bpy.props.IntProperty(name="Steps before check-in", default=60, min=5, max=400,
                                      description="BlendWMe pauses after this many tool calls so costs never run away")
 

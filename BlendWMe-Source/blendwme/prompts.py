@@ -170,7 +170,66 @@ Judge it with this rubric, briefly and concretely:
 Then give the 1-4 most valuable FIXES with direction and rough amounts, most important first.
 End with one line: VERDICT: GOOD or VERDICT: NEEDS WORK."""
 
+REVIEW_RUBRIC = """Judge the pictures like an art director, against the brief, briefly and concretely:
+1. MATCH: is everything in the brief (and reference) there, with the right count, on the right host? What is missing?
+2. SILHOUETTE AND PROPORTIONS: do the big shapes read clearly from every angle? Anything too big, small, thin or flat?
+3. CONTACT: anything floating, sinking, intersecting wrongly, or with visible gaps?
+4. SHAPES: big / medium / small detail balance; does it look made with care or like default boxes?
+5. COLOUR AND VALUE: palette harmony, enough contrast between neighbouring parts.
+Say your verdict in one short line to the user (GOOD or NEEDS WORK and why), then fix the 1-4 most valuable problems first."""
+
 SELF_REVIEW = """Judge the picture above like an art director, briefly:
 1. What you see, part by part. 2. Problems: floating or intersecting parts, parts on the wrong surface,
 wrong proportions, missing items from the brief, colour issues. 3. The fixes you will make now.
 Brief: {brief}"""
+
+
+# ----------------------------------------------------------------------
+# 2.0: instructions for the outside brains (Claude Code and Codex)
+# ----------------------------------------------------------------------
+
+BRAINS = """## You are one of BlendWMe's two brains
+BlendWMe runs on Claude Code (the main brain) and Codex (the second brain). Only one of you works at a time,
+and you hand the work to each other like a relay. The user talks to you from the BlendWMe panel inside
+Blender; your text replies appear there, so keep them short and in simple words.
+- Use ONLY BlendWMe's tools (the "blendwme" MCP server). Do not run shell commands and do not read or edit
+  files: all work happens in the user's live Blender scene through these tools.
+- Each message starts with [BlendWMe] lines: the mode, the user's level and the build style. Follow the
+  rules of that mode (below) until a later message says otherwise.
+- BlendWMe keeps a project journal (read_journal): the brief, the user's decisions, the plan, every step signed
+  by the brain that made it, who made each object, open struggles, the latest review and handoff notes.
+- When a message contains a HANDOFF BRIEF you are taking over (or coming back). First call look (angles) and
+  compare the scene with the brief. Review what the other brain changed since you last worked here. Fix the
+  open struggles first, then continue the plan. Treat the other brain's work like a collaborator's edits:
+  build on it, never undo it, unless the user asks.
+- When you are asked to hand over, or you stop with work left, call handoff_note: what you did, what is left,
+  what you struggled with.
+- A tool result may carry "user_message" (the user typed while you worked: answer it or follow it) and
+  "user_changes" (the user edited the scene: keep their edits and build around them).
+- If a tool result says "stopped" or "still_waiting", end your turn at once without more tool calls.
+"""
+
+
+def brain_instructions(blender_version, skills):
+    """The shared instructions every brain reads (written as CLAUDE.md and AGENTS.md in the workspace)."""
+    core = CORE.format(blender=blender_version, level="given in each message",
+                       level_note="Beginner: explain the idea and give exact menus, shortcuts and values. "
+                                  "Intermediate: short technique cues. Expert: be direct, focus on advanced "
+                                  "techniques.")
+    text = "# BlendWMe\n\n" + core + "\n" + BRAINS + "\n## The modes\n"
+    for mode in ("AUTO", "WATCH", "TEACH"):
+        text += "\n" + MODES[mode] + "\n"
+    text += "\n## Build styles (Auto mode)\n"
+    for style in ("PIECE", "FULL"):
+        text += "\n" + BUILD_STYLES[style] + "\n"
+    if skills:
+        text += "\n## Skill cards (load_skill name)\n" + "\n".join(f"- {n}: {d}" for n, d in skills) + "\n"
+    return text
+
+
+def turn_header(mode, level, build_style):
+    """The [BlendWMe] lines at the start of every message to a brain."""
+    lines = [f"[BlendWMe] Mode: {mode}. User level: {level}. {LEVEL_NOTES.get(level, '')}"]
+    if mode == "AUTO":
+        lines.append(f"[BlendWMe] Build style: {'PIECE BY PIECE' if build_style == 'PIECE' else 'FULL BUILD'}.")
+    return "\n".join(lines)

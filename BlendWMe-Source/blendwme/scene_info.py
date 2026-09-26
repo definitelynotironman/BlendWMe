@@ -11,6 +11,7 @@ import bpy
 from mathutils import Vector
 
 AUTHOR_KEY = "blendwme_author"   # "ai" or "user", stored on each object
+BRAIN_KEY = "blendwme_brain"     # which brain made an AI object: "claude", "codex" or "api"
 MAX_OBJECTS = 200
 
 
@@ -64,6 +65,9 @@ def object_summary(obj):
     author = obj.get(AUTHOR_KEY)
     if author:
         info["made_by"] = author
+        brain = obj.get(BRAIN_KEY)
+        if author == "ai" and brain:
+            info["made_by_brain"] = brain
     return info
 
 
@@ -262,3 +266,23 @@ def tag_author(names, author):
         obj = bpy.data.objects.get(name)
         if obj is not None:
             obj[AUTHOR_KEY] = author
+            if author != "ai" and BRAIN_KEY in obj:
+                del obj[BRAIN_KEY]
+
+
+def tag_brain(names, brain):
+    """Sign AI objects with the brain that made them (the journal shows who made what)."""
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is not None and obj.get(AUTHOR_KEY) == "ai":
+            obj[BRAIN_KEY] = brain
+
+
+def makers():
+    """{object name: "claude" | "codex" | "api" | "ai" | "user"} for every tagged object in the scene."""
+    out = {}
+    for obj in bpy.context.scene.objects:
+        author = obj.get(AUTHOR_KEY)
+        if author:
+            out[obj.name] = obj.get(BRAIN_KEY, author) if author == "ai" else author
+    return out
