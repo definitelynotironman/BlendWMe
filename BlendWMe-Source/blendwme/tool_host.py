@@ -90,6 +90,7 @@ class ToolHost:
         self.brief = brief or ""
         self.references = [p for p in references or [] if os.path.isfile(p)][:2]
         self.show_me_allowed = False
+        self.review_pending = False
         self.ok_steps = self.reviewed_at = self.reviews = 0
         self.plan_done_noted = False
         self.begin_turn()
@@ -422,6 +423,7 @@ class ToolHost:
             return None
         self.reviews += 1
         self.reviewed_at = self.ok_steps
+        self.review_pending = True      # the brain's next words are its verdict (the relay records them)
         session.add("look", "Art director review " + when, brain=brain)
         stock = bridge.call(scene_info.inventory)
         refs = info.get("references_attached", 0)
@@ -555,7 +557,7 @@ class ToolHost:
 
     def _tool_read_journal(self, args, brain):
         section = str(args.get("section") or "brief")
-        data = self.journal.section(section, brain)
+        data = self.journal.section(section, brain, bridge.call(scene_info.makers))
         return (data if data is not None else {"journal": "No journal yet: this is a fresh project."}), []
 
 

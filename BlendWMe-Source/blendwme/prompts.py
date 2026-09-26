@@ -233,3 +233,8 @@ def turn_header(mode, level, build_style):
     if mode == "AUTO":
         lines.append(f"[BlendWMe] Build style: {'PIECE BY PIECE' if build_style == 'PIECE' else 'FULL BUILD'}.")
     return "\n".join(lines)
+
+
+HANDOFF_REQUEST = """[BlendWMe] The user is handing this project to {target} now. Do not build or change anything more.
+Call handoff_note once: a short summary of what you did, the next steps in order, and anything you struggled
+with or could not solve. Then end your turn."""

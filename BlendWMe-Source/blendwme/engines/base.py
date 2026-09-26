@@ -150,7 +150,9 @@ class ProcessEngine(Engine):
         elif limits.is_limit(tail):
             emit({"type": "limit_reached", "text": tail[-400:], "resets": limits.reset_hint(tail)})
         elif self.proc.returncode != 0:
+            last = getattr(self, "last_error", "")
             emit({"type": "error", "text": f"{self.label} stopped (exit code {self.proc.returncode})."
+                                           + (" " + last[:300] if last else "")
                                            + (" " + tail[-600:] if tail else "")})
         else:
             emit({"type": "done", "text": ""})

@@ -440,6 +440,194 @@ session.tokens = 0
 relay.reset()
 del os.environ["ANTHROPIC_API_KEY"]
 
+# ----------------------------------------------------------------------
+# M3: the journal, the codex adapter and the relay (fake `claude` and fake `codex`)
+# ----------------------------------------------------------------------
+import blendwme.journal as journal_module  # noqa: E402
+from blendwme.engines.codex import CodexEngine  # noqa: E402
+from blendwme.journal import Journal, journal  # noqa: E402
+
+
+def section_text(text, title):
+    """The lines of one section of a handoff brief."""
+    if title + ":" not in text:
+        return ""
+    rest = text.split(title + ":", 1)[1]
+    return rest.split("\n\n", 1)[0]
+
+
+fresh_scene()
+reset_session()
+relay.reset()
+journal.reset()
+relay.engines["codex"].command_override = [sys.executable, FAKE]
+os.environ["OPENAI_API_KEY"] = "sk-never-forwarded"
+
+# 1. Claude builds part of a scene.
+script([{"call": "plan", "args": {"parts": ["Base 2 x 2 x 0.2 m on the ground", "Tower 0.5 x 0.5 x 2 m on Base",
+                                            "Flag 0.4 x 0.02 x 0.3 m on Tower"]}},
+        {"call": "run_python", "args": {"title": "Base", "part": 1,
+                                        "code": "bwm.box('Base', (2, 2, 0.2), (0, 0, 0.1))"}},
+        {"say": "The base is done."}])
+turn("Build a small tower with a flag")
+claude_session = relay.engines["claude"].session_id
+check("the journal records the brief and Claude's signed step", journal.data["brief"].startswith("Build a small tower")
+      and any(e["kind"] == "step" and e["by"] == "claude" and e["title"] == "Base" for e in journal.data["events"]))
+
+# 2. The user presses "Hand over to Codex": Claude writes a note, Codex continues from the journal.
+count = len(runs())
+script([{"call": "handoff_note", "args": {"summary": "Built the base.", "next_steps": ["Build the tower",
+                                                                                     "Add the flag"]}}],
+       [{"call": "look", "args": {"mode": "angles"}},
+        {"call": "run_python", "args": {"title": "Tower", "part": 2,
+                                        "code": "bwm.box('Tower', (0.5, 0.5, 2), (0, 0, 1.2))"}},
+        {"call": "run_python", "args": {"title": "Flag", "part": 3,
+                                        "code": "bwm.box('Flag', (0.4, 0.02, 0.3), (0.2, 0, 2.4))\nflag_cloth_sim()"}},
+        {"say": "The tower stands. The flag failed."}])
+relay.hand_over("codex", dict(CFG))
+pump_until(lambda: len(runs()) == count + 2 and not relay.is_running(), 120)
+note_run, codex_run = runs()[-2], runs()[-1]
+check("the current brain is asked for a handoff note first", note_run["argv"][0] == "-p"
+      and "handing this project to Codex" in note_run["argv"][1])
+check("the note is saved in the journal", journal.data["handoffs"][-1]["by"] == "claude"
+      and journal.data["handoffs"][-1]["next_steps"] == ["Build the tower", "Add the flag"])
+argv = codex_run["argv"]
+check("Codex runs non-interactively with JSON events", argv[:2] == ["exec", "--json"]
+      and "--skip-git-repo-check" in argv and argv[argv.index("--cd") + 1] == WORKSPACE)
+check("Codex runs in a read-only sandbox", argv[argv.index("--sandbox") + 1] == "read-only")
+overrides = [argv[i + 1] for i, a in enumerate(argv) if a == "-c"]
+check("BlendWMe's MCP server is added for this run only (-c), signed for codex",
+      any(o.startswith("mcp_servers.blendwme.command=") for o in overrides)
+      and any(o.startswith("mcp_servers.blendwme.args=") and "'codex'" in o for o in overrides), overrides)
+check("Codex's tool calls may wait for the user (tool_timeout_sec)",
+      "mcp_servers.blendwme.tool_timeout_sec=3600" in overrides)
+check("the message goes on stdin (no command-line limits)", argv[-1] == "-" and "resume" not in argv)
+brief = codex_run["stdin"]
+check("Codex gets the handoff brief with the brief, the note and Claude's work",
+      "HANDOFF BRIEF" in brief and "THE BRIEF:\nBuild a small tower" in brief
+      and "From Claude: Built the base." in brief and 'Claude: step "Base" -> made Base' in brief, brief[:600])
+check("Codex gets fresh scene facts", "[Current scene]" in brief and "Base" in brief)
+check("pay-per-token OpenAI keys are not passed to Codex", codex_run["env"]["OPENAI_API_KEY"] is False)
+check("Codex builds through the same tools, signed as Codex", "Tower" in bpy.data.objects
+      and bpy.data.objects["Tower"].get("blendwme_brain") == "codex")
+check("Codex's failed step is rolled back and becomes an open struggle", "Flag" not in bpy.data.objects
+      and any(s["open"] and s["by"] == "codex" and "Flag" in s["text"] for s in journal.data["struggles"]))
+check("Codex's reply shows in the panel as Codex", "The tower stands. The flag failed." in ai_texts("codex"))
+check("the journal keeps Codex's own session", journal.data["sessions"].get("codex") == "fake-thread-1"
+      and journal.data["active"] == "codex")
+
+# 3. Claude takes back over: it knows exactly what Codex did, and fixes Codex's struggle first.
+count = len(runs())
+script([{"call": "handoff_note", "args": {"summary": "Built the tower.",
+                                          "struggles": ["The flag step called a function that does not exist"]}}],
+       [{"call": "read_journal", "args": {}},
+        {"call": "run_python", "args": {"title": "Flag", "part": 3,
+                                        "code": "bwm.box('Flag', (0.4, 0.02, 0.3), (0.2, 0, 2.4))"}},
+        {"say": "Fixed the flag first."}])
+relay.hand_over("claude", dict(CFG))
+pump_until(lambda: len(runs()) == count + 2 and not relay.is_running(), 120)
+note_run, claude_run = runs()[-2], runs()[-1]
+check("Codex is asked for its note in its own session", note_run["argv"][-3:] == ["resume", "fake-thread-1", "-"])
+argv = claude_run["argv"]
+check("Claude comes back to its own conversation", argv[argv.index("--resume") + 1] == claude_session)
+prompt = argv[1]
+changes = section_text(prompt, "WHAT CHANGED SINCE YOU LAST WORKED HERE")
+check("Claude is told what changed since it last worked here",
+      'Codex: step "Tower" -> made Tower' in changes and 'Codex: step "Flag" FAILED' in changes, prompt[:1500])
+check("Claude's own earlier steps are not repeated as changes", 'Claude: step "Base"' not in changes)
+check("Codex's open struggles come first, to be fixed", "[Codex]" in section_text(prompt, "OPEN STRUGGLES (fix these first)"))
+check("Codex's note reaches Claude", "From Codex: Built the tower." in prompt)
+makers = section_text(prompt, "WHO MADE EACH OBJECT")
+check("Claude knows who made each object", "Codex: Tower" in makers and "Claude: Base" in makers, makers)
+check("the rules say: build on the other brain's work, never undo it", "never undo" in prompt)
+check("read_journal gives a brain the brief on demand",
+      any(m["role"] == "tool" and "HANDOFF BRIEF" in m["content"] for m in relay.transcript))
+check("Claude did not undo Codex's work", "Tower" in bpy.data.objects
+      and bpy.data.objects["Tower"].get("blendwme_brain") == "codex")
+check("Claude fixed Codex's struggle", "Flag" in bpy.data.objects
+      and not any(s["open"] and s["key"] == "part 3" for s in journal.data["struggles"]))
+check("the plan shows which brain built each part", [p.get("by") for p in journal.data["plan"]]
+      == ["claude", "codex", "claude"], journal.data["plan"])
+check("every switch is in the journal", [e["to"] for e in journal.data["events"] if e["kind"] == "switch"]
+      == ["codex", "claude"])
+
+# 4. The journal travels with the .blend (Text block + sidecar) and the brains resume after reopening.
+journal_module.register()
+journal_module.save()
+check("the journal is mirrored into a Text block", journal_module.TEXT_NAME in bpy.data.texts
+      and json.loads(bpy.data.texts[journal_module.TEXT_NAME].as_string())["seq"] == journal.data["seq"])
+blend = os.path.join(tempfile.mkdtemp(prefix="bwm_blend_"), "tower.blend")
+bpy.ops.wm.save_as_mainfile(filepath=blend)
+check("saving the .blend writes the sidecar journal", os.path.isfile(journal_module.sidecar_path(blend)))
+seq = journal.data["seq"]
+journal.reset()
+bpy.ops.wm.open_mainfile(filepath=blend)
+check("opening the .blend loads its journal", journal.data["seq"] == seq and journal.data["brief"].startswith("Build"))
+check("each brain resumes its own session after reopening", relay.engines["claude"].session_id == claude_session
+      and relay.engines["codex"].session_id == "fake-thread-1" and relay.has_conversation())
+check("the plan checklist comes back with the file", len(session.plan) == 3 and all(p["done"] for p in session.plan))
+script([{"say": "Back in this project."}])
+turn("Add a door")
+argv = runs()[-1]["argv"]
+check("after reopening, the first message carries the handoff brief and the scene",
+      argv[argv.index("--resume") + 1] == claude_session and "HANDOFF BRIEF" in argv[1] and "[Current scene]" in argv[1])
+journal_module.unregister()
+
+# 5. A usage limit in Auto mode: the other brain takes over by itself (no note: the limited brain cannot answer).
+session.mode = "AUTO"
+count = len(runs())
+script([{"line": {"type": "result", "subtype": "error_during_execution", "is_error": True,
+                  "result": "You've hit your limit · resets 5pm"}}],
+       [{"say": "Codex here, continuing."}])
+relay.send("Keep going", dict(CFG, auto_relay=True))
+pump_until(lambda: len(runs()) == count + 2 and not relay.is_running(), 60)
+check("Auto mode: at Claude's limit Codex takes over by itself, without asking Claude for a note",
+      runs()[-1]["argv"][0] == "exec" and "Codex here, continuing." in ai_texts("codex"))
+check("the switch reason is in the journal", [e for e in journal.data["events"] if e["kind"] == "switch"][-1]["text"]
+      == "usage limit reached")
+check("Codex continues its own session", runs()[-1]["argv"][-3:-1] == ["resume", "fake-thread-1"])
+
+# 6. In Watch mode the user is asked instead.
+session.mode = "WATCH"
+count = len(runs())
+script([{"line": {"type": "turn.failed", "error": {"message": "You've hit your usage limit. Try again in 3 hours."}}}])
+relay.send("Show me the next step", dict(CFG, brain="codex", auto_relay=True))
+pump_until(lambda: not relay.is_running(), 60)
+time.sleep(0.5)
+check("Watch mode: a limit asks before handing over", len(runs()) == count + 1 and relay.limit
+      and relay.limit["brain"] == "codex" and "Hand over to Claude?" in session.card["text"])
+check("Codex's limit wording is understood", "Try again in 3 hours" in relay.limit["resets"], relay.limit)
+session.mode = "AUTO"
+
+# 7. Codex events, one at a time.
+engine = CodexEngine()
+check("a Codex 'error' event that is not a limit does not end the turn (Codex retries)",
+      engine.parse({"type": "error", "message": "Reconnecting... 1/5"}) == [])
+check("a Codex usage-limit error ends the turn as limit_reached",
+      engine.parse({"type": "error", "message": "You've hit your usage limit."})[0]["type"] == "limit_reached")
+check("a failed Codex turn is an error", engine.parse({"type": "turn.failed", "error": {"message": "x"}})[0]["type"]
+      == "error")
+check("Codex tool calls are standard events", engine.parse({"type": "item.started", "item": {
+    "id": "1", "type": "mcp_tool_call", "server": "blendwme", "tool": "run_python", "arguments": {"code": "x"}}})[0]
+      == {"type": "tool_call", "id": "1", "tool": "run_python", "args": {"code": "x"}})
+
+# 8. The handoff brief always fits its size limit, keeping what matters most.
+big = Journal()
+big.record_task("A huge castle")
+for i in range(300):
+    big.record_step("codex", f"Part {i}", "", "x = 1", True, added=[f"Part{i}"])
+big.record_struggle("codex", "part 7", "Part 7: the gate keeps failing")
+text = big.handoff_brief("claude", {f"Part{i}": "codex" for i in range(300)})
+check("a long project still gives a brief within the limit", len(text) <= journal_module.BRIEF_LIMIT
+      and "older lines left out" in text and "THE BRIEF:\nA huge castle" in text
+      and "the gate keeps failing" in text and "RULES" in text, len(text))
+
+# 9. The API brain's steps are signed in the journal too.
+relay._api_step("Wall", "", "bwm.box('W', 1)", {"ok": True}, {"added": [], "modified": []}, None)
+check("API steps are recorded and signed", journal.data["events"][-1]["by"] == "api")
+relay.reset()
+del os.environ["OPENAI_API_KEY"]
+
 socket_bridge.stop()
 check("stopping the bridge removes the connection file",
       not os.path.exists(os.path.join(WORKSPACE, "connection.json")))

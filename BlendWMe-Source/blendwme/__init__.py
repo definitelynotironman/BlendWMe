@@ -15,7 +15,7 @@ Architecture (one line each):
 
 import bpy
 
-from . import bridge, credentials, overlay, prefs, socket_bridge, ui
+from . import bridge, credentials, journal, overlay, prefs, socket_bridge, ui
 from .agent import agent
 
 
@@ -31,12 +31,14 @@ def register():
     ui.register()
     bridge.register()
     overlay.register()
+    journal.register()
     # Start after registration finished, when the preferences exist.
     bpy.app.timers.register(_start_bridge, first_interval=0.5)
 
 
 def unregister():
     socket_bridge.stop()
+    journal.unregister()
     agent.stop()
     overlay.unregister()
     bridge.unregister()

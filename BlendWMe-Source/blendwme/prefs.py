@@ -89,6 +89,20 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         items=[("", "Default", "Claude Code's own setting"), ("low", "Low", ""), ("medium", "Medium", ""),
                ("high", "High", ""), ("xhigh", "Extra high", ""), ("max", "Max", "")],
         default="")
+    codex_path: bpy.props.StringProperty(
+        name="Codex program", subtype="FILE_PATH",
+        description="Path to codex(.cmd/.exe). Empty: found on PATH")
+    codex_model: bpy.props.StringProperty(
+        name="Codex model", default="",
+        description="Optional model name. Empty: your Codex default")
+    auto_relay: bpy.props.BoolProperty(
+        name="Auto mode: hand over by itself at a usage limit", default=True,
+        description="In Auto mode, when one brain reaches its usage limit, the other brain takes over "
+                    "without asking. In Watch and Teach you are always asked")
+    ask_handoff_note: bpy.props.BoolProperty(
+        name="Ask for a handoff note when handing over", default=True,
+        description="Before the switch, the current brain writes a short note (it uses a little of its usage). "
+                    "The journal is complete without it")
     api_enabled: bpy.props.BoolProperty(
         name="Allow the pay-per-token API brain", default=False,
         description="Off by default. BlendWMe 2.0 runs on your Claude and ChatGPT subscriptions. Switch on "
@@ -135,7 +149,14 @@ def draw_brains(layout, p):
 
 
 def draw_codex(layout, p):
-    """Codex settings (filled in when the Codex brain exists)."""
+    box = layout.box()
+    box.label(text="Codex (second brain)", icon="OUTLINER_OB_LIGHT")
+    box.prop(p, "codex_path")
+    box.prop(p, "codex_model")
+    box = layout.box()
+    box.label(text="Relay", icon="FILE_REFRESH")
+    box.prop(p, "auto_relay")
+    box.prop(p, "ask_handoff_note")
 
 
 def draw_connection(layout, p):
@@ -235,6 +256,10 @@ def gather_config(context):
         "claude_path": bpy.path.abspath(p.claude_path) if p.claude_path.strip() else "",
         "claude_model": p.claude_model.strip(),
         "claude_effort": p.claude_effort,
+        "codex_path": bpy.path.abspath(p.codex_path) if p.codex_path.strip() else "",
+        "codex_model": p.codex_model.strip(),
+        "auto_relay": p.auto_relay,
+        "ask_handoff_note": p.ask_handoff_note,
         "api_enabled": p.api_enabled,
         "api_token_budget": p.api_token_budget,
         "api_key": p.key() if p.api_enabled else "",

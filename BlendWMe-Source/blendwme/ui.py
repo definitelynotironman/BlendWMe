@@ -414,6 +414,47 @@ class BWM_OT_show_capture(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BWM_OT_hand_over(bpy.types.Operator):
+    bl_idname = "blendwme.hand_over"
+    bl_label = "Hand Over"
+    bl_description = ("Hand the work to the other brain. The current brain writes a handoff note (if it can), "
+                      "and the other one continues from the project journal and a fresh look at the scene")
+
+    target: bpy.props.StringProperty(default="codex")
+
+    def execute(self, context):
+        s = context.window_manager.blendwme
+        if not relay.has_conversation():
+            s.brain = self.target
+            self.report({"INFO"}, f"{brain_label(self.target)} will answer your next message.")
+            return {"FINISHED"}
+        s.brain = self.target
+        relay.hand_over(self.target, prefs.gather_config(context))
+        return {"FINISHED"}
+
+
+class BWM_OT_journal(bpy.types.Operator):
+    bl_idname = "blendwme.open_journal"
+    bl_label = "Project Journal"
+    bl_description = "Show the project journal (the baton the brains pass to each other) in a Text Editor"
+
+    def execute(self, context):
+        from . import journal
+        journal.journal.dirty = True
+        journal.save()
+        text = bpy.data.texts.get(journal.TEXT_NAME)
+        brief = bpy.data.texts.get("BlendWMe Handoff Brief") or bpy.data.texts.new("BlendWMe Handoff Brief")
+        from . import scene_info
+        brief.from_string(journal.journal.handoff_brief(relay.other(relay.active), scene_info.makers()))
+        for area in context.screen.areas:
+            if area.type == "TEXT_EDITOR":
+                area.spaces.active.text = brief or text
+                break
+        else:
+            self.report({"INFO"}, "Open a Text Editor and choose 'BlendWMe Handoff Brief' or 'BlendWMe Journal'.")
+        return {"FINISHED"}
+
+
 class BWM_OT_bridge(bpy.types.Operator):
     bl_idname = "blendwme.bridge"
     bl_label = "MCP Bridge"
@@ -510,7 +551,17 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         row = layout.row(align=True)
         row.label(text="Brain", icon="OUTLINER_OB_LIGHT")
         row.prop(s, "brain", expand=True)
-        if relay.is_running() and relay.running != s.brain:
+        if relay.has_conversation():
+            other = relay.other(relay.running or relay.active)
+            big = layout.row()
+            big.alert = bool(relay.limit)       # red when a usage limit is reached
+            big.scale_y = 1.5 if relay.limit else 1.0
+            big.enabled = not relay.handing_over
+            big.operator("blendwme.hand_over", text=f"Hand over to {brain_label(other)}",
+                         icon="FILE_REFRESH").target = other
+        if relay.handing_over:
+            layout.label(text="Handing over ...", icon="SORTTIME")
+        elif relay.is_running() and relay.running != s.brain:
             layout.label(text=f"{brain_label(relay.running)} is working. The switch applies to your next message.",
                          icon="INFO")
         if s.brain == "api" and p and (not p.api_enabled or not p.key()):
@@ -655,6 +706,7 @@ class BWM_PT_activity(_Base, bpy.types.Panel):
         layout = self.layout
         col = layout.column(align=True)
         col.operator("blendwme.notebook", icon="TEXT")
+        col.operator("blendwme.open_journal", icon="BOOKMARKS")
         col.operator("blendwme.show_capture", icon="IMAGE_DATA")
         col.operator("blendwme.save_log", icon="FILE_TICK")
         col.operator("blendwme.open_logs", icon="FILE_FOLDER")
@@ -675,7 +727,7 @@ classes = (
     BWM_OT_send, BWM_OT_paste, BWM_OT_paste_key, BWM_OT_forget_key, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new, BWM_OT_test_connection, BWM_OT_test_vision,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
-    BWM_OT_bridge, BWM_OT_copy_terminal,
+    BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal,
     BWM_PT_main, BWM_PT_conversation, BWM_PT_references, BWM_PT_connection, BWM_PT_activity,
 )
 
