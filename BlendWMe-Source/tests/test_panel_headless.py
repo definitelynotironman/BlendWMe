@@ -314,6 +314,144 @@ check("the camera-help card's code runs cleanly in Blender", outcome.get("ok"), 
 check("the camera helpers are in the bwm kit list", {"camera_to_view", "frame_camera", "focal_length"}
       <= set(bwm.public_names()))
 
+# ----------------------------------------------------------------------
+# The panel's place and size: docked tight on the right, movable, resizable, minimizable
+# ----------------------------------------------------------------------
+class Reg:
+    def __init__(self, type, x, y, width, height):
+        self.type, self.x, self.y, self.width, self.height = type, x, y, width, height
+
+
+class Area:
+    def __init__(self, regions):
+        self.regions = regions
+
+
+class MouseEvent(Event):
+    def __init__(self, type, value="PRESS", x=0, y=0):
+        super().__init__(type, value)
+        self.mouse_x, self.mouse_y = x, y
+
+
+view = Reg("WINDOW", 0, 0, 1600, 900)
+sidebar = Reg("UI", 1340, 0, 260, 870)          # the N sidebar overlapping the viewport
+header = Reg("HEADER", 0, 870, 1600, 30)
+fake_area = Area([view, sidebar, header])
+panel_ops.host = lambda context: (fake_area, view)
+p = prefs.addon_prefs()
+panel_ops.reset_place(p)
+p.panel_size, p.text_size, p.icon_size = 75, 100, 100
+s = panel.scale()
+x0, y0, x1, y1 = panel.placement(fake_area, view)
+check("the panel is smaller by default (75 %)", abs((x1 - x0) - panel.PANEL_WIDTH * s) < 1 and s < draw2d.base_ui(),
+      (x1 - x0, s))
+check("docked, it sits tight against the sidebar (a few pixels for the shadow)",
+      0 < 1340 - x1 <= (panel.EDGE + theme.SHADOW_PANEL) * s + 1, 1340 - x1)
+check("docked, it starts right under the header", 0 < 870 - y1 <= panel.EDGE * s + 1, 870 - y1)
+fake_area.regions = [view, header]               # sidebar closed: the panel takes the edge
+check("with the sidebar closed it docks at the viewport's right edge",
+      1600 - panel.placement(fake_area, view)[2] <= (panel.EDGE + theme.SHADOW_PANEL) * s + 1)
+fake_area.regions = [view, sidebar, header]
+
+p.panel_size = 100
+wide = panel.placement(fake_area, view)
+p.panel_size = 60
+narrow = panel.placement(fake_area, view)
+check("Panel size scales the whole panel", (narrow[2] - narrow[0]) < (wide[2] - wide[0]) * 0.65)
+p.panel_size = 75
+
+# Drag the logo row 300 px left and 100 px down.
+x0, y0, x1, y1 = panel.placement(fake_area, view)
+panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=x1 - 50, y=y1 - 20))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x1 - 350, y=y1 - 120))
+panel_ops.end_drag(bpy.context)
+m = panel.placement(fake_area, view)
+check("dragging the logo row moves the panel", p.panel_dock == "FREE" and abs(m[2] - (x1 - 300)) < 2,
+      (m, x1))
+check("a full-height panel keeps its height while it moves (it cannot go below the viewport)",
+      abs((m[3] - m[1]) - (y1 - y0)) < 2 and m[1] >= 0)
+# Drag it back near the right edge: it docks again and gets its full height back.
+panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=m[2] - 50, y=m[3] - 20))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=m[2] - 50 + 290, y=m[3] - 20))
+panel_ops.end_drag(bpy.context)
+check("let go near the right edge and it docks there again",
+      p.panel_dock == "RIGHT" and p.panel_height == 0.0 and panel.placement(fake_area, view) == (x0, y0, x1, y1),
+      (p.panel_dock, p.panel_height, p.panel_gap_right, panel.placement(fake_area, view), (x0, y0, x1, y1)))
+# A drag never takes the panel off the viewport.
+panel_ops.start_drag(bpy.context, "drag", MouseEvent("LEFTMOUSE", x=1000, y=800))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=-5000, y=-5000))
+panel_ops.end_drag(bpy.context)
+far = panel.placement(fake_area, view)
+check("the panel stays inside the viewport however far it is dragged", far[0] >= 0 and far[1] >= 0, far)
+panel_ops.do_action(bpy.context, "panel_reset")
+check("Put it back on the right resets place and size", p.panel_dock == "RIGHT" and not p.panel_width
+      and panel.placement(fake_area, view) == (x0, y0, x1, y1))
+
+# The corner grip: 80 px narrower, 200 px shorter (mouse right and up).
+panel_ops.start_drag(bpy.context, "grip", MouseEvent("LEFTMOUSE", x=x0 + 5, y=y0 + 5))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x0 + 85, y=y0 + 205))
+panel_ops.end_drag(bpy.context)
+g = panel.placement(fake_area, view)
+check("the corner grip resizes the panel and keeps its top right corner",
+      abs((g[2] - g[0]) - (x1 - x0 - 80)) < 2 and abs((g[3] - g[1]) - (y1 - y0 - 200)) < 2
+      and abs(g[2] - x1) < 1 and abs(g[3] - y1) < 1, (g, (x0, y0, x1, y1)))
+panel_ops.start_drag(bpy.context, "grip", MouseEvent("LEFTMOUSE", x=x0, y=y0))
+panel_ops.move_drag(bpy.context, MouseEvent("MOUSEMOVE", x=x0 + 5000, y=y0 + 5000))
+panel_ops.end_drag(bpy.context)
+g = panel.placement(fake_area, view)
+check("the grip stops at a usable minimum size",
+      abs((g[2] - g[0]) - panel.MIN_WIDTH * s) < 2 and abs((g[3] - g[1]) - panel.MIN_HEIGHT * s) < 2)
+panel_ops.double_click(bpy.context, "grip")
+check("double-click on the grip gives the normal size back", not p.panel_width and not p.panel_height)
+
+# Size steppers in the settings
+p.panel_size = 50
+panel_ops.do_action(bpy.context, "size:panel_size:-5")
+check("the size steppers stop at the smallest size", p.panel_size == 50)
+panel_ops.do_action(bpy.context, "size:text_size:5")
+panel_ops.do_action(bpy.context, "size:icon_size:-5")
+check("Text size and Icon size steppers change their settings", p.text_size == 105 and p.icon_size == 95)
+p.panel_size, p.text_size, p.icon_size = 75, 100, 100
+
+# Text and icon size apply only while the panel draws
+with draw2d.scaled(0.75, 1.2, 1.3):
+    inside = (draw2d.FONT_SCALE, draw2d.ICON_SCALE, round(draw2d.ui() / draw2d.base_ui(), 2),
+              round(draw2d.line_height("HAND", 10), 3))
+check("the size settings are on while the panel draws", inside == (1.2, 1.3, 0.75, round(12.0 * 1.22, 3)), inside)
+check("and off again for the viewport indicators", (draw2d.FONT_SCALE, draw2d.ICON_SCALE, draw2d.ZOOM) == (1, 1, 1))
+
+# Minimize keeps the session; Take control minimizes
+fresh()
+panel.state.open = True
+session.add("user", "Build a cottage")
+log_before = list(session.log)
+panel_ops.do_action(bpy.context, "minimize")
+check("minimize folds the panel and keeps the conversation",
+      panel.state.minimized and panel.state.open and session.log == log_before and not panel.state.focused)
+panel_ops.start_drag(bpy.context, "mini", MouseEvent("LEFTMOUSE", x=1200, y=850))
+panel_ops.end_drag(bpy.context)
+check("a click on the minimized bar opens the panel again", not panel.state.minimized and panel.state.focused)
+session.pause_flag.clear()
+p.minimize_on_take_control = True
+panel_ops.do_action(bpy.context, "take_control")
+check("Take control pauses and gets the panel out of the way",
+      session.pause_flag.is_set() and panel.state.minimized)
+panel_ops.restore()
+session.pause_flag.clear()
+p.minimize_on_take_control = False
+panel_ops.do_action(bpy.context, "take_control")
+check("with the setting off, Take control only pauses", session.pause_flag.is_set() and not panel.state.minimized)
+session.pause_flag.clear()
+p.minimize_on_take_control = True
+panel_ops.minimize()
+panel_ops.close_panel()
+check("closing the panel forgets the minimized state", not panel.state.minimized and not panel.state.open)
+area_stub = type("A", (), {"as_pointer": lambda self: 7})()
+panel.state.open, panel.state.area_ptr, panel.state.minimized = True, 7, True
+check("a minimized panel counts as open but not expanded",
+      panel.is_open_in(area_stub) and not panel.is_expanded_in(area_stub))
+panel.state.open, panel.state.minimized = False, False
+
 from blendwme.relay import addon_version  # noqa: E402
 check("saved logs carry the manifest's version", addon_version() == "2.1.0", addon_version())
 

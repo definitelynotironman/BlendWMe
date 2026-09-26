@@ -24,11 +24,17 @@ All notable changes to BlendWMe. Versions follow the add-on's `blender_manifest.
   a brain works, starts each part safely, keeps a session log and a Python crash trace, and makes a
   crash report zip.
 - Journal export to the logs folder.
+- A movable, resizable and minimizable panel: drag the logo row to move it (it snaps back to the
+  right edge), drag the corner grip to resize it, and fold it into a small status bar without
+  stopping the session. Take control minimizes it by itself (a setting).
+- Panel size, Text size and Icon size settings, and "Put it back on the right".
 
 ### Changed
 - Runs on Claude Code and Codex only. The pay-per-token API engine is removed.
 - Fewer settings: the main settings fit on one screen; the rest are under Advanced settings.
 - The sidebar tab is now a small launcher with references and extras.
+- The panel is smaller by default (75 %) and docks tight against the right edge of the viewport.
+- Ctrl+Alt+M opens BlendWMe, then focuses the input, then minimizes the panel.
 - Teach cards hold one action in under 20 words, always point at the real control, and give the
   menu path for numpad keys.
 

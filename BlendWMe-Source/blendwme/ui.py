@@ -276,8 +276,13 @@ class BWM_OT_open(bpy.types.Operator):
             panel_ops.close_panel()
             return {"FINISHED"}
         if panel.state.open and panel_ops.panel_alive() and panel.is_open_in(context.area):
-            panel.state.focused = True        # already open here: focus the input
-            panel_ops._redraw()
+            if panel.state.minimized:
+                panel_ops.restore()           # minimized: open it again
+            elif panel.state.focused:
+                panel_ops.minimize()          # open and typing: fold it away
+            else:
+                panel.state.focused = True    # open here: focus the input
+                panel_ops._redraw()
             return {"FINISHED"}
         if not panel_ops.open_panel(context):
             self.report({"WARNING"}, "Open a 3D Viewport first: BlendWMe lives there.")
@@ -476,7 +481,9 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         p = prefs.addon_prefs(context)
         row = layout.row()
         row.scale_y = 1.6
-        if panel.is_open_in(context.area):
+        if panel.is_open_in(context.area) and panel.state.minimized:
+            row.operator("blendwme.open", text="Show BlendWMe", icon="WINDOW")
+        elif panel.is_open_in(context.area):
             row.operator("blendwme.open", text="Close BlendWMe", icon="PANEL_CLOSE").close = True
         else:
             row.operator("blendwme.open", text="Open BlendWMe", icon="WINDOW")

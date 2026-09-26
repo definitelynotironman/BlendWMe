@@ -18,7 +18,12 @@ while an animation plays (Esc cancels playback there). ? and Ctrl+Alt+M are free
     Esc twice      stop                 Up / Down     prompt history
     Shift+Tab      next mode            Ctrl+L        clear the conversation view
     /              commands (in an empty input)       ?   all shortcuts (in an empty input)
-    Ctrl+Alt+M     open or focus BlendWMe (anywhere)
+    Ctrl+Alt+M     open BlendWMe; again: focus the input; again: minimize (anywhere)
+
+Moving and sizing: drag the logo row to move the panel; let go near the right edge
+and it docks there again (double-click the logo row does the same). The grip in the
+bottom left corner changes its width and height. The square button beside the
+status folds it into a small bar; the work goes on, and a click on the bar opens it.
 """
 
 import time
@@ -26,7 +31,8 @@ import time
 import bpy
 
 from . import draw2d as d
-from .panel import EXAMPLE_PROMPTS, MODES, state
+from . import panel
+from .panel import EXAMPLE_PROMPTS, MODES, MIN_HEIGHT, MIN_WIDTH, SNAP, state
 from .state import PAUSED, THINKING, WORKING, session
 
 DOUBLE_ESC = 0.6        # seconds between two Esc presses that stop the work
@@ -46,7 +52,8 @@ COMMANDS = {
 HELP = ("Shortcuts: Enter sends. Shift+Enter makes a new line. Esc pauses while working, otherwise closes the "
         "top card. Esc twice stops. Up and Down bring back earlier messages. Shift+Tab changes the mode. "
         "Ctrl+L clears this view (the journal keeps everything). Type / for commands: "
-        + ", ".join(COMMANDS) + ". Ctrl+Alt+M opens BlendWMe from anywhere. Change keys in Preferences > Keymap "
+        + ", ".join(COMMANDS) + ". Ctrl+Alt+M opens BlendWMe from anywhere (press it again to minimize). "
+        "Drag the logo row to move the panel; the corner grip resizes it. Change keys in Preferences > Keymap "
         "> Window > BlendWMe.")
 
 # The editable panel keys: action -> default binding (keymaps.py registers these).
@@ -207,6 +214,107 @@ def collapse_done(card=None):
     session.add("done", "Done" + (": " + summary if summary else ""))
 
 
+def minimize():
+    """Fold the panel into the small bar. Nothing stops: the session, the brain and the plan go on."""
+    state.minimized = True
+    state.focused = False
+    state.drag = None
+    _redraw()
+
+
+def restore(focus=True):
+    state.minimized = False
+    state.focused = focus
+    _redraw()
+
+
+def take_control(context):
+    """Take control: pause after the current action, and get the panel out of the way."""
+    from . import prefs
+    bpy.ops.blendwme.pause()
+    p = prefs.addon_prefs(context)
+    if p is None or p.minimize_on_take_control:
+        minimize()
+
+
+def reset_place(p):
+    """Back on the right, full height, the design width."""
+    p.panel_dock = "RIGHT"
+    p.panel_gap_right = p.panel_gap_top = 0.0
+    p.panel_width = p.panel_height = 0.0
+
+
+def start_drag(context, kind, event):
+    """Begin dragging: "drag" (the logo row), "mini" (the minimized bar) or "grip" (the corner)."""
+    from . import prefs
+    area, region = host(context)
+    p = prefs.addon_prefs(context)
+    if region is None or p is None:
+        return
+    x0, y0, x1, y1 = panel.placement(area, region)
+    ax1, ay1, _, _ = panel.anchor(area, region)
+    state.drag = {"kind": kind, "mx": event.mouse_x, "my": event.mouse_y, "moved": False,
+                  "gap_x": ax1 - x1, "gap_y": ay1 - y1, "w": x1 - x0, "h": y1 - y0,
+                  "auto_height": not p.panel_height}
+
+
+def move_drag(context, event):
+    from . import prefs
+    drag = state.drag
+    area, region = host(context)
+    p = prefs.addon_prefs(context)
+    if not (drag and region and p):
+        return
+    dx, dy = event.mouse_x - drag["mx"], event.mouse_y - drag["my"]
+    if not drag["moved"] and abs(dx) + abs(dy) < 4:
+        return                       # a click, not a drag (yet)
+    drag["moved"] = True
+    s = panel.scale()
+    ax1, ay1, min_x, min_y = panel.anchor(area, region)
+    if drag["kind"] == "grip":
+        # The top right corner stays; the bottom left corner follows the mouse.
+        w = max(MIN_WIDTH * s, min(drag["w"] - dx, ax1 - drag["gap_x"] - min_x))
+        h = max(MIN_HEIGHT * s, min(drag["h"] - dy, ay1 - drag["gap_y"] - min_y))
+        p.panel_width = w / s
+        p.panel_height = h / s
+        return
+    if drag["auto_height"] and not p.panel_height:
+        p.panel_height = drag["h"] / s           # a full-height panel keeps its height while it moves
+    gap_x = max(0.0, min(drag["gap_x"] - dx, ax1 - min_x - drag["w"]))
+    gap_y = max(0.0, min(drag["gap_y"] - dy, ay1 - min_y - drag["h"]))
+    p.panel_dock = "FREE"
+    p.panel_gap_right = gap_x / s
+    p.panel_gap_top = gap_y / s
+
+
+def end_drag(context):
+    """Let go. Near the right edge it docks there; a click on the minimized bar opens the panel."""
+    from . import prefs
+    drag, state.drag = state.drag, None
+    if not drag:
+        return
+    try:
+        context.window.cursor_modal_restore()
+    except Exception:
+        pass
+    p = prefs.addon_prefs(context)
+    if not drag["moved"]:
+        if drag["kind"] == "mini":
+            restore()
+        else:
+            state.focused = False
+        return
+    if p and drag["kind"] in ("drag", "mini") and p.panel_dock == "FREE" and p.panel_gap_right < SNAP:
+        p.panel_dock = "RIGHT"
+        p.panel_gap_right = p.panel_gap_top = 0.0
+        # Back to full height when it was full height before it moved (not when you resized it).
+        area, region = host(context)
+        if region is not None:
+            _, ay1, _, min_y = panel.anchor(area, region)
+            if drag["auto_height"] or p.panel_height * panel.scale() >= ay1 - min_y - 2:
+                p.panel_height = 0.0
+
+
 def next_mode(context):
     props = context.window_manager.blendwme
     keys = [k for k, _ in MODES]
@@ -279,6 +387,16 @@ def do_action(context, action, event=None):
             session.set_card(None)
     elif kind == "close_card":
         close_top_card()
+    elif kind == "minimize":
+        minimize()
+    elif kind == "take_control":
+        take_control(context)
+    elif kind == "panel_reset" and p:
+        reset_place(p)
+    elif kind == "size" and p:
+        prop, step = arg.split(":")
+        rna = p.bl_rna.properties[prop]
+        setattr(p, prop, max(rna.hard_min, min(rna.hard_max, getattr(p, prop) + int(step))))
     elif kind == "read_more":
         state.expanded.add(int(arg))
     elif kind == "pointers_again":
@@ -405,6 +523,20 @@ class BWM_OT_panel(bpy.types.Operator):
         x0, y0, x1, y1 = state.rect
         inside = x0 <= x <= x1 and y0 <= y <= y1
 
+        # Moving or resizing the panel
+        if state.drag:
+            if event.type == "MOUSEMOVE":
+                move_drag(context, event)
+                _redraw()
+                return {"RUNNING_MODAL"}
+            if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+                end_drag(context)
+                _redraw()
+                return {"RUNNING_MODAL"}
+            if event.type in ("ESC", "RIGHTMOUSE"):
+                state.drag = None
+                return {"RUNNING_MODAL"}
+
         # Dragging the pace slider
         if state.slider:
             if event.type == "MOUSEMOVE":
@@ -424,15 +556,25 @@ class BWM_OT_panel(bpy.types.Operator):
                     state.focused = False
                     _redraw()
                 return {"PASS_THROUGH"}
-            if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            if event.type == "LEFTMOUSE" and event.value in ("PRESS", "DOUBLE_CLICK"):
                 for hx0, hy0, hx1, hy1, action in reversed(state.hits):
                     if hx0 <= x <= hx1 and hy0 <= y <= hy1:
                         try:
-                            do_action(context, action, event)
+                            if action in ("drag", "mini", "grip") and event.value == "DOUBLE_CLICK":
+                                double_click(context, action)
+                            elif action in ("drag", "mini", "grip"):
+                                start_drag(context, action, event)
+                                context.window.cursor_modal_set("SCROLL_XY" if action != "grip" else "SCROLL_X")
+                            else:
+                                do_action(context, action, event)
                         except Exception as e:
                             session.add("info", f"That did not work: {e}")
                         break
+                _redraw()
             return {"RUNNING_MODAL"}
+
+        if state.minimized and not (relay_running_escape(context, event)):
+            return {"PASS_THROUGH"}         # the bar only takes clicks; keys belong to Blender
 
         if event.type in ("WHEELUPMOUSE", "WHEELDOWNMOUSE", "TRACKPADPAN") and inside:
             if event.type == "TRACKPADPAN":
@@ -498,6 +640,44 @@ class BWM_OT_panel(bpy.types.Operator):
         pass
 
 
+def relay_running_escape(context, event):
+    """While minimized only Esc still matters: it pauses the AI (unless an animation plays)."""
+    from .relay import relay
+    playing = bool(context.screen and context.screen.is_animation_playing)
+    return match(event) == "escape" and relay.is_running() and not playing
+
+
+def double_click(context, action):
+    """Double-click the logo row: dock on the right again. The grip: the design size again."""
+    from . import prefs
+    p = prefs.addon_prefs(context)
+    state.drag = None
+    if p is None:
+        return
+    if action == "grip":
+        p.panel_width = p.panel_height = 0.0
+    elif action == "mini":
+        restore()
+    else:
+        p.panel_dock = "RIGHT"
+        p.panel_gap_right = p.panel_gap_top = 0.0
+
+
+class BWM_OT_panel_reset(bpy.types.Operator):
+    bl_idname = "blendwme.panel_reset"
+    bl_label = "Put the Panel Back on the Right"
+    bl_description = "Dock the BlendWMe panel on the right again, full height, at its normal width"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        from . import prefs
+        p = prefs.addon_prefs(context)
+        if p:
+            reset_place(p)
+        _redraw()
+        return {"FINISHED"}
+
+
 class BWM_OT_panel_key(bpy.types.Operator):
     """A panel shortcut. Listed in Preferences > Keymap > Window so it can be changed;
     the panel reads the binding from there and acts on it while it has focus."""
@@ -546,6 +726,8 @@ def open_panel(context, area=None):
 def close_panel():
     state.open = False
     state.focused = False
+    state.minimized = False
+    state.drag = None
     _redraw()
 
 
@@ -570,4 +752,4 @@ def reopen_after_load():
     return None
 
 
-classes = (BWM_OT_panel, BWM_OT_panel_key)
+classes = (BWM_OT_panel, BWM_OT_panel_key, BWM_OT_panel_reset)

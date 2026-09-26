@@ -76,6 +76,31 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         name="Show pointers in the viewport", default=True,
         description="Radar rings, pencil circles and notes on the viewport and the editors", update=_redraw)
 
+    # -- the panel's size and place ---------------------------------------------
+    panel_size: bpy.props.IntProperty(
+        name="Panel size", default=75, min=50, max=150, subtype="PERCENTAGE", update=_redraw,
+        description="The size of the whole BlendWMe panel: its width, writing, buttons and icons")
+    text_size: bpy.props.IntProperty(
+        name="Text size", default=100, min=70, max=150, subtype="PERCENTAGE", update=_redraw,
+        description="The writing in the panel, on top of the panel size")
+    icon_size: bpy.props.IntProperty(
+        name="Icon size", default=100, min=70, max=160, subtype="PERCENTAGE", update=_redraw,
+        description="The icons and marks in the panel, on top of the panel size")
+    minimize_on_take_control: bpy.props.BoolProperty(
+        name="Minimize when I take control", default=True, update=_redraw,
+        description="Take control folds the panel into a small bar, so the viewport is yours. "
+                    "The session keeps going; click the bar to open it again")
+    # Where the panel sits. Set by dragging its header (and its corner grip); "Put it back
+    # on the right" in the settings resets them. Distances are at 100 % panel size.
+    panel_dock: bpy.props.EnumProperty(
+        name="Panel place", default="RIGHT", update=_redraw,
+        items=[("RIGHT", "On the right", "Tight against the right edge of the viewport"),
+               ("FREE", "Where I put it", "Where you dragged it")])
+    panel_gap_right: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
+    panel_gap_top: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})
+    panel_width: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})     # 0: the design width
+    panel_height: bpy.props.FloatProperty(default=0.0, min=0.0, options={"HIDDEN"})    # 0: full height
+
     # -- Advanced (closed by default) -----------------------------------------
     show_advanced: bpy.props.BoolProperty(name="Advanced", default=False)
     level: bpy.props.EnumProperty(
@@ -142,6 +167,13 @@ def draw_settings(layout, p, context=None):
     col.separator()
     col.prop(p, "pace", text="Pace (s a step)")
     col.prop(p, "show_pointers")
+    col.separator()
+    col.label(text="Panel")
+    col.prop(p, "panel_size")
+    col.prop(p, "text_size")
+    col.prop(p, "icon_size")
+    col.prop(p, "minimize_on_take_control")
+    col.operator("blendwme.panel_reset", text="Put the panel back on the right", icon="LOOP_BACK")
     col.separator()
     box = col.box()
     box.prop(p, "show_advanced", icon="TRIA_DOWN" if p.show_advanced else "TRIA_RIGHT", emboss=False)

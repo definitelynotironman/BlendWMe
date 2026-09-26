@@ -325,11 +325,13 @@ def _draw_view3d_main():
                     s = d.ui()
                     bubble(xy.x - 300 * s, xy.y + 40 * s, p["label"], pal, anchor=(xy.x - 12 * s, xy.y + 8 * s))
         _draw_region_pointer(region, area, pal)
-        if not panel.is_open_in(area):
+        if not panel.is_expanded_in(area):
+            # Closed or minimized: a Teach cue still shows on the viewport. The working card
+            # only shows when the panel is closed (the minimized bar already says "Building").
             card = session.card
             if card and not card.get("hidden") and session.status in (WAIT_USER, WAIT_NEXT, ASKING):
                 cue_card(region, card, pal)
-            elif relay.is_running() and session.status in (THINKING, WORKING):
+            elif relay.is_running() and session.status in (THINKING, WORKING) and not panel.is_open_in(area):
                 working_card(region, pal)
         gpu.state.blend_set("NONE")
     except Exception as e:  # never break Blender's drawing

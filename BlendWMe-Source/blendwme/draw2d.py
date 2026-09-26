@@ -24,6 +24,36 @@ _font_ids = {}
 # Line heights as a multiple of the font size.
 LINE = {"BLACK": 1.25, "HAND": 1.22, "BODY": 1.38}
 
+# The panel's "Text size" and "Icon size" settings. The panel sets them while it draws
+# (see scaled()) and puts them back to 1.0 after, so the viewport indicators keep their size.
+# ZOOM is the "Panel size" setting: shapes that size themselves with ui() (borders,
+# corners, shadows) follow it too.
+FONT_SCALE = 1.0
+ICON_SCALE = 1.0
+ZOOM = 1.0
+
+
+class scaled:
+    """with d.scaled(zoom, font, icon): ... draws the panel at its size settings."""
+
+    def __init__(self, zoom=1.0, font=1.0, icon=1.0):
+        self.zoom, self.font, self.icon = zoom, font, icon
+
+    def __enter__(self):
+        global FONT_SCALE, ICON_SCALE, ZOOM
+        ZOOM, FONT_SCALE, ICON_SCALE = self.zoom, self.font, self.icon
+        return self
+
+    def __exit__(self, *exc):
+        global FONT_SCALE, ICON_SCALE, ZOOM
+        ZOOM, FONT_SCALE, ICON_SCALE = 1.0, 1.0, 1.0
+        return False
+
+
+def _fs(size):
+    """A font size with the Text size setting applied."""
+    return size * FONT_SCALE
+
 
 # ----------------------------------------------------------------------
 # Fonts and scale
@@ -51,13 +81,18 @@ def font(key):
     return _font_ids.get(key, 0)
 
 
-def ui():
+def base_ui():
     """Blender's interface scale (Resolution Scale times the screen's own scale)."""
     try:
         system = bpy.context.preferences.system
         return system.dpi / 72.0
     except Exception:
         return 1.0
+
+
+def ui():
+    """The scale to draw at: Blender's, times the panel size while the panel draws."""
+    return base_ui() * ZOOM
 
 
 # ----------------------------------------------------------------------
@@ -178,6 +213,7 @@ def disc(cx, cy, r, color):
 
 
 def diamond(cx, cy, r, color, width=2.0, filled=False):
+    r *= ICON_SCALE
     pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
     if filled:
         fill_poly(pts, color)
@@ -185,24 +221,33 @@ def diamond(cx, cy, r, color, width=2.0, filled=False):
         polyline(pts, color, width, closed=True)
 
 
+def _grow(x, y, size):
+    """An icon box at (x, y) scaled by the Icon size setting around its centre."""
+    grown = size * ICON_SCALE
+    return x - (grown - size) / 2, y - (grown - size) / 2, grown
+
+
 def check_mark(x, y, size, color, width=2.0):
     """A tick whose bounding box starts at (x, y)."""
+    x, y, size = _grow(x, y, size)
     polyline([(x, y + size * 0.5), (x + size * 0.38, y + size * 0.12), (x + size, y + size * 0.85)], color, width)
 
 
 def cross(cx, cy, size, color, width=2.0):
-    h = size / 2
+    h = size * ICON_SCALE / 2
     segments([((cx - h, cy - h), (cx + h, cy + h)), ((cx - h, cy + h), (cx + h, cy - h))], color, width)
 
 
 def pencil_icon(x, y, size, color, width=1.6):
     """A small pencil: a slanted body with a tip."""
+    x, y, size = _grow(x, y, size)
     s = size
     polyline([(x, y), (x + s * 0.25, y + s * 0.08), (x + s, y + s * 0.83), (x + s * 0.83, y + s),
               (x + s * 0.08, y + s * 0.25), (x, y)], color, width)
 
 
 def eye_icon(cx, cy, size, color, width=2.0):
+    size *= ICON_SCALE
     w, h = size, size * 0.55
     top = [(cx - w / 2 + w * i / 12, cy + h / 2 * math.sin(math.pi * i / 12)) for i in range(13)]
     bottom = [(cx + w / 2 - w * i / 12, cy - h / 2 * math.sin(math.pi * i / 12)) for i in range(13)]
@@ -214,6 +259,9 @@ def ticks(x, y, height, color, phase=None, width=None):
     """The thinking ticks: three slanted bars. `phase` (0..1) pulses them in turn; None is still."""
     s = ui()
     width = width or 3.0 * s
+    grown = height * ICON_SCALE
+    y -= (grown - height) / 2
+    height = grown
     gap = height * 0.42
     for i in range(3):
         alpha = 1.0
@@ -276,7 +324,7 @@ class clip:
 def text(key, size, x, y, value, color):
     """Draw one line with its baseline at y."""
     fid = font(key)
-    blf.size(fid, size)
+    blf.size(fid, _fs(size))
     blf.color(fid, *color)
     blf.position(fid, x, y, 0)
     blf.draw(fid, value)
@@ -284,12 +332,13 @@ def text(key, size, x, y, value, color):
 
 def width_of(key, size, value):
     fid = font(key)
-    blf.size(fid, size)
+    blf.size(fid, _fs(size))
     return blf.dimensions(fid, value)[0]
 
 
 def tracked(key, size, x, y, value, color, tracking=0.08):
     """Letter-spaced text (labels in caps, 0.08 em). Returns the width drawn."""
+    size = _fs(size)
     fid = font(key)
     blf.size(fid, size)
     blf.color(fid, *color)
@@ -302,6 +351,7 @@ def tracked(key, size, x, y, value, color, tracking=0.08):
 
 
 def tracked_width(key, size, value, tracking=0.08):
+    size = _fs(size)
     fid = font(key)
     blf.size(fid, size)
     return sum(blf.dimensions(fid, ch)[0] for ch in value) + size * tracking * max(0, len(value) - 1)
@@ -312,6 +362,7 @@ _wrap_cache = {}
 
 def wrap(key, size, value, max_width):
     """Split text into lines that fit max_width. Never cuts text off: long words break."""
+    size = _fs(size)
     cache_key = (key, round(size, 2), value, int(max_width))
     if cache_key in _wrap_cache:
         return _wrap_cache[cache_key]
@@ -343,7 +394,7 @@ def wrap(key, size, value, max_width):
 
 
 def line_height(key, size):
-    return size * LINE.get(key, 1.3)
+    return _fs(size) * LINE.get(key, 1.3)
 
 
 def paragraph(key, size, x, top, value, color, max_width, align="left", max_lines=None):
@@ -352,7 +403,7 @@ def paragraph(key, size, x, top, value, color, max_width, align="left", max_line
     if max_lines is not None:
         lines = lines[:max_lines]
     lh = line_height(key, size)
-    y = top - size * 0.95
+    y = top - _fs(size) * 0.95
     for line in lines:
         lx = x
         if align == "right":

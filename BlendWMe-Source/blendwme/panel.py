@@ -26,6 +26,11 @@ from .state import ASKING, DONE, ERROR, IDLE, PAUSED, THINKING, WAIT_NEXT, WAIT_
 PANEL_WIDTH = 372          # CSS px at 100 %
 PAD = 16
 GAP = 12
+PANEL_CARD_H = 250         # the Panel card in the settings
+MIN_WIDTH = 250            # CSS px: the corner grip stops here
+MIN_HEIGHT = 320
+EDGE = 3                   # CSS px between the panel and the edge it is docked to
+SNAP = 28                  # CSS px: let go this close to the right edge and it docks there
 READ_MORE_LINES = 12       # longer messages show this many lines and "Read more"
 
 EXAMPLES = ("A cosy low poly cottage", "A modern room with a bed", "A simple ice cream cone")
@@ -75,6 +80,8 @@ class PanelState:
         self.next_id = 1
         self.error_shown = False
         self.cleared_at = 0.0          # Ctrl+L: messages before this time are not shown
+        self.minimized = False         # folded into the small bar; the session keeps going
+        self.drag = None               # dragging the header, the minimized bar or the corner grip
 
 
 state = PanelState()
@@ -113,6 +120,11 @@ def is_open_in(area):
     return state.open and area is not None and area.as_pointer() == state.area_ptr
 
 
+def is_expanded_in(area):
+    """Open here and not folded into the minimized bar."""
+    return is_open_in(area) and not state.minimized
+
+
 def _prefs():
     from . import prefs
     try:
@@ -134,28 +146,68 @@ def your_turn():
     return session.status in (WAIT_USER, WAIT_NEXT, ASKING) or card.get("kind") == "limit"
 
 
-def placement(area, region):
-    """The panel rectangle in the 3D Viewport's main region: right side, clear of the
-    sidebar and the header when they overlap the viewport."""
-    s = d.ui()
-    right_inset = 0
-    top_inset = 0
+def sizes():
+    """(zoom, text, icon) from the Panel size, Text size and Icon size settings."""
+    p = _prefs()
+    if p is None:
+        return 0.75, 1.0, 1.0
+    return p.panel_size / 100.0, p.text_size / 100.0, p.icon_size / 100.0
+
+
+def scale():
+    """Pixels per design pixel: Blender's interface scale times the panel size."""
+    return d.base_ui() * sizes()[0]
+
+
+def free_area(area, region):
+    """(left, bottom, right, top) of the viewport region that the toolbar, the sidebar
+    and the header do not cover (they overlap the viewport when Region Overlap is on)."""
+    left, bottom, right, top = 0.0, 0.0, float(region.width), float(region.height)
     for r in area.regions:
         if r.width <= 1 or r.height <= 1 or r.type == "WINDOW":
             continue
         overlaps_x = region.x <= r.x < region.x + region.width
         overlaps_y = region.y <= r.y < region.y + region.height
         if r.type == "UI" and overlaps_x and overlaps_y:
-            right_inset = max(right_inset, region.x + region.width - r.x)
+            right = min(right, r.x - region.x)
+        if r.type == "TOOLS" and overlaps_y and r.x <= region.x + 2:
+            left = max(left, r.x + r.width - region.x)
         if r.type in ("HEADER", "TOOL_HEADER") and overlaps_y and r.y > region.y + region.height / 2:
-            top_inset = max(top_inset, region.y + region.height - r.y)
-    margin = 12 * s
-    width = min(PANEL_WIDTH * s, region.width - right_inset - 2 * margin)
-    x1 = region.width - right_inset - margin - 6 * s        # room for the hard shadow
-    x0 = x1 - width
-    y1 = region.height - top_inset - margin
-    y0 = margin + 6 * s
-    return x0, y0, x1, y1
+            top = min(top, r.y - region.y)
+    return left, bottom, right, top
+
+
+def anchor(area, region):
+    """Where the panel's top right corner goes when it is docked: tight against the right
+    edge (or the sidebar) and the header, leaving room for the hard shadow."""
+    s = scale()
+    left, bottom, right, top = free_area(area, region)
+    shadow = theme.SHADOW_PANEL * s
+    return right - EDGE * s - shadow, top - EDGE * s, left + EDGE * s, bottom + EDGE * s + shadow
+
+
+def placement(area, region):
+    """The panel rectangle (x0, y0, x1, y1) in the 3D Viewport's main region.
+
+    Docked: top right, full height. Moved: the gaps the user dragged it to. The corner
+    grip sets its width and height. It always stays inside the free viewport."""
+    s = scale()
+    p = _prefs()
+    ax1, ay1, min_x, min_y = anchor(area, region)
+    width = ((p.panel_width if p and p.panel_width else PANEL_WIDTH) * s)
+    width = max(1.0, min(width, ax1 - min_x))
+    free = p is not None and p.panel_dock == "FREE"
+    gap_x = p.panel_gap_right * s if free else 0.0
+    gap_y = p.panel_gap_top * s if free else 0.0
+    if p and p.panel_height:
+        height = min(p.panel_height * s, ay1 - min_y)
+    else:
+        height = ay1 - gap_y - min_y
+    gap_x = max(0.0, min(gap_x, ax1 - min_x - width))
+    gap_y = max(0.0, min(gap_y, ay1 - min_y - height))
+    x1 = ax1 - gap_x
+    y1 = ay1 - gap_y
+    return x1 - width, y1 - height, x1, y1
 
 
 # ----------------------------------------------------------------------
@@ -166,7 +218,8 @@ class Painter:
 
     def __init__(self, area, region):
         self.area, self.region = area, region
-        self.s = d.ui()
+        self.zoom, self.text_scale, self.icon_scale = sizes()
+        self.s = d.base_ui() * self.zoom
         self.p = theme.current()
         self.motion = not theme.reduce_motion()
         self.now = time.time()
@@ -228,11 +281,11 @@ class Painter:
     def mark(self, brain, cx, cy, r, color=None):
         color = color or self.p.ink
         if brain == "codex":
-            d.diamond(cx, cy, r * 1.15, color, self.px(2.2))
+            d.diamond(cx, cy, r * 1.15, color, self.px(2.2))          # diamond() applies the icon size
         elif brain == "you":
             pass
         else:
-            d.circle(cx, cy, r, color, self.px(2.2))
+            d.circle(cx, cy, r * d.ICON_SCALE, color, self.px(2.2))
 
     def you_box(self, x, y, size):
         """The small boxed word "YOU"."""
@@ -245,10 +298,20 @@ class Painter:
     def draw(self):
         import gpu
         x0, y0, x1, y1 = placement(self.area, self.region)
-        if x1 - x0 < self.px(200) or y1 - y0 < self.px(240):
-            return
-        state.rect = (x0, y0, x1 + self.px(6), y1)
         gpu.state.blend_set("ALPHA")
+        try:
+            with d.scaled(self.zoom, self.text_scale, self.icon_scale):
+                if state.minimized:
+                    self.minimized_bar(x1, y1)
+                elif x1 - x0 >= self.px(200) and y1 - y0 >= self.px(240):
+                    self.full(x0, y0, x1, y1)
+        finally:
+            gpu.state.blend_set("NONE")
+        # Later hits are on top: the modal checks them last-first.
+        state.hits = self.hits
+
+    def full(self, x0, y0, x1, y1):
+        state.rect = (x0, y0 - self.px(6), x1 + self.px(6), y1)
         p = self.p
         d.box(x0, y0, x1 - x0, y1 - y0, fill=p.panel, border=p.ink, width=theme.BORDER_PANEL,
               radius=theme.RADIUS, shadow=p.shadow, shadow_offset=theme.SHADOW_PANEL)
@@ -261,9 +324,51 @@ class Painter:
             self.journal_screen(*inner)
         else:
             self.main_screen(*inner)
-        gpu.state.blend_set("NONE")
-        # Later hits are on top: the modal checks them last-first.
-        state.hits = self.hits
+        self.grip(x0, y0)
+
+    def grip(self, x0, y0):
+        """The corner grip (bottom left): drag it to make the panel narrower, wider, shorter or taller."""
+        p = self.p
+        size = self.px(14)
+        for i in (1, 2, 3):
+            k = size * i / 3
+            d.polyline([(x0 + self.px(4), y0 + self.px(4) + k), (x0 + self.px(4) + k, y0 + self.px(4))],
+                       p.with_alpha(p.muted, 0.8), self.px(1.4))
+        self.hit(x0, y0, size + self.px(8), size + self.px(8), "grip")
+
+    def minimized_bar(self, x1, y1):
+        """The panel folded into one small bar at its top right corner. The work goes on;
+        the bar shows what is happening and blinks red when it is your turn. Click it to open."""
+        p = self.p
+        words, icon = self.status_words()
+        size = self.px(16)
+        h = self.px(38)
+        logo_w = d.width_of("BLACK", self.px(15), "BlendWMe")
+        icon_w = self.px(22) if icon != "none" else 0
+        w = self.px(14) + logo_w + self.px(12) + icon_w + d.width_of("HAND", size, words) + self.px(44)
+        x, y = x1 - w, y1 - h
+        d.box(x, y, w, h, fill=p.panel, border=p.ink, width=theme.BORDER_CARD, radius=theme.RADIUS,
+              shadow=p.shadow, shadow_offset=theme.SHADOW_BUTTON)
+        cy = y + h / 2
+        tx = x + self.px(14)
+        d.text("BLACK", self.px(15), tx, cy - self.px(5), "BlendWMe", p.ink)
+        tx += logo_w + self.px(12)
+        if icon == "ticks":
+            phase = ((self.now % 1.2) / 1.2) if self.motion else None
+            d.ticks(tx, cy - self.px(6), self.px(11), p.ink, phase)
+        elif icon == "dot":
+            alpha = 1.0 if self.blink(0.5) else 0.25
+            d.disc(tx + self.px(6), cy, self.px(5.5), p.with_alpha(p.hot, alpha))
+        tx += icon_w
+        d.text("HAND", size, tx, cy - size * 0.32, words, p.ink)
+        # The "open" mark: a small square with an arrow out of it.
+        bx = x + w - self.px(26)
+        d.box(bx, cy - self.px(7), self.px(14), self.px(14), border=p.ink, width=1.6, radius=2)
+        d.polyline([(bx + self.px(5), cy + self.px(2)), (bx + self.px(14), cy + self.px(11))], p.ink, self.px(1.6))
+        d.polyline([(bx + self.px(8), cy + self.px(11)), (bx + self.px(14), cy + self.px(11)),
+                    (bx + self.px(14), cy + self.px(5))], p.ink, self.px(1.6))
+        state.rect = (x, y - self.px(4), x1 + self.px(4), y1)
+        self.hit(x, y, w, h, "mini")
 
     # -- header -----------------------------------------------------------
     def logo(self, x, top, size=30):
@@ -300,29 +405,48 @@ class Painter:
         dot = fs * 0.24
         dot_alpha = 1.0 if (not your_turn() or self.blink(0.5)) else 0.15
         d.rect(bx + w + self.px(4), base, dot, dot, p.with_alpha(p.hot, dot_alpha))
+        self.logo_right = bx + w + self.px(4) + dot
         return fs * 1.15
 
-    def status_pill(self, x1, top):
-        p = self.p
+    def status_words(self):
+        """(words, icon) for the status pill and the minimized bar; ("Ready", "none") when idle."""
         status = session.status
         card = session.card or {}
         running = self.relay.is_running()
         if card.get("kind") == "limit":
-            words, icon = f"{label(card.get('brain'))} paused", "dot"
-        elif status in (WAIT_USER, WAIT_NEXT, ASKING):
-            words, icon = "Your turn", "dot"
-        elif status == PAUSED:
-            words, icon = "You have control", "none"
-        elif running and status == WORKING:
-            words, icon = "Building", "ticks"
-        elif running:
-            words, icon = "Thinking", "ticks"
-        elif status == DONE:
-            words, icon = "Done", "none"
-        elif status == ERROR:
-            words, icon = "Stopped", "none"
-        else:
+            return f"{label(card.get('brain'))} paused", "dot"
+        if status in (WAIT_USER, WAIT_NEXT, ASKING):
+            return "Your turn", "dot"
+        if status == PAUSED:
+            return "You have control", "none"
+        if running and status == WORKING:
+            return "Building", "ticks"
+        if running:
+            return "Thinking", "ticks"
+        if status == DONE:
+            return "Done", "none"
+        if status == ERROR:
+            return "Stopped", "none"
+        return "Ready", "none"
+
+    def logo_width(self, size):
+        fs = self.px(size)
+        tag = d.width_of("BLACK", fs * 0.92, "WMe") + self.px(14)
+        return d.width_of("BLACK", fs, "Blend") + self.px(4) + tag + self.px(4) + fs * 0.24
+
+    def status_pill(self, x1, top, room=None):
+        p = self.p
+        words, icon = self.status_words()
+        if words == "Ready":
             return
+        if room is not None:
+            # Not enough room beside the logo: the icon alone (the thinking box says the rest),
+            # or nothing when there is no icon either.
+            full = d.width_of("HAND", self.px(17), words) + (self.px(26) if icon != "none" else 0) + self.px(24)
+            if full > room:
+                if icon == "none" or room < self.px(40):
+                    return
+                words = ""
         size = self.px(17)
         tw = d.width_of("HAND", size, words)
         icon_w = self.px(26) if icon != "none" else 0
@@ -340,12 +464,33 @@ class Painter:
         d.text("HAND", size, x + self.px(12) + icon_w, y + (h - size * 0.6) / 2, words, p.ink)
 
     def header(self, x0, top, x1, back=False):
-        h = self.logo(x0, top)
+        """The logo row. Drag it to move the panel; double-click it to dock it on the right again."""
+        hh = self.px(40)
+        self.hit(x0 - self.px(PAD), top - hh, x1 - x0 + 2 * self.px(PAD), hh + self.px(PAD), "drag")
+        right = self.minimize_button(x1, top) - self.px(8)
+        # The biggest logo that still leaves room for the whole status beside it.
+        words, icon = self.status_words()
+        pill = 0 if back or words == "Ready" else (d.width_of("HAND", self.px(17), words) + self.px(24)
+                                                    + (self.px(26) if icon != "none" else 0))
         if back:
-            self.back_pill(x1, top)
+            pill = d.width_of("HAND", self.px(17), "Back") + self.px(44)
+        size = next((sz for sz in (30, 27, 24) if self.logo_width(sz) + pill + self.px(10) <= right - x0), 22)
+        h = self.logo(x0, top, size=size)
+        if back:
+            self.back_pill(right, top)
         else:
-            self.status_pill(x1, top)
+            self.status_pill(right, top, room=right - self.logo_right - self.px(10))
         return max(h, self.px(36))
+
+    def minimize_button(self, x1, top):
+        """A small square with a line: fold the panel into the minimized bar. Returns its left x."""
+        p = self.p
+        size = self.px(28)
+        x, y = x1 - size, top - self.px(30)
+        d.box(x, y, size, size, fill=p.card, border=p.ink, width=2.0, radius=6)
+        d.polyline([(x + self.px(8), y + self.px(9)), (x + size - self.px(8), y + self.px(9))], p.ink, self.px(2.2))
+        self.hit(x, y, size, size, "minimize")
+        return x
 
     def back_pill(self, x1, top):
         p = self.p
@@ -613,11 +758,11 @@ class Painter:
         if status == WAIT_USER:
             buttons = (("Check my work", "teach:done", True), ("Show me", "teach:show_me", False))
         elif status == WAIT_NEXT:
-            buttons = (("Next", "op:blendwme.next", True), ("Take control", "op:blendwme.pause", False))
+            buttons = (("Next", "op:blendwme.next", True), ("Take control", "take_control", False))
         elif status == PAUSED:
             buttons = (("Resume", "op:blendwme.resume", True), ("Stop", "op:blendwme.stop", False))
         elif running and status in (THINKING, WORKING):
-            buttons = (("Pause", "op:blendwme.pause", True), ("Take control", "op:blendwme.pause", False))
+            buttons = (("Pause", "op:blendwme.pause", True), ("Take control", "take_control", False))
         if not buttons:
             return 0
         h = self.px(48)
@@ -805,7 +950,9 @@ class Painter:
 
     def checkbox(self, x, y, size, on):
         p = self.p
-        d.box(x, y, size, size, fill=p.accent if on else p.card, border=p.ink, width=2.2, radius=3)
+        grown = size * d.ICON_SCALE            # the Icon size setting, around the box's centre
+        bx, by = x - (grown - size) / 2, y - (grown - size) / 2
+        d.box(bx, by, grown, grown, fill=p.accent if on else p.card, border=p.ink, width=2.2, radius=3)
         if on:
             d.check_mark(x + size * 0.18, y + size * 0.2, size * 0.64, p.on_accent, self.px(2.6))
 
@@ -1095,10 +1242,12 @@ class Painter:
             else:
                 status = message
             sw = w - self.px(110)
-            h = self.px(74) + max(0, d.paragraph_height("HAND", self.px(16), status, sw) - self.px(20))
+            h = max(self.px(74), self.px(66) + d.paragraph_height("HAND", self.px(16), status, sw))   # room under the status
             blocks.append((h, self._brain_choice(brain, line, status, h, sw)))
         # Theme
         blocks.append((self.px(132), self._theme_card))
+        # The panel's size and place
+        blocks.append((self.px(PANEL_CARD_H), self._panel_card))
         # Relay options, Auto pace and pointers
         options = (("offer_handover", "Offer a hand-over when a limit is reached"),
                    ("auto_relay", "Hand over by itself in Auto"),
@@ -1190,6 +1339,40 @@ class Painter:
                 d.disc(cx, y + self.px(24), self.px(5), p.ink)
             d.text("HAND", self.px(18), cx + self.px(14), y + self.px(18), name, p.ink)
             self.hit(sx, y + self.px(8), sw, self.px(84), "theme:" + key)
+
+    def _panel_card(self, x, top, w):
+        """Panel size, Text size and Icon size steppers, minimize on Take control, and a reset."""
+        p = self.p
+        h = self.px(PANEL_CARD_H)
+        y = top - h
+        self.card_box(x, y, w, h)
+        self.label_caps(x + self.px(18), top - self.px(30), "Panel")
+        cursor = top - self.px(50)
+        size = self.px(18)
+        for prop, words in (("panel_size", "Panel size"), ("text_size", "Text size"), ("icon_size", "Icon size")):
+            value = getattr(self.prefs, prop, 100) if self.prefs else 100
+            row_y = cursor - self.px(32)
+            d.text("HAND", size, x + self.px(18), row_y + self.px(10), words, p.ink)
+            bs = self.px(26)
+            plus_x = x + w - self.px(18) - bs
+            minus_x = plus_x - self.px(64) - bs
+            for bx, sign in ((minus_x, -1), (plus_x, 1)):
+                d.box(bx, row_y + self.px(3), bs, bs, fill=p.card, border=p.ink, width=2.0, radius=6)
+                cx, cy = bx + bs / 2, row_y + self.px(3) + bs / 2
+                d.polyline([(cx - self.px(6), cy), (cx + self.px(6), cy)], p.ink, self.px(2))
+                if sign > 0:
+                    d.polyline([(cx, cy - self.px(6)), (cx, cy + self.px(6))], p.ink, self.px(2))
+                self.hit(bx - self.px(4), row_y, bs + self.px(8), bs + self.px(6), f"size:{prop}:{sign * 5}")
+            vw = d.width_of("BLACK", self.px(14), f"{value}%")
+            d.text("BLACK", self.px(14), minus_x + bs + (plus_x - minus_x - bs - vw) / 2, row_y + self.px(11),
+                   f"{value}%", p.ink)
+            cursor -= self.px(36)
+        on = bool(getattr(self.prefs, "minimize_on_take_control", False))
+        self.checkbox(x + self.px(18), cursor - self.px(30), self.px(26), on)
+        d.text("HAND", size, x + self.px(58), cursor - self.px(24), "Minimize when I take control", p.ink)
+        self.hit(x, cursor - self.px(36), w, self.px(36), "toggle:minimize_on_take_control")
+        self.button(x + self.px(18), y + self.px(14), w - self.px(36), self.px(36), "Put it back on the right",
+                    "panel_reset", size=13)
 
     def _relay_card(self, x, top, w, h, options, tw):
         p = self.p
