@@ -180,8 +180,10 @@ def best_enum(value, items, aliases=None):
         return aliases[key]
     if key in items:
         return key
-    if key + "_NEXT" in items:          # BLENDER_EEVEE -> BLENDER_EEVEE_NEXT in 4.2
+    if key + "_NEXT" in items:          # BLENDER_EEVEE -> BLENDER_EEVEE_NEXT in 4.2 to 4.4
         return key + "_NEXT"
+    if key.endswith("_NEXT") and key[:-5] in items:     # and back again from 5.0
+        return key[:-5]
     hits = difflib.get_close_matches(key, items, n=1, cutoff=0.75)
     return hits[0] if hits else None
 
@@ -535,9 +537,12 @@ def _fit_value(owner, name, value, message):
             seq = seq[:want]
         extra = " (alpha 1.0 added)" if want == 4 and m.group(2) == "3" else ""
         return tuple(seq), f"{name} needs {want} values, got {m.group(2)}{extra}"
-    if "sequence expected" in message and isinstance(value, (int, float)):
+    # One number for a vector. Blender 4.x says "sequence expected"; 5.x gives no reason
+    # at all, so the property itself decides: an array property gets the number repeated.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
-            size = owner.bl_rna.properties[name].array_length or len(getattr(owner, name))
+            prop = owner.bl_rna.properties[name]
+            size = prop.array_length if prop.type in ("FLOAT", "INT", "BOOLEAN") else 0
         except Exception:
             return None
         if size:

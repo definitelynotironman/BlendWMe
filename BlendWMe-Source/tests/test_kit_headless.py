@@ -121,6 +121,9 @@ check("swapped modifier arguments repaired", r["ok"] and bpy.data.objects["H3"].
       and any("swapped" in n for n in r["auto_repaired"]), r)
 
 # Fix A2: more mechanical slips are repaired, run, and reported
+# EEVEE's engine id: BLENDER_EEVEE_NEXT in 4.2 to 4.4, BLENDER_EEVEE again from 5.0.
+EEVEE_ID = next(i.identifier for i in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items
+                if i.identifier.startswith("BLENDER_EEVEE"))
 REPAIRS = [
     ("diffuse_color with 3 values", "m = bwm.material('RepA', (1, 0, 0))\nm.diffuse_color = (0.2, 0.4, 0.6)",
      lambda: tuple(round(v, 1) for v in bpy.data.materials['RepA'].diffuse_color) == (0.2, 0.4, 0.6, 1.0)),
@@ -133,7 +136,9 @@ REPAIRS = [
     ("removed 2.7x property skipped", "w = C.scene.world or D.worlds.new('W')\nw.light_settings.use_ambient_occlusion = True\n"
      "bwm.box('AfterSkip', (1, 1, 1))", lambda: "AfterSkip" in bpy.data.objects),
     ("obj.select = True", "o = bwm.box('Sel', (1, 1, 1))\no.select = True", lambda: bpy.data.objects['Sel'].select_get()),
-    ("engine id from 4.1", "C.scene.render.engine = 'BLENDER_EEVEE'", lambda: C_scene().render.engine == 'BLENDER_EEVEE_NEXT'),
+    ("engine id from another version",
+     "C.scene.render.engine = " + repr("BLENDER_EEVEE" if EEVEE_ID == "BLENDER_EEVEE_NEXT" else "BLENDER_EEVEE_NEXT"),
+     lambda: C_scene().render.engine == EEVEE_ID),
     ("enum in lower case", "o = bwm.box('Wire', (1, 1, 1))\no.display_type = 'wire'", lambda: bpy.data.objects['Wire'].display_type == 'WIRE'),
     ("one number for a vector", "o = bwm.box('Sc', (1, 1, 1))\no.scale = 2", lambda: tuple(bpy.data.objects['Sc'].scale) == (2, 2, 2)),
     ("operator keywords and name", "bpy.ops.mesh.primitive_cylinder_add(radius=0.2, height=3, segments=12, name='Pole')",

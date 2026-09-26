@@ -67,7 +67,7 @@ run_python(title="Main body", explain="The main block", part=1,
 - bpy.ops calls already run with a 3D Viewport context. Switch back to Object Mode at the end of a step that used Edit Mode.
 - Read sizes and positions of earlier parts from the scene (get_object_info, bounds) instead of retyping numbers you guessed before.
 - Find shader nodes by type, never by name: next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED").
-- Blender 4.2 Principled BSDF inputs: "Base Color", "Roughness", "Metallic", "Emission Color", "Emission Strength", "Alpha", "Subsurface Weight", "Coat Weight". The EEVEE engine id is "BLENDER_EEVEE_NEXT".
+- Principled BSDF inputs (Blender 4.2 and later): "Base Color", "Roughness", "Metallic", "Emission Color", "Emission Strength", "Alpha", "Subsurface Weight", "Coat Weight". The EEVEE engine id is "BLENDER_EEVEE_NEXT" in 4.2 to 4.4 and "BLENDER_EEVEE" from 5.0 (either is repaired to the right one).
 - If you are not sure of a property or operator name, call inspect_api first instead of guessing.
 - If a step fails, everything it created is removed. Read the error and hint, fix that line, and send the whole step again. Parts from earlier successful steps are still there.
 - Glass: for stylised work use an opaque dark blue-grey material (0.05, 0.08, 0.12) with roughness 0.1. Avoid alpha.
