@@ -89,6 +89,7 @@ class Agent:
         self.ref_spec = ""
         self.spec_pending = False
         self.plan_done_noted = False
+        self.on_step = None      # 2.0: the relay records API steps in the project journal
 
     # ------------------------------------------------------------------
     # Called from the UI (main thread)
@@ -96,11 +97,12 @@ class Agent:
     def is_running(self):
         return self.thread is not None and self.thread.is_alive()
 
-    def send(self, text, config, new_task=False):
+    def send(self, text, config, new_task=False, record_user=True):
         text = (text or "").strip()
         if not text:
             return
-        session.add("you", text)
+        if record_user:
+            session.add("you", text)
         if self.is_running():
             # The agent reads this between steps (steering or answering a question).
             session.inbox.put(text)
@@ -303,6 +305,11 @@ class Agent:
 
     # -- model ------------------------------------------------------------
     def _ask_model(self, client):
+        budget = int(self.config.get("token_budget") or 0)
+        if budget and session.tokens >= budget:
+            # 2.0: the pay-per-token brain always has a hard budget. Never spend past it.
+            raise llm.LLMError(f"The API token budget ({budget:,} tokens) is used up. Raise it in the "
+                               "preferences, or switch to Claude or Codex.")
         self._compact()
         delays = [3, 8, 20]
         for attempt in range(len(delays) + 1):
@@ -631,7 +638,9 @@ class Agent:
                           "step": len(session.steps) + 1, **self._plan_progress()})
         result = bridge.call(executor.run, code, title)
         changed = result.get("_changed", {})
-        session.steps.append({"title": title, "explain": explain, "code": code, "ok": result["ok"]})
+        session.steps.append({"title": title, "explain": explain, "code": code, "ok": result["ok"], "brain": "api"})
+        if self.on_step:
+            self.on_step(title, explain, code, result, changed, part)
         if result.get("auto_repaired"):
             self._trace("auto_repaired", title=title, fixes=result["auto_repaired"][:6])
         self.last_snapshot = bridge.call(scene_info.snapshot)

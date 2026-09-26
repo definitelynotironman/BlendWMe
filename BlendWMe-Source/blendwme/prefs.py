@@ -77,6 +77,25 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         name="Python for the MCP server", subtype="FILE_PATH",
         description="A Python with the 'mcp' package. Empty: the workspace venv made by 'Install MCP server', "
                     "or a Python on PATH")
+    # The brains (2.0). Sign-in happens only in the official programs, never here.
+    claude_path: bpy.props.StringProperty(
+        name="Claude Code program", subtype="FILE_PATH",
+        description="Path to claude(.exe). Empty: found on PATH")
+    claude_model: bpy.props.StringProperty(
+        name="Claude model", default="",
+        description="Optional model alias (e.g. 'sonnet' or 'opus'). Empty: your Claude Code default")
+    claude_effort: bpy.props.EnumProperty(
+        name="Claude effort",
+        items=[("", "Default", "Claude Code's own setting"), ("low", "Low", ""), ("medium", "Medium", ""),
+               ("high", "High", ""), ("xhigh", "Extra high", ""), ("max", "Max", "")],
+        default="")
+    api_enabled: bpy.props.BoolProperty(
+        name="Allow the pay-per-token API brain", default=False,
+        description="Off by default. BlendWMe 2.0 runs on your Claude and ChatGPT subscriptions. Switch on "
+                    "only to use an OpenAI-compatible endpoint you pay per token (or a local Ollama model)")
+    api_token_budget: bpy.props.IntProperty(
+        name="API token budget", default=300000, min=10000, max=20000000,
+        description="Hard limit: the API brain stops when a conversation has used this many tokens")
     max_steps: bpy.props.IntProperty(name="Steps before check-in", default=60, min=5, max=400,
                                      description="BlendWMe pauses after this many tool calls so costs never run away")
 
@@ -89,7 +108,34 @@ class BWM_Preferences(bpy.types.AddonPreferences):
         return credentials.get_key(self.key_storage)
 
     def draw(self, context):
-        draw_connection(self.layout, self)
+        draw_brains(self.layout, self)
+
+
+def draw_brains(layout, p):
+    """Settings for the brains, the MCP bridge and the optional pay-per-token API."""
+    col = layout.column()
+    box = col.box()
+    box.label(text="Claude Code (main brain)", icon="OUTLINER_OB_LIGHT")
+    box.prop(p, "claude_path")
+    row = box.row(align=True)
+    row.prop(p, "claude_model")
+    row.prop(p, "claude_effort", text="")
+    draw_codex(col, p)
+    box = col.box()
+    box.label(text="MCP bridge", icon="LINKED")
+    box.prop(p, "start_bridge")
+    box.prop(p, "workspace_folder")
+    box.prop(p, "mcp_python")
+    box = col.box()
+    box.label(text="Pay-per-token API (off by default)", icon="FUND")
+    box.prop(p, "api_enabled")
+    if p.api_enabled:
+        box.prop(p, "api_token_budget")
+        draw_connection(box, p)
+
+
+def draw_codex(layout, p):
+    """Codex settings (filled in when the Codex brain exists)."""
 
 
 def draw_connection(layout, p):
@@ -149,6 +195,12 @@ def _sync(self, context):
 
 class BWM_Session(bpy.types.PropertyGroup):
     prompt: bpy.props.StringProperty(name="", description="Tell BlendWMe what to make, or ask it something")
+    brain: bpy.props.EnumProperty(
+        name="Brain",
+        items=[("claude", "Claude", "Claude Code with your Claude subscription (main brain)"),
+               ("codex", "Codex", "Codex CLI with your ChatGPT account (second brain)"),
+               ("api", "API", "The pay-per-token API brain (switch it on in the preferences first)")],
+        default="claude")
     mode: bpy.props.EnumProperty(
         name="Mode",
         items=[("AUTO", "Auto", "BlendWMe builds at full speed. Pause any time to take over"),
@@ -179,7 +231,13 @@ def gather_config(context):
     _sync(s, context)
     refs = [bpy.path.abspath(r) for r in (s.reference_1, s.reference_2) if r.strip()]
     return {
-        "api_key": p.key(),
+        "brain": s.brain,
+        "claude_path": bpy.path.abspath(p.claude_path) if p.claude_path.strip() else "",
+        "claude_model": p.claude_model.strip(),
+        "claude_effort": p.claude_effort,
+        "api_enabled": p.api_enabled,
+        "api_token_budget": p.api_token_budget,
+        "api_key": p.key() if p.api_enabled else "",
         "base_url": p.base_url,
         "model": p.model_id(),
         "vision_enabled": p.vision_enabled,

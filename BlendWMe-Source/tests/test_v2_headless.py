@@ -26,7 +26,7 @@ sys.path.insert(0, ROOT)
 import bpy  # noqa: E402
 
 import blendwme  # noqa: E402
-from blendwme import bridge, mcp_probe, prefs, scene_info, socket_bridge, state, tool_host, tools, workspace  # noqa: E402
+from blendwme import bridge, mcp_probe, prefs, scene_info, socket_bridge, state, tool_host, workspace  # noqa: E402
 from blendwme.state import session  # noqa: E402
 
 passed = []
@@ -270,6 +270,175 @@ if os.path.isfile(dev_python):
     check("the MCP server signs the call with its brain", bpy.data.objects["McpBall"].get("blendwme_brain") == "claude")
 else:
     print("skip - no .venv with the mcp package; the full MCP path was not tested")
+
+# ----------------------------------------------------------------------
+# M2: the engine layer and the claude_code adapter (a fake `claude` program)
+# ----------------------------------------------------------------------
+from blendwme.agent import agent as api_agent  # noqa: E402
+from blendwme import llm  # noqa: E402
+from blendwme.engines import limits  # noqa: E402
+from blendwme.engines.claude_code import ClaudeCodeEngine  # noqa: E402
+from blendwme.relay import relay  # noqa: E402
+
+FAKE = os.path.join(HERE, "fake_brain.py")
+CFG = {"brain": "claude", "references": [], "auto_save_logs": False, "blender_version": bpy.app.version_string,
+       "log_folder": os.path.join(tempfile.gettempdir(), "bwm_logs_test")}
+
+
+def script(*turns):
+    with open(os.path.join(WORKSPACE, "fake_script.json"), "w", encoding="utf-8") as f:
+        json.dump(list(turns), f)
+
+
+def runs():
+    path = os.path.join(WORKSPACE, "fake_runs.json")
+    return json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
+
+
+def turn(text, brain="claude", **extra):
+    relay.send(text, dict(CFG, brain=brain, **extra))
+    pump_until(lambda: not relay.is_running(), 90)
+
+
+def after(flag):
+    argv = runs()[-1]["argv"]
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def ai_texts(brain=None):
+    return [e["text"] for e in session.log if e["who"] == "ai" and (brain is None or e.get("brain") == brain)]
+
+
+fresh_scene()
+reset_session()
+relay.reset()
+relay.engines["claude"].command_override = [sys.executable, FAKE]
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-never-forwarded"
+script([{"say": "I will build a small table."},
+        {"call": "plan", "args": {"parts": ["Top 1 x 1 x 0.1 m on the ground"]}},
+        {"call": "run_python", "args": {"title": "Table top", "explain": "The top", "part": 1,
+                                        "code": "bwm.box('TableTop', (1, 1, 0.1), (0, 0, 0.75))"}},
+        {"say": "The table top is in place."},
+        {"call": "finish", "args": {"summary": "A table top."}},
+        {"call": "finish", "args": {"summary": "A table top."}}])
+turn("Build a small table")
+run = runs()[-1]
+argv = run["argv"]
+check("panel prompt reaches Claude in print mode", argv[0] == "-p" and argv[1].startswith("[BlendWMe] Mode: AUTO")
+      and "[Message from the user]\nBuild a small table" in argv[1], argv[1][:200])
+check("the first message carries the scene facts", "[Current scene]" in argv[1])
+check("Claude streams JSON events with partial text", after("--output-format") == "stream-json"
+      and "--verbose" in argv and "--include-partial-messages" in argv)
+check("Claude gets BlendWMe's MCP server only", after("--mcp-config").endswith("mcp-claude.json")
+      and "--strict-mcp-config" in argv)
+check("no built-in tools (no Bash, no file edits)", after("--tools") == "")
+check("only BlendWMe's tools are allowed, with no prompts", after("--allowedTools") == "mcp__blendwme"
+      and after("--permission-mode") == "dontAsk")
+check("never --bare (it ignores the subscription sign-in)", "--bare" not in argv)
+first_session = after("--session-id")
+check("the first turn names its own session", first_session and len(first_session) == 36)
+check("Claude runs in the BlendWMe workspace", os.path.normcase(run["cwd"]) == os.path.normcase(WORKSPACE))
+check("pay-per-token keys and Blender's Python settings are not passed on",
+      run["env"]["ANTHROPIC_API_KEY"] is False and run["env"]["PYTHONPATH"] is False)
+check("long tool waits are allowed (MCP_TOOL_TIMEOUT)", run["env"]["MCP_TOOL_TIMEOUT"] is True)
+check("Claude built through BlendWMe's tools", "TableTop" in bpy.data.objects
+      and bpy.data.objects["TableTop"].get("blendwme_brain") == "claude")
+check("streamed text becomes one reply in the panel", ai_texts("claude")[:2]
+      == ["I will build a small table.", "The table top is in place."], ai_texts())
+check("the plan checklist works with Claude", session.plan and session.plan[0]["done"])
+check("finish ends the task", session.status == state.DONE, session.status)
+
+# Second message: the same Claude conversation, plus what the user changed in between.
+bpy.data.objects["TableTop"].location.x = 2.0
+session.mode = "WATCH"
+script([{"call": "get_scene_info"}, {"say": "Noted."}])
+turn("Make it taller")
+argv = runs()[-1]["argv"]
+check("follow-ups resume the same Claude session", after("--resume") == first_session and "--session-id" not in argv)
+check("follow-ups skip the scene dump", "[Current scene]" not in argv[1])
+check("edits between messages are reported to the brain",
+      "changed the scene since your last turn" in argv[1] and "TableTop" in argv[1], argv[1][:400])
+check("the mode header follows the panel", "Mode: WATCH" in argv[1])
+session.mode = "AUTO"
+
+# A message typed while Claude works arrives with its next tool result.
+script([{"sleep": 1.5}, {"call": "get_scene_info"}, {"say": "ok"}])
+relay.send("Add a lamp", dict(CFG))
+pump_until(lambda: relay.engine("claude").proc is not None and relay.is_running())
+relay.send("Also make it red", dict(CFG))
+pump_until(lambda: not relay.is_running(), 60)
+check("typing while it works steers it through the next tool result",
+      any(m["role"] == "tool" and "Also make it red" in m["content"] for m in relay.transcript))
+
+# ... and one typed after its last tool call becomes the next turn.
+before = session.tool_steps
+script([{"call": "get_scene_info"}, {"sleep": 1.5}, {"say": "done"}], [{"say": "Got your late message."}])
+count = len(runs())
+relay.send("Look at it", dict(CFG))
+pump_until(lambda: session.tool_steps > before)
+relay.send("One more thing: a lamp", dict(CFG))
+pump_until(lambda: len(runs()) == count + 2 and not relay.is_running(), 60)
+check("a late message is sent as the next turn", "One more thing: a lamp" in runs()[-1]["argv"][1]
+      and "Got your late message." in ai_texts())
+
+# Usage limits become limit_reached, never a crash.
+script([{"say": "Working"}, {"line": {"type": "result", "subtype": "success", "is_error": False,
+                                      "result": "Claude AI usage limit reached|1760000000"}}])
+turn("Continue")
+check("Claude's limit message becomes limit_reached", relay.limit and relay.limit["brain"] == "claude"
+      and relay.limit["resets"].startswith("resets"), relay.limit)
+check("the panel says the limit is reached and nothing is lost", "limit is reached" in session.card["title"]
+      and session.status == state.IDLE)
+engine = ClaudeCodeEngine()
+check("a rejected rate_limit_event is a limit too", engine.parse({"type": "rate_limit_event", "rate_limit_info": {
+    "status": "rejected", "resetsAt": 1760000000}})[0]["type"] == "limit_reached")
+check("limit wording: 'hit your limit · resets 5pm'", limits.is_limit("You've hit your limit · resets 5pm")
+      and limits.reset_hint("You've hit your limit · resets 5pm") == "resets 5pm")
+check("limit wording: Codex 'usage limit ... try again in'",
+      limits.is_limit("You've hit your usage limit. Upgrade to Pro or try again in 2 hours 13 minutes.")
+      and "try again in 2 hours" in limits.reset_hint("try again in 2 hours 13 minutes."))
+check("normal replies are never mistaken for a limit", not limits.is_limit("The roof is done.")
+      and not limits.is_limit("the usage limit of a modifier " * 200))
+
+# The program fails: a clear error, the scene stays.
+script([{"stderr": "boom: something broke"}, {"exit": 1}])
+turn("Continue")
+check("a crashed brain becomes an error with its message", session.status == state.ERROR
+      and "exit code 1" in session.last_error and "boom" in session.last_error, session.last_error)
+
+# Stop kills the program at once.
+script([{"sleep": 60}])
+relay.send("Build a castle", dict(CFG))
+pump_until(lambda: relay.engine("claude").proc is not None and relay.is_running())
+t0 = time.time()
+relay.stop()
+pump_until(lambda: not relay.is_running(), 15)
+check("Stop ends the brain's program quickly", time.time() - t0 < 10 and session.status == state.IDLE)
+
+# A lost saved conversation: start fresh once, with the full context.
+script([{"stderr": "No conversation found with session ID: x"}, {"exit": 1}], [{"say": "Fresh start."}])
+count = len(runs())
+relay.send("Continue", dict(CFG))
+pump_until(lambda: len(runs()) == count + 2 and not relay.is_running(), 60)
+argv = runs()[-1]["argv"]
+check("a lost session is restarted fresh with the scene", "--session-id" in argv and "[Current scene]" in argv[1]
+      and "Fresh start." in ai_texts() and session.status != state.ERROR)
+
+# The pay-per-token brain is off by default, and has a hard budget when on.
+relay.send("Build with the API", dict(CFG, brain="api", api_enabled=False))
+pump_until(lambda: not relay.is_running())
+check("the API brain is off by default", "switched off" in session.last_error)
+api_agent.config = {"token_budget": 50}
+session.tokens = 60
+try:
+    api_agent._ask_model(None)
+    budget_stopped = False
+except llm.LLMError as e:
+    budget_stopped = "budget" in str(e)
+check("the API brain stops at its token budget", budget_stopped)
+session.tokens = 0
+relay.reset()
+del os.environ["ANTHROPIC_API_KEY"]
 
 socket_bridge.stop()
 check("stopping the bridge removes the connection file",

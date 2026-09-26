@@ -6,8 +6,10 @@ import threading
 
 import bpy
 
-from . import bridge, credentials, llm, look, prefs
+from . import bridge, credentials, llm, look, prefs, socket_bridge, workspace
 from .agent import agent
+from .relay import relay
+from .tool_host import label as brain_label
 from .state import (ASKING, DONE, ERROR, IDLE, PAUSED, STATUS_TEXT, THINKING,
                     WAIT_NEXT, WAIT_USER, WORKING, session)
 
@@ -30,16 +32,19 @@ class BWM_OT_send(bpy.types.Operator):
             self.report({"WARNING"}, "Type what you want first.")
             return {"CANCELLED"}
         config = prefs.gather_config(context)
-        if not config["api_key"]:
-            self.report({"ERROR"}, "Add your Nebius key: BlendWMe > Connection > Paste Key.")
-            return {"CANCELLED"}
-        if self.new_task and agent.is_running():
-            agent.stop()
-            agent.thread.join(timeout=5)
+        if config["brain"] == "api" and not relay.is_running():
+            if not config["api_enabled"]:
+                self.report({"ERROR"}, "The pay-per-token API brain is off. Pick Claude or Codex, or switch "
+                                       "it on in BlendWMe > Brains.")
+                return {"CANCELLED"}
+            if not config["api_key"]:
+                self.report({"ERROR"}, "Add your API key: BlendWMe > Brains > Paste Key.")
+                return {"CANCELLED"}
+        if self.new_task and relay.is_running():
+            relay.stop()
         if self.new_task:
-            agent.messages = []
-            session.reset_conversation()
-        agent.send(text, config, new_task=self.new_task)
+            relay.reset()
+        relay.send(text, config, new_task=self.new_task)
         s.prompt = ""
         return {"FINISHED"}
 
@@ -111,10 +116,9 @@ class BWM_OT_resume(bpy.types.Operator):
                 bpy.ops.object.mode_set(mode="OBJECT")
             except Exception:
                 pass
-        if not agent.is_running() and agent.messages:
-            # Resume after an error or after it finished: continue the same conversation.
-            config = prefs.gather_config(context)
-            agent.send("Continue.", config)
+        if not relay.is_running() and relay.has_conversation():
+            # Resume after an error, a limit or a finished turn: continue the same conversation.
+            relay.send("Continue.", prefs.gather_config(context))
             return {"FINISHED"}
         session.pause_flag.clear()
         session.wake()
@@ -127,7 +131,7 @@ class BWM_OT_stop(bpy.types.Operator):
     bl_description = "Stop the current task. Everything already built stays"
 
     def execute(self, context):
-        agent.stop()
+        relay.stop()
         return {"FINISHED"}
 
 
@@ -170,7 +174,7 @@ class BWM_OT_undo_step(bpy.types.Operator):
     bl_description = "Undo the last BlendWMe step (same as Ctrl+Z). BlendWMe notices the change"
 
     def execute(self, context):
-        if agent.is_running() and not session.pause_flag.is_set():
+        if relay.is_running() and not session.pause_flag.is_set():
             self.report({"WARNING"}, "Pause first, then undo.")
             return {"CANCELLED"}
         try:
@@ -187,7 +191,7 @@ class BWM_OT_new(bpy.types.Operator):
     bl_description = "Forget this conversation and start fresh (your scene is not changed)"
 
     def execute(self, context):
-        agent.reset()
+        relay.reset()
         return {"FINISHED"}
 
 
@@ -346,8 +350,7 @@ class BWM_OT_copy_log(bpy.types.Operator):
     bl_description = "Copy the conversation and activity (no API key) for debugging"
 
     def execute(self, context):
-        lines = [f"BlendWMe 1.0.5 | model {prefs.gather_config(context)['model']} | "
-                 f"calls {session.calls} | tokens {session.tokens}"]
+        lines = [f"BlendWMe | brain {brain_label(relay.active)} | steps {len(session.steps)}"]
         for e in session.log:
             lines.append(f"[{e['who']}] {e['text']}" + (f" -- {e['detail']}" if e.get("detail") else ""))
         context.window_manager.clipboard = "\n".join(lines)
@@ -361,11 +364,12 @@ class BWM_OT_save_log(bpy.types.Operator):
     bl_description = "Save the whole conversation (every message, all code, results and timings) as .md and .json files"
 
     def execute(self, context):
-        if not agent.messages:
+        if not relay.has_conversation():
             self.report({"WARNING"}, "Nothing to save yet.")
             return {"CANCELLED"}
-        agent.config.update(prefs.gather_config(context))
-        path = agent.save_log()
+        if relay.active == "api":
+            agent.config.update(prefs.gather_config(context))
+        path = relay.save_log()
         if path:
             self.report({"INFO"}, f"Saved {path}")
             session.add("info", "Full log saved: " + path)
@@ -407,6 +411,40 @@ class BWM_OT_show_capture(bpy.types.Operator):
                 break
         else:
             self.report({"INFO"}, "Loaded as 'BlendWMe View'. Open it in an Image Editor.")
+        return {"FINISHED"}
+
+
+class BWM_OT_bridge(bpy.types.Operator):
+    bl_idname = "blendwme.bridge"
+    bl_label = "MCP Bridge"
+    bl_description = "Start or stop BlendWMe's local socket for the brains (127.0.0.1 only)"
+
+    action: bpy.props.EnumProperty(items=[("START", "Start", ""), ("STOP", "Stop", "")])
+
+    def execute(self, context):
+        if self.action == "START":
+            message = socket_bridge.start()
+        else:
+            socket_bridge.stop()
+            message = "The MCP bridge is stopped. The brains cannot use BlendWMe's tools until it starts again."
+        session.add("info", message)
+        return {"FINISHED"}
+
+
+class BWM_OT_copy_terminal(bpy.types.Operator):
+    bl_idname = "blendwme.copy_terminal_command"
+    bl_label = "Copy Terminal Command"
+    bl_description = ("Copy a command that starts Claude Code in a terminal with BlendWMe's tools, "
+                      "to try the tools outside the panel")
+
+    def execute(self, context):
+        socket_bridge.start()
+        config = workspace.write_mcp_config("claude")
+        folder = workspace.folder()
+        # Two lines, so it works in both cmd and PowerShell (Windows PowerShell 5 has no "&&").
+        context.window_manager.clipboard = (f'cd "{folder}"\nclaude --mcp-config "{config}" '
+                                            '--allowedTools mcp__blendwme\n')
+        self.report({"INFO"}, "Copied. Paste it in a terminal, then ask Claude to build something.")
         return {"FINISHED"}
 
 
@@ -458,7 +496,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
             for item in session.plan[:14]:
                 row = col.row()
                 if not item["done"] and not next_shown:
-                    row.alert = agent.is_running()      # the part being built now, in red
+                    row.alert = relay.is_running()      # the part being built now, in red
                     next_shown = True
                 elif item["done"]:
                     row.enabled = False
@@ -469,10 +507,16 @@ class BWM_PT_main(_Base, bpy.types.Panel):
             eye.alert = True
             eye.prop(p, "vision_enabled", text="Vision is OFF: the AI builds blind. Turn on", icon="HIDE_ON")
 
-        if p and not p.key():
+        row = layout.row(align=True)
+        row.label(text="Brain", icon="OUTLINER_OB_LIGHT")
+        row.prop(s, "brain", expand=True)
+        if relay.is_running() and relay.running != s.brain:
+            layout.label(text=f"{brain_label(relay.running)} is working. The switch applies to your next message.",
+                         icon="INFO")
+        if s.brain == "api" and p and (not p.api_enabled or not p.key()):
             warn = layout.box()
             warn.alert = True
-            warn.label(text="Add your key: Connection > Paste Key.", icon="ERROR")
+            warn.label(text="The API brain is off or has no key: Brains > Pay-per-token API.", icon="ERROR")
 
         layout.row().prop(s, "mode", expand=True)
         if s.mode == "AUTO":
@@ -501,7 +545,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         row.operator("blendwme.paste_prompt", text="", icon="PASTEDOWN")
         row = col.row(align=True)
         row.scale_y = 1.4
-        running = agent.is_running()
+        running = relay.is_running()
         row.operator("blendwme.send", text="Tell BlendWMe" if running else "Send",
                      icon="EXPORT").new_task = False
         if not running:
@@ -514,7 +558,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
             else:
                 row.operator("blendwme.pause", icon="PAUSE")
             row.operator("blendwme.stop", text="", icon="CANCEL")
-        elif agent.messages and status in (ERROR, IDLE):
+        elif relay.has_conversation() and status in (ERROR, IDLE):
             layout.operator("blendwme.resume", text="Continue", icon="PLAY")
         layout.operator("blendwme.undo_step", icon="LOOP_BACK")
 
@@ -540,7 +584,9 @@ class BWM_PT_conversation(_Base, bpy.types.Panel):
                 head.label(text="YOU", icon="USER")
             elif who == "ai":
                 head.alert = True      # BlendWMe speaks in red
-                head.label(text="BLENDWME", icon="GREASEPENCIL")
+                brain = e.get("brain")
+                head.label(text="BLENDWME" + (f"  ·  {brain_label(brain).upper()}" if brain else ""),
+                           icon="GREASEPENCIL")
             elif who == "step":
                 head.label(text=("STEP" if e.get("ok", True) else "STEP FAILED"),
                            icon="MODIFIER" if e.get("ok", True) else "ERROR")
@@ -580,14 +626,24 @@ class BWM_PT_references(_Base, bpy.types.Panel):
 
 
 class BWM_PT_connection(_Base, bpy.types.Panel):
-    bl_label = "Connection"
+    bl_label = "Brains"
     bl_parent_id = "BWM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        layout = self.layout
         p = prefs.addon_prefs(context)
+        bridge_box = layout.box()
+        running = socket_bridge.get().is_running()
+        bridge_box.label(text=("MCP bridge: running on 127.0.0.1:" + str(socket_bridge.get().port)) if running
+                         else "MCP bridge: stopped", icon="CHECKMARK" if running else "ERROR")
+        row = bridge_box.row(align=True)
+        row.operator("blendwme.bridge", text="Start" if not running else "Restart", icon="PLAY").action = "START"
+        if running:
+            row.operator("blendwme.bridge", text="Stop", icon="PAUSE").action = "STOP"
+        bridge_box.operator("blendwme.copy_terminal_command", icon="CONSOLE")
         if p:
-            prefs.draw_connection(self.layout, p)
+            prefs.draw_brains(layout, p)
 
 
 class BWM_PT_activity(_Base, bpy.types.Panel):
@@ -619,6 +675,7 @@ classes = (
     BWM_OT_send, BWM_OT_paste, BWM_OT_paste_key, BWM_OT_forget_key, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new, BWM_OT_test_connection, BWM_OT_test_vision,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
+    BWM_OT_bridge, BWM_OT_copy_terminal,
     BWM_PT_main, BWM_PT_conversation, BWM_PT_references, BWM_PT_connection, BWM_PT_activity,
 )
 
