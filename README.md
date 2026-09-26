@@ -11,7 +11,7 @@
   Blender 4.2 LTS · Windows · Claude Code or Codex · MIT licence
 </p>
 
-## Why this exists
+## What is this & Why does it exist
 
 Let's get one thing out of the way: I never made the donut. The only thing I ever tried to model in
 Blender was a farmhouse, and that project never really got to where I wanted it to be. Blender's
@@ -25,7 +25,7 @@ made as a creative tool with a much greater horizon to aim for. Seriously, it's 
 it can do. The thing is, it feels "destructive", if I can say that, and that's the major difference
 between it and the tools I mentioned. It made it much harder for me to change my way of thinking:
 from putting squares and patterns together to make gearboxes, to moulding a shape I don't even know
-exists yet. It's definitely a skill issue, and one I plan to fix.
+exists yet from a circle. It's definitely a skill issue, and one I plan to fix.
 
 When I ran into MCP for Blender, I was like, well, I'm cooked for sure now if AI can do this IN
 BLENDER. I made a few prompts to see how far it could go, and it's pretty good. Claude is pretty
@@ -36,21 +36,21 @@ BlendWMe!
 Okay, maybe I got carried away. But that's basically how the idea came about. Tutorial hell kept me
 a beginner for as long as I've known Blender. So I wanted to make something that keeps me in the
 app, actually doing stuff, making things and learning Blender inside out from an AI that is
-probably far ahead of me.
+without a doubt far ahead of me.
 
 So that's what BlendWMe is: an experienced Blender artist that lives inside Blender. It can build
 with you, teach you one step at a time, or take the wheel while you watch, and you can grab the
 wheel back whenever you like. It runs on the Claude or ChatGPT plan you already pay for, through the
 official Claude Code and Codex programs. No extra API bill sneaking up on you.
 
-The trap, of course, is getting stuck in AI hell with Blender instead. That's likely if it's used
+The trap, of course, is getting stuck in AI hell with Blender instead. Which is likely if it's used
 the way vibe coding is used by people who only learned to code once a computer could do it 100x
-better than they could [I am people. People is in fact me]. But that's not how I intended to use the
+better and faster than they ever will [I am people. People is in fact me]. But that's not how I intend to use this
 tool. AI exists, and it probably won't go away any time soon. Zoomed out, it hasn't really come to
 make things better for most of us, unless we try to use it that way. The creative space is the
 biggest hater of AI, and with good reason. But BlendWMe is a tool I made for me, to keep up with the
-fast-moving pace of a world with AI in it, in a way that keeps me in touch with the work I do. The
-same way Tony Stark would ask Jarvis or Friday to help him be Iron Man: Tony was always Iron Man.
+fast-moving pace of a world with AI in it, in a way that keeps me in touch with the work I do. In my head, I plan to use it the
+same way Tony Stark used Jarvis or Friday to help him be the Iron Man we all look up to: because at the end of the day, Tony was always Iron Man.
 Not Jarvis, not Friday.
 
 For the creatives: I feel the people who will get the most out of this tool are the ones who are the
@@ -353,7 +353,7 @@ Honest list, because you'll find out anyway:
 
 ## Project status and versions
 
-- Current version: **2.1.0**. See [CHANGELOG.md](CHANGELOG.md).
+- Current version: **2.1.0**.
 - Branches: `main` (this version), `v2.0.0-full` (2.0.0, which also had a pay-per-token API engine),
   `nebius-nemotron` (the original Nemotron build from the Nebius x NVIDIA hackathon, where this all
   started).

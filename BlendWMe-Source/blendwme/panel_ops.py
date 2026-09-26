@@ -2,7 +2,7 @@
 typing and the keyboard shortcuts while the mouse is over the panel (or the input
 has focus). Every other event goes on to Blender untouched.
 
-Shortcuts (docs/V2_1_PLAN.md, M5). The editable ones live in Preferences > Keymap >
+Shortcuts. The editable ones live in Preferences > Keymap >
 Window as "BlendWMe Panel Key" items (keymaps.py); this operator reads them from the
 user's keymap, so a change there takes effect at once. They act only while the panel
 has focus, so they never take a key away from Blender elsewhere.
