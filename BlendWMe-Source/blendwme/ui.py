@@ -266,16 +266,45 @@ class BWM_OT_dismiss_prefs_note(bpy.types.Operator):
 class BWM_OT_open(bpy.types.Operator):
     bl_idname = "blendwme.open"
     bl_label = "Open BlendWMe"
-    bl_description = "Open or focus BlendWMe in the 3D Viewport"
+    bl_description = "Open or focus BlendWMe in the 3D Viewport (Ctrl+Alt+M)"
+
+    close: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE"})
 
     def execute(self, context):
-        for area in context.window.screen.areas:
-            if area.type == "VIEW_3D":
-                area.spaces.active.show_region_ui = True
-                area.tag_redraw()
-                return {"FINISHED"}
-        self.report({"WARNING"}, "Open a 3D Viewport first: BlendWMe lives there.")
-        return {"CANCELLED"}
+        from . import panel, panel_ops
+        if self.close:
+            panel_ops.close_panel()
+            return {"FINISHED"}
+        if panel.state.open and panel_ops.panel_alive() and panel.is_open_in(context.area):
+            panel.state.focused = True        # already open here: focus the input
+            panel_ops._redraw()
+            return {"FINISHED"}
+        if not panel_ops.open_panel(context):
+            self.report({"WARNING"}, "Open a 3D Viewport first: BlendWMe lives there.")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class BWM_OT_export_journal(bpy.types.Operator):
+    bl_idname = "blendwme.export_journal"
+    bl_label = "Export Journal"
+    bl_description = "Save the baton journal and the handoff brief as a text file in the logs folder"
+
+    def execute(self, context):
+        import json
+        import time
+        from . import journal, scene_info
+        folder = prefs.log_folder(context)
+        os.makedirs(folder, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] if bpy.data.filepath else "unsaved"
+        path = os.path.join(folder, time.strftime(f"journal_{stem}_%Y-%m-%d_%H%M%S.md"))
+        brief = journal.journal.handoff_brief(relay.other(relay.active), scene_info.makers())
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"# BlendWMe journal: {stem}\n\n## Handoff brief\n\n```\n{brief}\n```\n\n## Full journal\n\n"
+                    f"```json\n{json.dumps(journal.journal.data, indent=1, ensure_ascii=False)}\n```\n")
+        self.report({"INFO"}, f"Journal saved: {os.path.basename(path)}")
+        bpy.ops.wm.path_open(filepath=folder)
+        return {"FINISHED"}
 
 
 class BWM_OT_show_capture(bpy.types.Operator):
@@ -438,143 +467,23 @@ def _draw_safety_notes(layout, p):
 
 
 class BWM_PT_main(_Base, bpy.types.Panel):
+    """The sidebar is only a launcher: BlendWMe itself is the panel drawn in the viewport."""
     bl_label = "BlendWMe"
 
-    def draw_header(self, context):
-        self.layout.label(text="", icon="GREASEPENCIL")
-
     def draw(self, context):
+        from . import panel
         layout = self.layout
-        s = context.window_manager.blendwme
         p = prefs.addon_prefs(context)
+        row = layout.row()
+        row.scale_y = 1.6
+        if panel.is_open_in(context.area):
+            row.operator("blendwme.open", text="Close BlendWMe", icon="PANEL_CLOSE").close = True
+        else:
+            row.operator("blendwme.open", text="Open BlendWMe", icon="WINDOW")
+        layout.label(text="Shortcut: Ctrl+Alt+M")
         status = session.status
-
-        box = layout.box()
-        row = box.row()
-        row.alert = status in (WAIT_USER, ASKING, ERROR, WAIT_NEXT)
-        row.label(text=STATUS_TEXT.get(status, status), icon=_STATUS_ICON.get(status, "DOT"))
+        layout.label(text=STATUS_TEXT.get(status, status), icon=_STATUS_ICON.get(status, "DOT"))
         _draw_safety_notes(layout, p)
-
-        if session.plan:
-            plan_box = layout.box()
-            done = sum(1 for item in session.plan if item["done"])
-            plan_box.label(text=f"Plan  {done}/{len(session.plan)}", icon="CHECKBOX_HLT" if done == len(session.plan) else "PRESET")
-            col = plan_box.column(align=True)
-            next_shown = False
-            for item in session.plan[:14]:
-                row = col.row()
-                if not item["done"] and not next_shown:
-                    row.alert = relay.is_running()      # the part being built now, in red
-                    next_shown = True
-                elif item["done"]:
-                    row.enabled = False
-                row.label(text=item["name"][:48], icon="CHECKMARK" if item["done"] else "DOT")
-
-        row = layout.row(align=True)
-        row.label(text="Brain", icon="OUTLINER_OB_LIGHT")
-        row.prop(s, "brain", expand=True)
-        if relay.has_conversation():
-            other = relay.other(relay.running or relay.active)
-            big = layout.row()
-            big.alert = bool(relay.limit)       # red when a usage limit is reached
-            big.scale_y = 1.5 if relay.limit else 1.0
-            big.enabled = not relay.handing_over
-            big.operator("blendwme.hand_over", text=f"Hand over to {brain_label(other)}",
-                         icon="FILE_REFRESH").target = other
-        if relay.handing_over:
-            layout.label(text="Handing over ...", icon="SORTTIME")
-        elif relay.is_running() and relay.running != s.brain:
-            layout.label(text=f"{brain_label(relay.running)} is working. The switch applies to your next message.",
-                         icon="INFO")
-
-        layout.row().prop(s, "mode", expand=True)
-
-        # What to do right now
-        if status == WAIT_NEXT:
-            big = layout.row()
-            big.scale_y = 1.8
-            big.operator("blendwme.next", icon="PLAY")
-        elif status == WAIT_USER:
-            big = layout.row(align=True)
-            big.scale_y = 1.6
-            big.operator("blendwme.teach", text="I did it", icon="CHECKMARK").choice = "done"
-            big.operator("blendwme.teach", text="Show me", icon="HIDE_OFF").choice = "show_me"
-            layout.operator("blendwme.teach", text="Skip", icon="FORWARD").choice = "skip"
-        elif status == ASKING:
-            layout.label(text="Type your answer below and press Send.", icon="QUESTION")
-
-        col = layout.column(align=True)
-        row = col.row(align=True)
-        row.prop(s, "prompt", text="", icon="GREASEPENCIL")
-        row.operator("blendwme.paste_prompt", text="", icon="PASTEDOWN")
-        row = col.row(align=True)
-        row.scale_y = 1.4
-        running = relay.is_running()
-        row.operator("blendwme.send", text="Tell BlendWMe" if running else "Send",
-                     icon="EXPORT").new_task = False
-        if not running:
-            row.operator("blendwme.send", text="New Task", icon="ADD").new_task = True
-
-        if running:
-            row = layout.row(align=True)
-            if session.pause_flag.is_set():
-                row.operator("blendwme.resume", icon="PLAY")
-            else:
-                row.operator("blendwme.pause", icon="PAUSE")
-            row.operator("blendwme.stop", text="", icon="CANCEL")
-        elif relay.has_conversation() and status in (ERROR, IDLE):
-            layout.operator("blendwme.resume", text="Continue", icon="PLAY")
-        layout.operator("blendwme.undo_step", icon="LOOP_BACK")
-
-
-class BWM_PT_conversation(_Base, bpy.types.Panel):
-    bl_label = "Conversation"
-    bl_parent_id = "BWM_PT_main"
-
-    def draw(self, context):
-        layout = self.layout
-        entries = [e for e in session.log][-16:]
-        if not entries:
-            layout.label(text="Ask for anything: 'a cosy low poly cabin',")
-            layout.label(text="'teach me to bevel', 'rig this arm'...")
-            return
-        width = _wrap_width(context)
-        for e in entries:
-            who = e["who"]
-            box = layout.box()
-            col = box.column(align=True)
-            head = col.row()
-            if who == "you":
-                head.label(text="YOU", icon="USER")
-            elif who == "ai":
-                head.alert = True      # BlendWMe speaks in red
-                brain = e.get("brain")
-                head.label(text="BLENDWME" + (f"  ·  {brain_label(brain).upper()}" if brain else ""),
-                           icon="GREASEPENCIL")
-            elif who == "step":
-                head.label(text=("STEP" if e.get("ok", True) else "STEP FAILED"),
-                           icon="MODIFIER" if e.get("ok", True) else "ERROR")
-            elif who == "look":
-                head.label(text="LOOKED", icon="HIDE_OFF")
-            elif who == "retry":
-                head.enabled = False
-                head.label(text="SELF-CORRECTING", icon="FILE_REFRESH")
-            elif who == "plan":
-                head.label(text="PLAN", icon="PRESET")
-            elif who == "error":
-                head.alert = True
-                head.label(text="PROBLEM", icon="ERROR")
-            else:
-                head.enabled = False
-                head.label(text="NOTE", icon="INFO")
-            text = e["text"] + (("\n" + e["detail"]) if e.get("detail") else "")
-            lines = []
-            for para in text.split("\n"):
-                lines += textwrap.wrap(para, width) or [""]
-            for line in lines[:10]:
-                col.label(text=line)
-            if len(lines) > 10:
-                col.label(text="...")
 
 
 class BWM_PT_references(_Base, bpy.types.Panel):
@@ -589,53 +498,8 @@ class BWM_PT_references(_Base, bpy.types.Panel):
         self.layout.prop(s, "reference_2", text="")
 
 
-class BWM_PT_connection(_Base, bpy.types.Panel):
-    bl_label = "Brains"
-    bl_parent_id = "BWM_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        p = prefs.addon_prefs(context)
-        bridge_box = layout.box()
-        running = socket_bridge.get().is_running()
-        bridge_box.label(text=("MCP bridge: running on 127.0.0.1:" + str(socket_bridge.get().port)) if running
-                         else "MCP bridge: stopped", icon="CHECKMARK" if running else "ERROR")
-        row = bridge_box.row(align=True)
-        row.operator("blendwme.bridge", text="Start" if not running else "Restart", icon="PLAY").action = "START"
-        if running:
-            row.operator("blendwme.bridge", text="Stop", icon="PAUSE").action = "STOP"
-        bridge_box.operator("blendwme.copy_terminal_command", icon="CONSOLE")
-
-        setup = layout.box()
-        setup.label(text="Setup checks", icon="CHECKBOX_HLT")
-        row = setup.row(align=True)
-        row.scale_y = 1.3
-        row.operator("blendwme.setup_check", text="Check All", icon="VIEWZOOM").which = "ALL"
-        row = setup.row(align=True)
-        row.operator("blendwme.setup_check", text="Claude").which = "claude"
-        row.operator("blendwme.setup_check", text="Codex").which = "codex"
-        row.operator("blendwme.setup_check", text="MCP server").which = "mcp"
-        setup.operator("blendwme.setup_check", text="Install MCP server", icon="IMPORT").which = "install"
-        width = _wrap_width(context)
-        icons = {setup_checks.OK: "CHECKMARK", setup_checks.WARN: "ERROR", setup_checks.ERROR: "CANCEL",
-                 setup_checks.RUNNING: "SORTTIME"}
-        for name in ("claude", "codex", "mcp", "install"):
-            if name not in setup_checks.results:
-                continue
-            level, message = setup_checks.results[name]
-            col = setup.column(align=True)
-            col.alert = level in (setup_checks.ERROR, setup_checks.WARN)
-            lines = textwrap.wrap(f"{setup_checks.NAMES[name]}: {message}", width) or [""]
-            col.label(text=lines[0], icon=icons.get(level, "DOT"))
-            for line in lines[1:6]:
-                col.label(text=line, icon="BLANK1")
-        if p:
-            prefs.draw_settings(layout, p, context)
-
-
-class BWM_PT_activity(_Base, bpy.types.Panel):
-    bl_label = "Learn and Debug"
+class BWM_PT_more(_Base, bpy.types.Panel):
+    bl_label = "More"
     bl_parent_id = "BWM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -643,20 +507,14 @@ class BWM_PT_activity(_Base, bpy.types.Panel):
         layout = self.layout
         col = layout.column(align=True)
         col.operator("blendwme.notebook", icon="TEXT")
-        col.operator("blendwme.open_journal", icon="BOOKMARKS")
         col.operator("blendwme.show_capture", icon="IMAGE_DATA")
-        col.operator("blendwme.save_log", icon="FILE_TICK")
         col.operator("blendwme.open_logs", icon="FILE_FOLDER")
-        col.operator("blendwme.crash_report", icon="PACKAGE")
+        col.operator("blendwme.save_log", icon="FILE_TICK")
         col.operator("blendwme.copy_log", icon="COPYDOWN")
-        col.operator("blendwme.new_task", icon="TRASH")
-        if session.last_log:
-            layout.label(text="Last log: " + os.path.basename(session.last_log), icon="FILE_TEXT")
-        if session.last_error:
-            box = layout.box()
-            box.alert = True
-            for line in textwrap.wrap(session.last_error, _wrap_width(context))[:8]:
-                box.label(text=line)
+        col.operator("blendwme.crash_report", icon="PACKAGE")
+        col = layout.column(align=True)
+        col.operator("blendwme.setup_check", text="Install the Tools Server", icon="IMPORT").which = "install"
+        col.operator("blendwme.copy_terminal_command", icon="CONSOLE")
 
 
 classes = (
@@ -665,7 +523,8 @@ classes = (
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
     BWM_OT_crash_report, BWM_OT_save_prefs, BWM_OT_dismiss_prefs_note, BWM_OT_open,
     BWM_OT_bridge, BWM_OT_copy_terminal, BWM_OT_hand_over, BWM_OT_journal, BWM_OT_setup_check,
-    BWM_PT_main, BWM_PT_conversation, BWM_PT_references, BWM_PT_connection, BWM_PT_activity,
+    BWM_OT_export_journal,
+    BWM_PT_main, BWM_PT_references, BWM_PT_more,
 )
 
 

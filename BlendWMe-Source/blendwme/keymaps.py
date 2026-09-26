@@ -5,6 +5,9 @@ They are registered and removed with the add-on, so a disabled BlendWMe
 leaves no shortcut behind.
 
     Ctrl+Alt+M   open or focus BlendWMe (free in Blender 4.2's default keymap)
+    the panel keys (Enter, Shift+Enter, Esc, Up, Down, Shift+Tab, Ctrl+L) as
+    "BlendWMe Panel Key" items: the panel reads them from here, and they act only
+    while the panel has focus (panel_ops.py)
 """
 
 import bpy
@@ -21,6 +24,11 @@ def register():
     km = kc.keymaps.new(name="Window", space_type="EMPTY")
     kmi = km.keymap_items.new("blendwme.open", **GLOBAL_KEY)
     _items.append((km, kmi))
+    from .panel_ops import PANEL_KEYS
+    for action, key in PANEL_KEYS:
+        kmi = km.keymap_items.new("blendwme.panel_key", **key)
+        kmi.properties.action = action
+        _items.append((km, kmi))
 
 
 def unregister():

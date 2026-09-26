@@ -91,6 +91,8 @@ class Session:
 
     def set_card(self, card):
         with self.lock:
+            if card is not None and "t" not in card:
+                card = dict(card, t=time.time())     # when it appeared (the Done card collapses after 6 s)
             self.card = card
             self.changed_flag = True
 

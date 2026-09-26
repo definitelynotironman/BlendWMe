@@ -1,35 +1,36 @@
-"""BlendWMe's visual identity inside Blender: the Graphite Paper overlay.
+"""BlendWMe's indicators inside Blender (docs/design/UI_SPEC.md, section 6).
 
-- A paper card at the bottom of the viewport shows the current step.
-  White paper, graphite outline, hard shadow, big readable text.
-- Red is used ONLY for indicators: a blinking red block when it is your
-  turn, and radar rings around the object being talked about.
-- Red outlines can point at other editors (Properties, Outliner, the
-  toolbar...) when teaching.
+Colour rule: hot (red, orange in Blender Grey) means YOU: look here, do this.
+Ink means the AI is working.
+
+    Radar ring        two hot rings growing 0.3x -> 1.3x and fading, 1.8 s, the
+                      second 0.9 s late: "look at this object / tab"
+    Pencil circle     a hand-drawn hot loop and a short arrow around a control area
+    Note bubble       a paper bubble with a dashed leader to what it talks about
+    Building outline  a marching dashed ink box around what the AI is making now
+    Working card      top of the viewport, only when the panel is not open there
+    Cue card          your turn, at the bottom, only when the panel is not open there
+
+With "reduce motion" everything is drawn in its still state.
+Pointers are dicts from the brain's point_at / teach_step: object, location,
+editor, region, tab, label; tool_host adds building=True for parts being made.
 """
 
 import math
 import time
 
-import blf
 import bpy
-import gpu
 from bpy_extras.view3d_utils import location_3d_to_region_2d
-from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from .state import session
+from . import draw2d as d
+from . import theme
+from .state import ASKING, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
 
-PAPER = (0.965, 0.962, 0.952, 0.97)
-PAPER_DARK = (0.90, 0.895, 0.88, 1.0)
-GRAPHITE = (0.16, 0.16, 0.17, 1.0)
-PENCIL = (0.42, 0.42, 0.44, 1.0)
-SHADOW = (0.05, 0.05, 0.06, 0.55)
-RED = (0.86, 0.12, 0.12, 1.0)
-YOU_BLUE = (0.16, 0.36, 0.62, 1.0)
-
-FONT = 0
 _handles = []
+_pointer_start = [time.time()]
+_tabs = {}            # Properties editor: as_pointer() -> the tab ids it shows, in order
+DONE_SECONDS = 6.0
 
 _SPACES = {
     "VIEW_3D": bpy.types.SpaceView3D,
@@ -44,205 +45,241 @@ _SPACES = {
 }
 _REGIONS = ("WINDOW", "HEADER", "TOOLS", "UI", "NAVIGATION_BAR")
 
+# Properties editor tab ids (4.2) and the names the brains may use for them.
+TAB_ALIASES = {"MODIFIERS": "MODIFIER", "MATERIALS": "MATERIAL", "OBJECT_DATA": "DATA", "MESH": "DATA",
+               "CONSTRAINTS": "CONSTRAINT", "PARTICLE": "PARTICLES", "TEXTURES": "TEXTURE",
+               "WORLD_SETTINGS": "WORLD", "RENDER_SETTINGS": "RENDER"}
 
-def _scale():
+
+def restart_pointers():
+    """'Move': run the pointer animation again so the eye finds it."""
+    _pointer_start[0] = time.time()
+    session.changed_flag = True
+
+
+def _motion():
+    return not theme.reduce_motion()
+
+
+def _pointers_on():
+    from . import prefs
     try:
-        return bpy.context.preferences.system.ui_scale
+        p = prefs.addon_prefs()
     except Exception:
-        return 1.0
+        p = None
+    return p.show_pointers if p else True
 
 
 # ----------------------------------------------------------------------
-# Drawing primitives
+# Indicators
 # ----------------------------------------------------------------------
-
-def _rect(x, y, w, h, color):
-    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-    batch = batch_for_shader(shader, "TRIS", {"pos": [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]},
-                             indices=[(0, 1, 2), (0, 2, 3)])
-    shader.uniform_float("color", color)
-    batch.draw(shader)
-
-
-def _lines(points, color, width=2.0, closed=False):
-    if closed:
-        points = list(points) + [points[0]]
-    shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
-    vp = gpu.state.viewport_get()
-    shader.uniform_float("viewportSize", (vp[2], vp[3]))
-    shader.uniform_float("lineWidth", width)
-    shader.uniform_float("color", color)
-    batch = batch_for_shader(shader, "LINE_STRIP", {"pos": [(p[0], p[1]) for p in points]})
-    batch.draw(shader)
-
-
-def _outline(x, y, w, h, color, width=2.0):
-    _lines([(x, y), (x + w, y), (x + w, y + h), (x, y + h)], color, width, closed=True)
-
-
-def _circle(cx, cy, r, color, width=2.0, segments=48):
-    pts = [(cx + r * math.cos(2 * math.pi * i / segments),
-            cy + r * math.sin(2 * math.pi * i / segments)) for i in range(segments)]
-    _lines(pts, color, width, closed=True)
-
-
-def _text(x, y, text, size, color):
-    blf.size(FONT, size)
-    blf.color(FONT, *color)
-    blf.position(FONT, x, y, 0)
-    blf.draw(FONT, text)
-
-
-def _wrap(text, size, max_width):
-    blf.size(FONT, size)
-    out = []
-    for paragraph in str(text).split("\n"):
-        line = ""
-        for word in paragraph.split():
-            trial = (line + " " + word).strip()
-            if blf.dimensions(FONT, trial)[0] <= max_width or not line:
-                line = trial
-            else:
-                out.append(line)
-                line = word
-        out.append(line)
-    return out
-
-
-def _blink(period=1.0):
-    return (time.time() % period) < period * 0.6
-
-
-# ----------------------------------------------------------------------
-# The paper card
-# ----------------------------------------------------------------------
-
-_KIND_LABEL = {
-    "work": ("BLENDWME IS WORKING", GRAPHITE, False),
-    "watch": ("WATCH  -  PRESS NEXT", RED, True),
-    "teach": ("YOUR TURN", RED, True),
-    "ask": ("BLENDWME ASKS", RED, True),
-    "pause": ("YOU HAVE CONTROL", YOU_BLUE, False),
-    "done": ("DONE", GRAPHITE, False),
-}
-
-
-def _draw_card(region, card):
-    s = _scale()
-    pad = 16 * s
-    width = min(600 * s, region.width - 40 * s)
-    if width < 200 * s:
-        return
-    title_size = int(19 * s)
-    body_size = int(15 * s)
-    small = int(12 * s)
-    inner = width - 2 * pad
-    title_lines = _wrap(card.get("title", ""), title_size, inner)[:2]
-    body_lines = _wrap(card.get("text", ""), body_size, inner)[:7]
-    why_lines = _wrap(card.get("why", ""), int(13 * s), inner)[:2] if card.get("why") else []
-    height = (pad * 2 + small + 10 * s + len(title_lines) * (title_size + 9 * s)
-              + len(body_lines) * (body_size + 5 * s)
-              + (len(why_lines) * (13 * s + 4 * s) + 6 * s if why_lines else 0))
-    x = (region.width - width) / 2
-    y = 24 * s
-    gpu.state.blend_set("ALPHA")
-    _rect(x + 6 * s, y - 6 * s, width, height, SHADOW)          # hard shadow
-    _rect(x, y, width, height, PAPER)                            # paper
-    _outline(x, y, width, height, GRAPHITE, 2.0 * s)             # graphite outline
-    label, color, blinks = _KIND_LABEL.get(card.get("kind"), ("BLENDWME", GRAPHITE, False))
-    top = y + height - pad
-    block_on = (not blinks) or _blink()
-    if block_on:
-        _rect(x + pad, top - small, small * 1.4, small, RED if color is RED else color)
-    step = card.get("step")
-    if card.get("progress") and card.get("kind") in ("work", "watch"):
-        label_text = label + "   " + card["progress"]
+def radar(cx, cy, pal, size=34.0):
+    """Two hot rings growing from 0.3x to 1.3x and fading over 1.8 s; the second 0.9 s late."""
+    s = d.ui()
+    r = size * s
+    if _motion():
+        t = time.time() - _pointer_start[0]
+        for delay in (0.0, 0.9):
+            phase = ((t - delay) % 1.8) / 1.8
+            d.circle(cx, cy, r * (0.3 + phase), pal.with_alpha(pal.hot, 1.0 - phase), 2.5 * s)
     else:
-        label_text = label + (f"   STEP {step}" if step and card.get("kind") in ("work", "watch") else "")
-    _text(x + pad + small * 2, top - small + 1 * s, label_text, small, color)
-    cursor = top - small - 10 * s
-    for line in title_lines:
-        cursor -= title_size
-        _text(x + pad, cursor, line, title_size, GRAPHITE)
-        cursor -= 9 * s
-    for line in body_lines:
-        cursor -= body_size
-        _text(x + pad, cursor, line, body_size, GRAPHITE)
-        cursor -= 5 * s
-    if why_lines:
-        cursor -= 6 * s
-        for line in why_lines:
-            cursor -= 13 * s
-            _text(x + pad, cursor, line, int(13 * s), PENCIL)
-            cursor -= 4 * s
-    gpu.state.blend_set("NONE")
+        d.circle(cx, cy, r * 0.8, pal.hot, 2.5 * s)
+        d.circle(cx, cy, r * 1.2, pal.with_alpha(pal.hot, 0.45), 2.0 * s)
+    d.disc(cx, cy, 5 * s, pal.hot)
 
 
-def _draw_thinking(region):
-    s = _scale()
-    dots = "." * (1 + int(time.time() * 2) % 3)
-    text = "BlendWMe is thinking" + dots
-    size = int(14 * s)
-    blf.size(FONT, size)
-    w = blf.dimensions(FONT, "BlendWMe is thinking...")[0] + 40 * s
-    h = size + 16 * s
-    x = (region.width - w) / 2
-    y = 24 * s
-    gpu.state.blend_set("ALPHA")
-    _rect(x + 4 * s, y - 4 * s, w, h, SHADOW)
-    _rect(x, y, w, h, PAPER)
-    _outline(x, y, w, h, GRAPHITE, 1.5 * s)
-    _rect(x + 10 * s, y + 8 * s, size * 0.9, size * 0.9, RED if _blink(0.8) else PAPER_DARK)
-    _text(x + 26 * s, y + 8 * s, text, size, GRAPHITE)
-    gpu.state.blend_set("NONE")
+def pencil_circle(x, y, w, h, pal, arrow=True):
+    """A hand-drawn hot loop around a control, overshooting a little, plus a short arrow."""
+    s = d.ui()
+    cx, cy = x + w / 2, y + h / 2
+    rx, ry = w / 2 + 8 * s, h / 2 + 8 * s
+    pts = []
+    turns = 1.12
+    for i in range(73):
+        t = i / 72 * turns
+        a = 2 * math.pi * t + 0.6
+        wobble = 1.0 + 0.04 * math.sin(a * 3.0) + 0.05 * t
+        pts.append((cx + rx * wobble * math.cos(a), cy + ry * wobble * math.sin(a)))
+    d.polyline(pts, pal.hot, 3.0 * s)
+    if arrow:
+        ax, ay = cx - rx - 6 * s, cy - ry - 6 * s
+        tip = (ax + 18 * s * 0.7, ay + 18 * s * 0.7)
+        d.polyline([(ax - 26 * s, ay - 26 * s), tip], pal.hot, 3.0 * s)
+        d.polyline([(tip[0] - 12 * s, tip[1]), tip, (tip[0], tip[1] - 12 * s)], pal.hot, 3.0 * s)
 
 
-# ----------------------------------------------------------------------
-# Pointers
-# ----------------------------------------------------------------------
-
-def _radar(cx, cy, label=None):
-    s = _scale()
-    t = time.time()
-    gpu.state.blend_set("ALPHA")
-    for i in range(3):
-        phase = ((t * 0.8) + i / 3.0) % 1.0
-        r = (12 + 46 * phase) * s
-        alpha = 1.0 - phase
-        _circle(cx, cy, r, (RED[0], RED[1], RED[2], alpha), 2.5 * s)
-    _circle(cx, cy, 6 * s, RED, 3 * s)
-    if label:
-        size = int(13 * s)
-        blf.size(FONT, size)
-        tw = blf.dimensions(FONT, label)[0]
-        bx, by = cx + 22 * s, cy + 18 * s
-        _rect(bx + 3 * s, by - 3 * s, tw + 14 * s, size + 10 * s, SHADOW)
-        _rect(bx, by, tw + 14 * s, size + 10 * s, PAPER)
-        _outline(bx, by, tw + 14 * s, size + 10 * s, GRAPHITE, 1.5 * s)
-        _text(bx + 7 * s, by + 6 * s, label, size, GRAPHITE)
-    gpu.state.blend_set("NONE")
+def bubble(x, y, words, pal, anchor=None, hand=False):
+    """A paper note. Its bottom left is (x, y). A dashed leader goes to `anchor`."""
+    s = d.ui()
+    key, size = ("HAND", 17 * s) if hand else ("BODY", 14 * s)
+    width = min(260 * s, d.width_of(key, size, words) + 24 * s)
+    h = d.paragraph_height(key, size, words, width - 24 * s) + 18 * s
+    if anchor is not None:
+        d.dashed_path([(x + width, y + h / 2), anchor], pal.ink, 2 * s, 7 * s, 5 * s, closed=False)
+    d.box(x, y, width, h, fill=pal.card, border=pal.ink, width=2.0, radius=8, shadow=pal.shadow,
+          shadow_offset=3)
+    d.paragraph(key, size, x + 12 * s, y + h - 9 * s, words, pal.ink, width - 24 * s)
+    return width, h
 
 
-def _object_point(obj):
-    corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
-    return sum(corners, Vector()) / 8.0
+def _screen_bounds(region, rv3d, obj):
+    """The object's bounding box on screen, or None when it is not visible."""
+    pts = []
+    for corner in obj.bound_box:
+        p2 = location_3d_to_region_2d(region, rv3d, obj.matrix_world @ Vector(corner))
+        if p2 is not None:
+            pts.append(p2)
+    if not pts:
+        return None
+    x0, x1 = min(p.x for p in pts), max(p.x for p in pts)
+    y0, y1 = min(p.y for p in pts), max(p.y for p in pts)
+    if x1 < 0 or y1 < 0 or x0 > region.width or y0 > region.height:
+        return None
+    return x0, y0, x1, y1
 
 
-def _draw_viewport_pointers(region):
-    rv3d = bpy.context.region_data
-    if rv3d is None:
+def building_outline(region, rv3d, names, pal, brain):
+    """A marching dashed ink box around what is being built, with a "Building now" tag."""
+    s = d.ui()
+    boxes = []
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            b = _screen_bounds(region, rv3d, obj)
+            if b:
+                boxes.append(b)
+    if not boxes:
         return
-    for p in list(session.pointers):
-        co = None
-        if p.get("object") and p["object"] in bpy.data.objects:
-            co = _object_point(bpy.data.objects[p["object"]])
-        elif p.get("location") and len(p["location"]) == 3:
-            co = Vector(p["location"])
-        if co is None:
-            continue
-        xy = location_3d_to_region_2d(region, rv3d, co)
-        if xy is not None and 0 <= xy.x <= region.width and 0 <= xy.y <= region.height:
-            _radar(xy.x, xy.y, p.get("label") or p.get("object"))
+    x0 = min(b[0] for b in boxes) - 14 * s
+    y0 = min(b[1] for b in boxes) - 14 * s
+    x1 = max(b[2] for b in boxes) + 14 * s
+    y1 = max(b[3] for b in boxes) + 14 * s
+    offset = ((time.time() % 10.0) * 24 * s) if _motion() else 0.0
+    d.dashed_path(d.rounded_points(x0, y0, x1 - x0, y1 - y0, 4 * s), pal.ink, 2.2 * s, 9 * s, 6 * s, offset)
+    words = "Building now"
+    size = 16 * s
+    w = d.width_of("HAND", size, words) + 40 * s
+    h = 28 * s
+    tx, ty = x0 + 10 * s, y1 - h / 2
+    d.box(tx, ty, w, h, fill=pal.card, border=pal.ink, width=2.0, radius=h / 2 / s)
+    if brain == "codex":
+        d.diamond(tx + 15 * s, ty + h / 2, 6 * s, pal.ink, 1.8 * s)
+    else:
+        d.circle(tx + 15 * s, ty + h / 2, 5.5 * s, pal.ink, 1.8 * s)
+    d.text("HAND", size, tx + 28 * s, ty + h / 2 - size * 0.32, words, pal.ink)
+
+
+def working_card(region, pal):
+    """Top of the viewport (screen 31): who is working, the step, the scribble line."""
+    from .relay import relay
+    s = d.ui()
+    brain = relay.running or relay.active
+    card = session.card or {}
+    name = {"claude": "Claude", "codex": "Codex"}.get(brain, "BlendWMe")
+    verb = "working" if session.status == WORKING else "thinking"
+    progress = (card.get("progress") or "").upper()
+    head = f"{name} is {verb}" .upper() + (f" · {progress}" if progress else "")
+    title = card.get("title") or ""
+    width = min(560 * s, region.width - 40 * s)
+    if width < 240 * s:
+        return
+    h = (92 if title else 58) * s
+    x = (region.width - width) / 2
+    y = region.height - h - 60 * s
+    d.box(x, y, width, h, fill=pal.panel, border=pal.ink, width=2.5, radius=8, shadow=pal.shadow, shadow_offset=4)
+    top = y + h - 22 * s
+    phase = ((time.time() % 1.2) / 1.2) if _motion() else None
+    d.ticks(x + 14 * s, top - 6 * s, 12 * s, pal.ink, phase)
+    if brain == "codex":
+        d.diamond(x + 46 * s, top, 6 * s, pal.ink, 1.8 * s)
+    else:
+        d.circle(x + 46 * s, top, 5.5 * s, pal.ink, 1.8 * s)
+    d.tracked("BLACK", 10.5 * s, x + 60 * s, top - 4 * s, head, pal.ink)
+    hint = "Esc pauses"
+    hw = d.width_of("HAND", 15 * s, hint)
+    d.text("HAND", 15 * s, x + width - hw - 14 * s, top - 5 * s, hint, pal.muted)
+    if title:
+        d.text("HAND", 20 * s, x + 14 * s, top - 34 * s, title, pal.ink)
+        prog = ((time.time() % 2.6) / 2.6) if _motion() else 1.0
+        d.scribble(x + 16 * s, y + 14 * s, min(220 * s, width * 0.4), 3 * s, pal.ink, prog,
+                   "zigzag" if brain == "codex" else "wavy", 2.2 * s)
+
+
+def cue_card(region, card, pal):
+    """Your turn, at the bottom of the viewport, when the panel is not open here."""
+    s = d.ui()
+    width = min(560 * s, region.width - 40 * s)
+    if width < 240 * s:
+        return
+    words = card.get("text") or card.get("title") or ""
+    tw = width - 80 * s
+    h = 54 * s + d.paragraph_height("HAND", 20 * s, words, tw)
+    x = (region.width - width) / 2
+    y = 30 * s
+    d.box(x, y, width, h, fill=pal.card, border=pal.ink, width=2.5, radius=10, shadow=pal.shadow, shadow_offset=6)
+    top = y + h - 18 * s
+    on = (not _motion()) or (time.time() % 2.0) < 1.0
+    d.box(x + 18 * s, top - 22 * s, 22 * s, 22 * s, fill=pal.hot if on else pal.with_alpha(pal.hot, 0.18),
+          border=pal.ink if on else None, width=1.5, radius=2)
+    kind = card.get("kind")
+    head = {"teach": "Your turn", "watch": "Press Next", "ask": "A question for you"}.get(kind, "Your turn")
+    d.tracked("BLACK", 11 * s, x + 56 * s, top - 10 * s, head.upper(), pal.ink)
+    d.paragraph("HAND", 20 * s, x + 56 * s, top - 18 * s, words, pal.ink, tw)
+
+
+# ----------------------------------------------------------------------
+# Where things are
+# ----------------------------------------------------------------------
+def properties_tabs(space):
+    """The tab ids this Properties editor shows, in order (cached by the redraw timer)."""
+    return _tabs.get(space.as_pointer(), [])
+
+
+def _read_tabs():
+    """Ask each Properties editor for its tabs. Blender lists the valid ones when an invalid
+    one is set, which is the only way Python can learn which tabs are visible."""
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type != "PROPERTIES":
+                    continue
+                space = area.spaces.active
+                try:
+                    space.context = "__BLENDWME__"
+                except TypeError as e:
+                    text = str(e)
+                    start, end = text.find("("), text.rfind(")")
+                    if start != -1:
+                        _tabs[space.as_pointer()] = [t.strip().strip("'") for t in text[start + 1:end].split(",")]
+    except Exception:
+        pass
+
+
+def tab_rect(region, space, tab):
+    """Where a tab sits in the Properties editor's tab column (NAVIGATION_BAR), or None."""
+    tabs = properties_tabs(space)
+    tab = TAB_ALIASES.get(tab.upper(), tab.upper())
+    if tab not in tabs:
+        return None
+    # Blender draws the tab column as icon buttons 1.4 UI units tall (UI unit = 20 px at 100 %),
+    # with a short separator between groups and a little padding at the top.
+    unit = 20 * d.ui()
+    tab_h = 1.4 * unit
+    sep = 0.45 * unit
+    groups = ({"TOOL"}, {"RENDER", "OUTPUT", "VIEW_LAYER", "SCENE", "WORLD"}, {"COLLECTION"},
+              {"OBJECT", "MODIFIER", "SHADERFX", "PARTICLES", "PHYSICS", "CONSTRAINT", "DATA", "BONE",
+               "BONE_CONSTRAINT", "MATERIAL"}, {"TEXTURE"})
+    y = region.height - 0.4 * unit
+    previous_group = None
+    for t in tabs:
+        group = next((i for i, g in enumerate(groups) if t in g), 3)
+        if previous_group is not None and group != previous_group:
+            y -= sep
+        previous_group = group
+        y -= tab_h
+        if t == tab:
+            return (region.width - tab_h) / 2, y, tab_h, tab_h
+    return None
 
 
 def _editor_matches(area, editor):
@@ -251,54 +288,106 @@ def _editor_matches(area, editor):
     return area.type == editor
 
 
-def _draw_region_outline(region):
-    area = bpy.context.area
-    if area is None:
-        return
-    for p in list(session.pointers):
-        editor = p.get("editor")
-        if not editor or not _editor_matches(area, editor):
-            continue
-        if (p.get("region") or "WINDOW") != region.type:
-            continue
-        if editor == "VIEW_3D" and region.type == "WINDOW" and not p.get("label"):
-            continue  # do not frame the whole viewport without a reason
-        s = _scale()
-        if _blink(0.9):
-            gpu.state.blend_set("ALPHA")
-            _outline(3 * s, 3 * s, region.width - 6 * s, region.height - 6 * s, RED, 4 * s)
-            gpu.state.blend_set("NONE")
-        if p.get("label") and region.height > 30 * s:
-            _radar(min(region.width - 30 * s, 30 * s), region.height / 2, p["label"])
-
-
 # ----------------------------------------------------------------------
-# Handlers
+# Draw handlers
 # ----------------------------------------------------------------------
-
 def _draw_view3d_main():
+    from . import panel
+    from .relay import relay
     region = bpy.context.region
+    area = bpy.context.area
+    rv3d = bpy.context.region_data
     try:
-        _draw_viewport_pointers(region)
-        _draw_region_outline(region)
-        card = session.card
-        if card:
-            _draw_card(region, card)
-        elif session.status == "THINKING":
-            _draw_thinking(region)
+        import gpu
+        gpu.state.blend_set("ALPHA")
+        pal = theme.current()
+        brain = relay.running or relay.active
+        if rv3d is not None and _pointers_on():
+            building = [p["object"] for p in session.pointers if p.get("building") and p.get("object")]
+            if building:
+                building_outline(region, rv3d, building, pal, brain)
+            for p in list(session.pointers):
+                if p.get("building") or p.get("editor"):
+                    continue
+                co = None
+                if p.get("object") and p["object"] in bpy.data.objects:
+                    obj = bpy.data.objects[p["object"]]
+                    co = obj.matrix_world @ (sum((Vector(c) for c in obj.bound_box), Vector()) / 8.0)
+                elif p.get("location") and len(p["location"]) == 3:
+                    co = Vector(p["location"])
+                if co is None:
+                    continue
+                xy = location_3d_to_region_2d(region, rv3d, co)
+                if xy is None or not (0 <= xy.x <= region.width and 0 <= xy.y <= region.height):
+                    continue
+                radar(xy.x, xy.y, pal)
+                if p.get("label"):
+                    s = d.ui()
+                    bubble(xy.x - 300 * s, xy.y + 40 * s, p["label"], pal, anchor=(xy.x - 12 * s, xy.y + 8 * s))
+        _draw_region_pointer(region, area, pal)
+        if not panel.is_open_in(area):
+            card = session.card
+            if card and not card.get("hidden") and session.status in (WAIT_USER, WAIT_NEXT, ASKING):
+                cue_card(region, card, pal)
+            elif relay.is_running() and session.status in (THINKING, WORKING):
+                working_card(region, pal)
+        gpu.state.blend_set("NONE")
     except Exception as e:  # never break Blender's drawing
         print("BlendWMe overlay:", e)
 
 
+def _draw_region_pointer(region, area, pal):
+    if area is None or not _pointers_on():
+        return
+    s = d.ui()
+    for p in list(session.pointers):
+        editor = p.get("editor")
+        if not editor or not _editor_matches(area, editor):
+            continue
+        tab = p.get("tab")
+        if tab and area.type == "PROPERTIES":
+            if region.type != "NAVIGATION_BAR":
+                continue
+            rect = tab_rect(region, area.spaces.active, tab)
+            if rect:
+                x, y, w, h = rect
+                radar(x + w / 2, y + h / 2, pal, size=26)
+                continue
+        if (p.get("region") or "WINDOW") != region.type:
+            continue
+        if editor == "VIEW_3D" and region.type == "WINDOW" and not p.get("label"):
+            continue        # never circle the whole viewport without a reason
+        # The pencil circle around the part of the editor, inset so it stays visible.
+        inset = 10 * s
+        pencil_circle(inset, inset, region.width - 2 * inset, region.height - 2 * inset, pal,
+                      arrow=region.width > 120 * s and region.height > 120 * s)
+        if p.get("label") and region.width > 160 * s and region.height > 50 * s:
+            bubble(14 * s, region.height / 2, p["label"], pal, hand=True)
+
+
 def _draw_other():
     try:
-        _draw_region_outline(bpy.context.region)
+        import gpu
+        gpu.state.blend_set("ALPHA")
+        _draw_region_pointer(bpy.context.region, bpy.context.area, theme.current())
+        gpu.state.blend_set("NONE")
     except Exception as e:
         print("BlendWMe overlay:", e)
 
 
 def _redraw_timer():
-    animate = bool(session.pointers) or bool(session.card) or session.status == "THINKING"
+    # The Done card collapses after 6 s into one line in the conversation.
+    card = session.card
+    if card and card.get("kind") == "done" and time.time() - card.get("t", time.time()) > DONE_SECONDS:
+        from .panel_ops import collapse_done
+        collapse_done(card)
+    if any(p.get("tab") for p in session.pointers):
+        _read_tabs()
+    from . import panel
+    animate = (bool(session.pointers) or bool(session.card) or session.status in (THINKING, WORKING)
+               or panel.state.open)
+    if animate and theme.reduce_motion():
+        animate = panel.state.focused          # still keep the text caret alive
     changed = session.changed_flag
     if animate or changed:
         session.changed_flag = False

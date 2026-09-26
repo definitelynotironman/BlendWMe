@@ -313,7 +313,7 @@ class ToolHost:
                 result["user"] = "The step was shown to the user; it advanced by itself."
             session.set_pointers([])
         elif mode == "AUTO" and session.build_style == "PIECE" and result["ok"] and targets and session.pace > 0:
-            session.set_pointers([{"object": n} for n in targets[:3]])
+            session.set_pointers([{"object": n, "building": True} for n in targets[:3]])
             time.sleep(min(session.pace, 10.0))
             session.set_pointers([])
 
@@ -456,7 +456,11 @@ class ToolHost:
 
     # -- teaching and talking -------------------------------------------
     def _tool_point_at(self, args, brain):
-        pointer = {k: args[k] for k in ("object", "location", "editor", "region", "label") if args.get(k)}
+        pointer = {k: args[k] for k in ("object", "location", "editor", "region", "tab", "label") if args.get(k)}
+        if pointer.get("tab") and not pointer.get("editor"):
+            pointer["editor"] = "PROPERTIES"
+        if pointer.get("editor") == "PROPERTIES" and pointer.get("tab"):
+            pointer["region"] = "NAVIGATION_BAR"
         session.set_pointers([pointer] if pointer else [])
         return {"ok": True}, []
 
@@ -467,8 +471,12 @@ class ToolHost:
         pointers = []
         if args.get("point_object"):
             pointers.append({"object": args["point_object"]})
-        if args.get("point_editor"):
-            pointers.append({"editor": args["point_editor"], "region": args.get("point_region") or "WINDOW"})
+        if args.get("point_editor") or args.get("point_tab"):
+            pointer = {"editor": args.get("point_editor") or "PROPERTIES",
+                       "region": args.get("point_region") or "WINDOW"}
+            if args.get("point_tab"):
+                pointer.update(tab=args["point_tab"], region="NAVIGATION_BAR")
+            pointers.append(pointer)
         session.set_pointers(pointers)
         session.add("step", "Your turn: " + title, detail=args.get("instruction", ""), brain=brain)
         session.teach_choice = None

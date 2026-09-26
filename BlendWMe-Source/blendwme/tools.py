@@ -72,6 +72,7 @@ POINT_AT = _fn(
      "location": {"type": "array", "items": {"type": "number"}, "description": "[x, y, z] world position"},
      "editor": {"type": "string", "enum": ["VIEW_3D", "PROPERTIES", "OUTLINER", "NODE_EDITOR", "DOPESHEET_EDITOR", "GRAPH_EDITOR", "TIMELINE", "IMAGE_EDITOR", "SEQUENCE_EDITOR", "TEXT_EDITOR"]},
      "region": {"type": "string", "enum": ["WINDOW", "HEADER", "TOOLS", "UI", "NAVIGATION_BAR"], "description": "Part of the editor: TOOLS is the left toolbar, UI is the N sidebar, HEADER is the top bar, NAVIGATION_BAR is the Properties editor tab column (modifiers, materials...)"},
+     "tab": {"type": "string", "enum": ["TOOL", "RENDER", "OUTPUT", "VIEW_LAYER", "SCENE", "WORLD", "COLLECTION", "OBJECT", "MODIFIER", "PARTICLES", "PHYSICS", "CONSTRAINT", "DATA", "MATERIAL", "TEXTURE"], "description": "With editor PROPERTIES: the exact tab to ring (e.g. MODIFIER for the wrench)"},
      "label": {"type": "string", "description": "A few words shown next to the pointer"}})
 
 TEACH_STEP = _fn(
@@ -84,7 +85,8 @@ TEACH_STEP = _fn(
      "check": {"type": "string", "description": "Python expression that becomes True when the step is done. Names: bpy, C, D. Empty if it cannot be checked."},
      "point_object": {"type": "string"},
      "point_editor": {"type": "string"},
-     "point_region": {"type": "string"}},
+     "point_region": {"type": "string"},
+     "point_tab": {"type": "string", "description": "With point_editor PROPERTIES: the tab to ring, e.g. MODIFIER"}},
     ["title", "instruction"])
 
 ASK_USER = _fn(

@@ -86,6 +86,10 @@ def on_load_post(*_args):
     if _load_note:
         session.add("info", _load_note)
         _load_note = ""
+    # Blender ends modal operators when a file loads: start the panel again.
+    from . import panel, panel_ops
+    if panel.state.open and not bpy.app.background:
+        bpy.app.timers.register(panel_ops.reopen_after_load, first_interval=0.3)
 
 
 @persistent

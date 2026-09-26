@@ -11,8 +11,8 @@ tags = ["3D View", "Modeling", "Animation"]
 
 blender_version_min = "4.2.0"
 
-license = ["SPDX:MIT"]
+license = ["SPDX:MIT", "SPDX:OFL-1.1"]
 
 [permissions]
-network = "Local socket for Claude Code and Codex; optional AI API"
+network = "Local socket for Claude Code and Codex"
 files = "Workspace folder, project journal, logs and captures"

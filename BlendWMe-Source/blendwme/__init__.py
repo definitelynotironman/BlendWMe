@@ -13,8 +13,11 @@ Architecture (one line each):
     look.py          viewport and multi-angle captures
     scene_info.py    scene summaries, snapshots, "what did the user change", who made what
     knowledge.py     skill cards + live Blender API lookup
-    overlay.py       Graphite Paper card and red pointers in the viewport
-    ui.py            the sidebar panel and buttons; setup_checks.py the setup buttons
+    panel.py         the BlendWMe panel drawn in the 3D Viewport (the approved design)
+    panel_ops.py     its modal operator: clicks, typing, shortcuts, commands
+    draw2d.py        shapes, fonts and text for the panel and the indicators; theme.py the themes
+    overlay.py       the indicators in Blender: radar rings, pencil circles, building outline
+    ui.py            operators and the small sidebar launcher; setup_checks.py the setup checks
     bridge.py        runs Blender work safely on Blender's main thread
     lifecycle.py     file loads, undo, crash trace, safe startup, the Save Preferences note
     keymaps.py       the shortcuts, in Blender's add-on keyconfig
@@ -23,7 +26,7 @@ Architecture (one line each):
 
 import bpy
 
-from . import bridge, journal, keymaps, lifecycle, overlay, prefs, socket_bridge, ui
+from . import bridge, journal, keymaps, lifecycle, overlay, panel, prefs, socket_bridge, ui
 from .relay import relay
 
 
@@ -44,6 +47,7 @@ _PARTS = (
     ("Panel", ui),
     ("Main-thread bridge", bridge),
     ("Viewport overlay", overlay),
+    ("BlendWMe panel", panel),
     ("Project journal", journal),
     ("Shortcuts", keymaps),
 )
