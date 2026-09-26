@@ -2,6 +2,44 @@
 
 All notable changes to BlendWMe. Versions follow the add-on's `blender_manifest.toml`.
 
+## 2.2.0
+
+### Added
+- Five themes. New: **2000s**, made for Blender's Theme 2000 (Luna blue title bar, navy hard
+  shadow, orange for your turn, Archivo text), and **Blender UI**, which draws no panel at all:
+  BlendWMe lives in the sidebar (N > BlendWMe) with Blender's own widgets, like other extensions.
+  Modes, brains, cards, plan, conversation, journal and settings are all there; the viewport
+  pointers take the colours of your Blender theme.
+- A **BlendWMe** button in the 3D Viewport's header: one way in for every theme.
+- Three panel views: Full, Compact (what is happening, the buttons and the input) and the minimized
+  bar. Double-click the logo row to switch; the square button makes the panel full height. The
+  frame animates between views (200 ms in, 150 ms out) and follows Blender's Smooth View setting.
+- Compact by itself when the viewport is too small for Full; the limit card keeps its Hand over and
+  Wait buttons there.
+- Typing like a Blender text field: selection with Shift, word jumps with Ctrl, Ctrl+A / C / X / V,
+  undo and redo, click to place the caret, double-click to select a word.
+- Settings open as a popover with Blender's own widgets (the same settings as Preferences > Add-ons).
+- Blender 5.x support (tested on 5.2.2): the EEVEE engine id and the "one number for a vector"
+  repair work on both 4.2 and 5.x.
+
+### Changed
+- A new renderer: every box, card and button is one shape with hard pixel edges, line widths and
+  positions are whole pixels, and text is placed on whole pixels. Colours match the theme exactly.
+- The panel follows Blender's Resolution Scale (Preferences > Interface) times its own Panel size.
+- Move the panel in any direction: it snaps to the edges and corners of the free viewport (Ctrl
+  turns snapping off, Esc puts it back), keeps the nearest corner and its distance from it, and never
+  covers the header, the toolbar, the sidebar or the navigation gizmo.
+- The panel's height follows its content. The corner grip sits opposite the panel's corner, and the
+  width snaps to an 8-unit grid (minimum 300 x 220).
+- Text never leaves its box: long lines end with an ellipsis, long words break with a hyphen,
+  values keep their units ("10 s", "6 of 7"), and a last line is never a single orphan word.
+- Note bubbles in the viewport move out of the panel's way; cue and working cards centre in the
+  free part of the viewport.
+- One redraw timer: about 30 frames a second only while something moves, and only for the regions
+  that show it.
+- The drawn settings screen and the sidebar launcher are replaced by the Settings popover and, in
+  Blender UI mode, the full sidebar.
+
 ## 2.1.0
 
 ### Added

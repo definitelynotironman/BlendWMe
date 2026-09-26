@@ -8,7 +8,7 @@
 <p align="center"><b>A Blender artist and coach who sits inside your Blender and works with you.</b></p>
 
 <p align="center">
-  Blender 4.2 LTS · Windows · Claude Code or Codex · MIT licence
+  Blender 4.2 LTS and 5.x · Windows · Claude Code or Codex · MIT licence
 </p>
 
 ## What is this & Why does it exist
@@ -127,7 +127,7 @@ on your computer except the AI's thinking.
 
 | You need | Notes |
 |---|---|
-| Blender 4.2 LTS | Tested with 4.2.3. |
+| Blender 4.2 LTS or newer | Tested with 4.2.3 and 5.2.2. |
 | Windows 10 or 11 | Tested on Windows 11. macOS and Linux are untested (brave souls welcome). |
 | Claude Code, signed in with a Claude plan **or** Codex CLI, signed in with a ChatGPT plan | One is enough. Both lets you use the relay. Claude Code needs a Pro, Max, Team or Enterprise plan. |
 | Python 3.10 or newer for the tools server | Optional. BlendWMe installs the tools server into its own environment with any Python it finds, or with Blender's own Python. It needs the internet once to download the `mcp` package. |
@@ -151,14 +151,14 @@ on your computer except the AI's thinking.
 
    Or, if you have Node.js: `npm install -g @openai/codex`. Then run `codex` and choose
    **Sign in with ChatGPT**.
-3. Download `blendwme-2.1.0.zip` from [Releases](../../releases). Don't unzip it. Blender wants
+3. Download `blendwme-2.2.0.zip` from [Releases](../../releases). Don't unzip it. Blender wants
    the zip.
 4. In Blender: **Edit > Preferences > Get Extensions**, open the drop-down menu in the top right,
    choose **Install from Disk**, and pick the zip.
 5. **Save Preferences** (the menu at the bottom left of the Preferences window > Save Preferences).
    Skip this and Blender forgets BlendWMe the next time it starts. Ask me how I know.
-6. Open BlendWMe: press **Ctrl+Alt+M** with the mouse over the 3D Viewport, or open the sidebar
-   (**N**) > **BlendWMe** tab > **Open BlendWMe**.
+6. Open BlendWMe: press **Ctrl+Alt+M** with the mouse over the 3D Viewport, or click the
+   **BlendWMe** button in the viewport's header (top right, next to the overlays).
 7. Click **Settings** at the bottom of the panel. The checks run by themselves. If the tools server
    is missing, press **Install the tools server**. You want a ✓ on every line.
 
@@ -170,7 +170,7 @@ looks for `claude` on the PATH and in `%USERPROFILE%\.local\bin`, where the offi
 it. If the check still can't find a program:
 
 1. Open a terminal and run `where claude` (or `where codex`). Copy the path it prints.
-2. In BlendWMe: **Settings > Advanced settings**. Paste the path into **Claude Code program** (or
+2. In BlendWMe: **Settings > Advanced**. Paste the path into **Claude Code program** (or
    **Codex program**).
 3. Run the checks again.
 
@@ -204,6 +204,9 @@ Your journal, logs and settings stay where they are.
 | Teach | You, guided one action at a time | `Teach me to bevel the table edges` |
 | Auto | The AI, part by part, checking as it goes | `A cosy low poly cottage with a stone base and a small path` |
 
+Got a reference picture? Add it in Settings > **References for this task** before you send the
+brief. BlendWMe shows it to the brain and checks the build against it.
+
 Camera giving you grief? Ask "How do I aim the camera at my scene?" in Teach for a short lesson
 with pointers, or press **Do it for me** and it lines the camera up with your view, frames the scene
 or sets the lens.
@@ -228,21 +231,25 @@ or sets the lens.
 
 ### The panel: move it, shrink it, tuck it away
 
-The panel sits tight against the right edge of the viewport by default, so the middle of the screen
-stays yours. If it's still in the way:
+The panel sits in the top right of the viewport, next to the navigation gizmo (never on top of it),
+and is only as tall as what it has to show. If it's still in the way:
 
-- **Move it.** Drag the logo row anywhere in the viewport. Drop it near the right edge and it snaps
-  back into place. Double-click the logo row to send it home.
-- **Resize it.** Drag the little grip in the bottom left corner to make it narrower, wider, shorter
-  or taller. Double-click the grip for the normal size.
-- **Minimize it.** The square button next to the status folds the panel into a small bar. Nothing
-  stops: the AI keeps working, the bar shows what it's doing, and it blinks red when it's your turn.
-  Click the bar to bring the panel back. **Take control** minimizes it for you, because if you're
-  taking over, you probably want to see what you're doing.
+- **Move it.** Drag the logo row anywhere, in any direction. It snaps to the edges and corners of
+  the viewport; hold **Ctrl** to place it freely, press **Esc** to put it back mid-drag. It remembers
+  the nearest corner, so it stays put when you open the sidebar or resize the window.
+- **Resize it.** Drag the little grip in the opposite corner. Double-click the grip for the normal
+  size.
+- **Three views.** Double-click the logo row for **Compact** (just what's happening, the buttons and
+  the input). The square button makes the panel full height, or opens Full from Compact. The line
+  button folds it into a small bar: the AI keeps working, the bar shows what it's doing, and it
+  blinks when it's your turn. **Take control** folds it for you, because if you're taking over, you
+  probably want to see what you're doing. On a small screen the panel goes Compact by itself.
 - **Size things to taste.** Settings > Panel has **Panel size** (everything at once), **Text size**
-  and **Icon size**. The default is 75 %. If you have a huge monitor, or a tiny laptop, or tired
-  eyes, adjust away.
-- **Put it back on the right** in Settings > Panel undoes all your moving and resizing.
+  and **Icon size**. The default is 75 %, on top of Blender's own Resolution Scale.
+- **Put the panel back on the right** in Settings > Panel undoes all your moving and resizing.
+
+Typing works like a Blender text field: Shift+arrows select, Ctrl+arrows jump words, Ctrl+C / X / V,
+Ctrl+Z / Ctrl+Shift+Z. Click to put the caret where you want it.
 
 ### The plan
 
@@ -272,15 +279,36 @@ it, the hand-overs, who made which objects, the problems (open and solved), and 
 
 ### Themes
 
-Settings > Theme: **Graphite** (white paper and pencil), **Red**, or **Blender** (Blender's own grey,
-for people who think white panels are an attack). Animations follow your system's "reduce motion"
-setting, and you can force them on or off in Advanced settings.
+Settings > Theme has five:
+
+| Theme | Looks like |
+|---|---|
+| **Graphite** | White paper and pencil. Red only when it's your turn |
+| **Red** | Red on paper. Bold and warm |
+| **Blender Grey** | Blender's own dark grey, for people who think white panels are an attack |
+| **2000s** | Made for Blender's **Theme 2000**: Luna blue title bar, navy shadow, orange when it's your turn |
+| **Blender UI** | No drawn panel at all. See below |
+
+Animations follow your system's "reduce motion" setting and Blender's **Smooth View** (set it to 0
+and the panel stops animating too). You can force them on or off in Settings > Advanced.
+
+### Blender UI mode
+
+Pick the **Blender UI** theme and BlendWMe drops its own panel and moves into the sidebar (**N** >
+**BlendWMe** tab), built from Blender's normal buttons like any other add-on. Same modes, same
+brains, same journal, same hand-over: the status, the card for your turn, the plan, the conversation
+and the settings, all in Blender's look and your Blender theme. Typing uses Blender's own text field,
+so input methods for other languages work there too.
+
+The pointers in the viewport stay (radar rings, pencil circles, notes), drawn in your theme's
+colours. **Ctrl+Alt+M** and the header button open and close the sidebar tab. Switch back to any
+other theme and the floating panel returns where you left it.
 
 ## Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| Ctrl+Alt+M | Open BlendWMe (mouse over a 3D Viewport). Press again: focus the input. Again: minimize |
+| Ctrl+Alt+M | Open BlendWMe (mouse over a 3D Viewport). Press again: focus the input. Again: minimize. In Blender UI mode: show or hide the sidebar tab |
 | Enter | Send |
 | Shift+Enter | New line |
 | Esc | Pause the AI while it works. Otherwise close the top card |
@@ -293,8 +321,8 @@ setting, and you can force them on or off in Advanced settings.
 
 Blender already uses most of these keys somewhere else, so they only act while the BlendWMe panel
 has focus. Esc while the AI works also pauses it from the viewport, except while an animation plays.
-Change the keys in **Edit > Preferences > Keymap > Window**: "Open BlendWMe" and the
-"BlendWMe Panel Key" items.
+Change the keys in **Edit > Preferences > Keymap > Window**: "BlendWMe" (the one that opens it)
+and the "BlendWMe Panel Key" items.
 
 ## Where things are saved
 
@@ -305,21 +333,21 @@ Change the keys in **Edit > Preferences > Keymap > Window**: "Open BlendWMe" and
 | Workspace for Claude Code and Codex | `Documents\BlendWMe Workspace`: their instructions, the tools server settings and its Python environment |
 | Blender crash log (Windows) | `%TEMP%\blender.crash.txt` |
 
-Type `/logs` in the panel, or use the sidebar > BlendWMe > More > **Open Logs Folder**. Both folders
-can be changed in Settings > Advanced settings.
+Type `/logs` in the panel, or use Settings > Advanced > **Open Logs Folder**. Both folders can be
+changed in Settings > Advanced.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| BlendWMe vanished after Blender crashed | Enable it again in Preferences > Add-ons, then **Save Preferences**. The sidebar's BlendWMe tab reminds you while preferences are unsaved |
-| The panel is in the way | Minimize it (square button), drag it somewhere else, or shrink it in Settings > Panel |
+| BlendWMe vanished after Blender crashed | Enable it again in Preferences > Add-ons, then **Save Preferences**. BlendWMe's Settings remind you while preferences are unsaved |
+| The panel is in the way | Double-click the logo row for Compact, fold it into the bar (line button), drag it somewhere else, shrink it in Settings > Panel, or switch to the **Blender UI** theme |
 | "Claude is not signed in" or "Codex is not signed in" | Open a terminal, run `claude` or `codex`, and sign in. Then run the checks again |
 | A program is not found | See [Make Blender find Claude Code and Codex](#install) |
 | "Claude's limit is reached" | Press **Hand over to Codex**, or wait for the reset time shown on the card |
 | The tools server check fails | Settings > **Install the tools server**. It needs the internet once |
 | The AI's result looks wrong | **Undo step**, or ask it to look again (`/look`) and fix it. Or pause and fix it yourself; it keeps your version |
-| Blender crashed | Sidebar > BlendWMe > More > **Make Crash Report**. It zips BlendWMe's latest logs, the Python crash trace and Blender's crash log. For a detailed run, start `blender_debug_log.cmd` from the Blender install folder and repeat the steps |
+| Blender crashed | Settings > Advanced > **Make Crash Report**. It zips BlendWMe's latest logs, the Python crash trace and Blender's crash log. For a detailed run, start `blender_debug_log.cmd` from the Blender install folder and repeat the steps |
 
 ## Limitations
 
@@ -333,8 +361,8 @@ Honest list, because you'll find out anyway:
   detailed sculpting are still weak, and that's where most of my work is going next.
 - It uses your plan's usage limits. Long Auto sessions eat them faster.
 - It needs an internet connection for the AI.
-- Tested on Blender 4.2.3 LTS and Windows 11 only.
-- Version 2.1 was tested end to end with stand-in programs in place of Claude Code and Codex (the
+- Tested on Blender 4.2.3 LTS, Blender 5.2.2 and Windows 11 only.
+- Version 2.2 was tested end to end with stand-in programs in place of Claude Code and Codex (the
   real tools server, the real Blender, the real journal). Full runs on real Claude and ChatGPT
   accounts are in progress. Codex's command-line flags follow its official documentation.
 - Some laptops have no numpad. Teach steps that use numpad keys also give the menu path.
@@ -353,7 +381,7 @@ Honest list, because you'll find out anyway:
 
 ## Project status and versions
 
-- Current version: **2.1.0**. See [CHANGELOG.md](CHANGELOG.md).
+- Current version: **2.2.0**. See [CHANGELOG.md](CHANGELOG.md).
 - Branches: `main` (this version), `v2.0.0-full` (2.0.0, which also had a pay-per-token API engine),
   `nebius-nemotron` (the original Nemotron build from the Nebius x NVIDIA hackathon, where this all
   started).
@@ -368,7 +396,7 @@ Honest list, because you'll find out anyway:
 
 Found a bug? Open an [Issue](../../issues). It helps a lot if you attach:
 
-1. The crash report zip (sidebar > BlendWMe > More > Make Crash Report), or the newest
+1. The crash report zip (Settings > Advanced > Make Crash Report), or the newest
    `session_*.log` from the logs folder.
 2. Your Blender version and Windows version.
 3. What you did before it broke, and which brain and mode you were using.
