@@ -353,7 +353,7 @@ Honest list, because you'll find out anyway:
 
 ## Project status and versions
 
-- Current version: **2.1.0**.
+- Current version: **2.1.0**. See [CHANGELOG.md](CHANGELOG.md).
 - Branches: `main` (this version), `v2.0.0-full` (2.0.0, which also had a pay-per-token API engine),
   `nebius-nemotron` (the original Nemotron build from the Nebius x NVIDIA hackathon, where this all
   started).
