@@ -109,12 +109,17 @@ check("Shift+Tab is next mode", panel_ops.match(Event("TAB", shift=True)) == "ne
 check("Ctrl+L clears the view", panel_ops.match(Event("L", ctrl=True)) == "clear_view")
 check("plain Tab is not taken from Blender", panel_ops.match(Event("TAB")) is None)
 props = bpy.context.window_manager.blendwme
-props.mode = "WATCH"
+props["mode"] = 0
+prefs.sync_session()
+check("legacy numeric mode becomes Auto", props.mode == "AUTO" and session.mode == "AUTO")
+props["mode"] = 1
+prefs.sync_session()
+check("stored Teach keeps its identity", props.mode == "TEACH" and session.mode == "TEACH")
+props.mode = "AUTO"
 panel_ops.next_mode(bpy.context)
-check("next mode goes Together -> Teach", props.mode == "TEACH")
+check("next mode goes Auto -> Teach", props.mode == "TEACH")
 panel_ops.next_mode(bpy.context)
-panel_ops.next_mode(bpy.context)
-check("next mode wraps round", props.mode == "WATCH")
+check("next mode wraps round", props.mode == "AUTO")
 
 fresh()
 panel.state.history = ["first", "second"]

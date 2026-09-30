@@ -106,7 +106,7 @@ class BWM_OT_teach(bpy.types.Operator):
     bl_idname = "blendwme.teach"
     bl_label = "Teach Answer"
 
-    choice: bpy.props.EnumProperty(items=[("done", "I did it", ""), ("show_me", "Show me", ""),
+    choice: bpy.props.EnumProperty(items=[("done", "I did it", ""), ("show_me", "Do it for me", ""),
                                           ("skip", "Skip", "")])
 
     @classmethod
@@ -739,7 +739,7 @@ def draw_actions(layout):
     row.scale_y = 1.5
     if status == WAIT_USER:
         row.operator("blendwme.teach", text="Check my work", icon="CHECKMARK").choice = "done"
-        row.operator("blendwme.teach", text="Show me", icon="HIDE_OFF").choice = "show_me"
+        row.operator("blendwme.teach", text="Do it for me", icon="HIDE_OFF").choice = "show_me"
     elif status == WAIT_NEXT:
         row.operator("blendwme.next", text="Next", icon="PLAY")
         row.operator("blendwme.take_control", icon="HAND")

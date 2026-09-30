@@ -975,7 +975,7 @@ class BWM_OT_panel_key(bpy.types.Operator):
         ("escape", "Pause / Close", "Pause while working, otherwise close the top card. Twice: stop"),
         ("history_prev", "Earlier Message", "Bring back an earlier message"),
         ("history_next", "Later Message", "Go forward in the message history"),
-        ("next_mode", "Next Mode", "Together, Teach, Auto"),
+        ("next_mode", "Next Mode", "Auto, Teach"),
         ("clear_view", "Clear View", "Clear the conversation view (the journal keeps everything)"),
     ])
 

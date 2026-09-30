@@ -56,7 +56,7 @@ CHIPS = {
     "WATCH": (("Look again", "/look"), ("Undo step", "/undo"), ("Explain", "Explain what you just did and why.")),
     "TEACH": (("Hint", "Give me a hint for this step."), ("Skip", "teach:skip"), ("Do it for me", "teach:show_me")),
 }
-MODES = (("WATCH", "Together"), ("TEACH", "Teach"), ("AUTO", "Auto"))
+MODES = (("AUTO", "Auto"), ("TEACH", "Teach"))
 
 
 def label(brain):
@@ -1207,7 +1207,7 @@ class Painter:
             return 0          # the limit card has its own buttons
         buttons = None
         if status == WAIT_USER:
-            buttons = (("Check my work", "teach:done", True), ("Show me", "teach:show_me", False))
+            buttons = (("Check my work", "teach:done", True), ("Do it for me", "teach:show_me", False))
         elif status == WAIT_NEXT:
             buttons = (("Next", "op:blendwme.next", True), ("Take control", "take_control", False))
         elif status == PAUSED:

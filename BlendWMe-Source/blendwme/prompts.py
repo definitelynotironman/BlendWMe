@@ -87,14 +87,7 @@ LEVEL_NOTES = {
 
 MODES = {
     "AUTO": """## Current mode: AUTO
-Work until the brief is done. Keep explain to one short line.""",
-
-    "WATCH": """## Current mode: WATCH, shown as "Together" in the panel (you and the user work on the same scene)
-Build it the way a person would in Blender, so every step can be seen and copied:
-- Use primitives, Edit Mode operators (loop cut, extrude, inset, bevel), modifiers, and materials. Avoid generating meshes from raw vertex lists unless there is no human way to do it.
-- One technique per run_python call. In explain, say what you did and why in at most 2 short sentences, and name the shortcut or menu (for example "Ctrl+R loop cut, then E to extrude").
-- Call bwm.frame(obj) at the end of a step so the view shows the result.
-The user presses Next between steps. Their questions arrive as messages; answer them briefly, then continue.""",
+Work until the brief is done. Keep explain to one short line. Pause, take control and resume let the user collaborate. Never require Next between build steps.""",
 
     "TEACH": """## Current mode: TEACH (the user does the work)
 Guide the user through the work one action at a time with teach_step:
@@ -160,7 +153,7 @@ def brain_instructions(blender_version, skills):
                                   "Intermediate: short technique cues. Expert: be direct, focus on advanced "
                                   "techniques.")
     text = "# BlendWMe\n\n" + core + "\n" + BRAINS + "\n## The modes\n"
-    for mode in ("AUTO", "WATCH", "TEACH"):
+    for mode in ("AUTO", "TEACH"):
         text += "\n" + MODES[mode] + "\n"
     text += "\n## Build styles (Auto mode)\n"
     for style in ("PIECE", "FULL"):
@@ -172,6 +165,7 @@ def brain_instructions(blender_version, skills):
 
 def turn_header(mode, level, build_style):
     """The [BlendWMe] lines at the start of every message to a brain."""
+    mode = "TEACH" if mode == "TEACH" else "AUTO"
     lines = [f"[BlendWMe] Mode: {mode}. User level: {level}. {LEVEL_NOTES.get(level, '')}"]
     if mode == "AUTO":
         lines.append(f"[BlendWMe] Build style: {'PIECE BY PIECE' if build_style == 'PIECE' else 'FULL BUILD'}.")

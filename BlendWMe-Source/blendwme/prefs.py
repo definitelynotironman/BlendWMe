@@ -78,7 +78,7 @@ class BWM_Preferences(bpy.types.AddonPreferences):
     auto_relay: bpy.props.BoolProperty(
         name="Hand over by itself in Auto", default=True,
         description="In Auto, when one brain reaches its usage limit, the other takes over without asking. "
-                    "In Together and Teach you are always asked")
+                    "In Teach you are always asked")
     returning_reviews: bpy.props.BoolProperty(
         name="Returning brain reviews the other's work first", default=True,
         description="A brain that takes the work back first looks at what the other brain changed and fixes "
@@ -311,13 +311,17 @@ def draw_advanced(layout, p):
 # Session options (not saved into your .blend)
 # ----------------------------------------------------------------------
 
-MODES = [("WATCH", "Together", "You and the AI work on the same scene. It builds step by step and you can "
-                               "take over any time"),
-         ("TEACH", "Teach", "You do the work. BlendWMe guides, points and checks"),
-         ("AUTO", "Auto", "BlendWMe carries the brief through. Pause any time to take over")]
+MODES = [("AUTO", "Auto", "Build together; pause, edit and resume any time", 2),
+         ("TEACH", "Teach", "You do the work. BlendWMe guides, points and checks", 1)]
 
 
 def _sync(self, context):
+    if session.mode != self.mode:
+        # Mode changes take effect between operations. Wake an obsolete lesson
+        # wait so it cannot keep polling or authorize a later demonstration.
+        session.set_card(None)
+        session.set_pointers([])
+        session.wake("mode_changed")
     session.mode = self.mode
     session.changed_flag = True
 
@@ -329,7 +333,7 @@ class BWM_Session(bpy.types.PropertyGroup):
         items=[("claude", "Claude", "Claude Code with your Claude plan"),
                ("codex", "Codex", "Codex CLI with your ChatGPT plan")],
         default="claude", update=_redraw)
-    mode: bpy.props.EnumProperty(name="Mode", items=MODES, default="WATCH", update=_sync)
+    mode: bpy.props.EnumProperty(name="Mode", items=MODES, default="AUTO", update=_sync)
     reference_1: bpy.props.StringProperty(name="Reference 1", subtype="FILE_PATH")
     reference_2: bpy.props.StringProperty(name="Reference 2", subtype="FILE_PATH")
 
@@ -339,6 +343,8 @@ def sync_session(context=None):
     context = context or bpy.context
     p = addon_prefs(context)
     s = context.window_manager.blendwme
+    if s.mode not in {"AUTO", "TEACH"}:
+        s.mode = "AUTO"       # legacy numeric WATCH (0), never reinterpret Teach (1)
     session.mode = s.mode
     if p is not None:
         session.level = p.level

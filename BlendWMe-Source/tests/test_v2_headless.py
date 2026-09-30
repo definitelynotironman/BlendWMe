@@ -216,15 +216,13 @@ reply = wait(box)
 check("teach_step through the socket detects the user's action", reply["result"]["result"] == "completed"
       and reply["result"]["check_passed"], reply)
 
-# Watch mode: run_python waits for Next.
+# Legacy Watch is normalized and runs without Next.
 reset_session("WATCH")
 box = in_thread(raw, {"op": "call", "tool": "run_python", "brain": "claude", "args": {
     "title": "Roof", "explain": "A cap", "code": "bwm.box('Cap', (1, 1, 0.1), (0, 0, 2))"}})
-pump_until(lambda: session.status == state.WAIT_NEXT)
-check("watch mode waits for Next", not box["done"] and session.card["kind"] == "watch")
-session.wake()
 reply = wait(box)
-check("watch continues after Next", reply["result"]["ok"] and "pressed Next" in reply["result"]["user"])
+check("legacy watch becomes Auto", session.mode == "AUTO")
+check("Auto continues without Next", reply["result"]["ok"] and session.status != state.WAIT_NEXT)
 
 # Auto mode: the art director looks without being asked, and checks once before finishing.
 reset_session("AUTO")
@@ -361,7 +359,7 @@ check("finish ends the task", session.status == state.DONE, session.status)
 
 # Second message: the same Claude conversation, plus what the user changed in between.
 bpy.data.objects["TableTop"].location.x = 2.0
-session.mode = "WATCH"
+session.mode = "TEACH"
 script([{"call": "get_scene_info"}, {"say": "Noted."}])
 turn("Make it taller")
 argv = runs()[-1]["argv"]
@@ -369,7 +367,7 @@ check("follow-ups resume the same Claude session", after("--resume") == first_se
 check("follow-ups skip the scene dump", "[Current scene]" not in argv[1])
 check("edits between messages are reported to the brain",
       "changed the scene since your last turn" in argv[1] and "TableTop" in argv[1], argv[1][:400])
-check("the mode header follows the panel", "Mode: WATCH" in argv[1])
+check("the mode header follows the panel", "Mode: TEACH" in argv[1])
 session.mode = "AUTO"
 
 # A message typed while Claude works arrives with its next tool result.
@@ -604,7 +602,7 @@ check("the switch reason is in the journal", [e for e in journal.data["events"] 
 check("Codex continues its own session", runs()[-1]["argv"][-3:-1] == ["resume", "fake-thread-1"])
 
 # 6. In Watch mode the user is asked instead.
-session.mode = "WATCH"
+session.mode = "TEACH"
 count = len(runs())
 script([{"line": {"type": "turn.failed", "error": {"message": "You've hit your usage limit. Try again in 3 hours."}}}])
 relay.send("Show me the next step", dict(CFG, brain="codex", auto_relay=True))
@@ -640,7 +638,7 @@ check("a long project still gives a brief within the limit", len(text) <= journa
       and "the gate keeps failing" in text and "RULES" in text, len(text))
 
 # 9. Settings: no hand-over card when it is switched off; the brief without "review first".
-session.mode = "WATCH"
+session.mode = "TEACH"
 script([{"line": {"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}}])
 relay.send("Next", dict(CFG, brain="codex", offer_handover=False))
 pump_until(lambda: not relay.is_running(), 60)

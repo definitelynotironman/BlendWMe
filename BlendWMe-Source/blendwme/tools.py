@@ -115,8 +115,6 @@ _COMMON = [PLAN, GET_SCENE_INFO, GET_OBJECT_INFO, LOOK, INSPECT_API, LOAD_SKILL,
 def for_mode(mode):
     if mode == "TEACH":
         return _COMMON + [TEACH_STEP, POINT_AT, RUN_PYTHON]
-    if mode == "WATCH":
-        return _COMMON + [RUN_PYTHON, POINT_AT]
     return _COMMON + [RUN_PYTHON]
 
 

@@ -31,7 +31,7 @@ import traceback
 import bpy
 
 from . import bridge, executor, helpers, knowledge, look, prompts, scene_info, tools
-from .state import ASKING, DONE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
+from .state import ASKING, DONE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, normalize_mode, session
 
 WAIT_CAP = 45 * 60        # seconds one tool call may wait for the user (tool timeouts are 60 min)
 REVIEW_FIRST = 3          # successful build steps before the first art director review
@@ -130,6 +130,7 @@ class ToolHost:
     # ------------------------------------------------------------------
     def call(self, name, args, brain="claude"):
         """Run one tool. Returns {"result": dict or str, "images": [{"data", "mime"}]}."""
+        session.mode = normalize_mode(session.mode)
         args = args if isinstance(args, dict) else {}
         known = {t["name"] for t in tools.mcp_tools()}
         if name not in known:
@@ -345,17 +346,7 @@ class ToolHost:
             self._step_failed(result, title, key, brain)
 
         targets = (added + modified)[:6]
-        if mode in ("WATCH", "TEACH") and result["ok"]:
-            session.set_pointers([{"object": n} for n in targets])
-            session.set_card({"kind": "watch", "title": title, "text": explain,
-                              "step": len(session.steps), **self._plan_progress()})
-            session.set_status(WAIT_NEXT)
-            if self._wait_signal(timeout=session.watch_auto or None):
-                result["user"] = "The user watched this step and pressed Next."
-            else:
-                result["user"] = "The step was shown to the user; it advanced by itself."
-            session.set_pointers([])
-        elif mode == "AUTO" and session.build_style == "PIECE" and result["ok"] and targets and session.pace > 0:
+        if mode == "AUTO" and session.build_style == "PIECE" and result["ok"] and targets and session.pace > 0:
             session.set_pointers([{"object": n, "building": True} for n in targets[:3]])
             time.sleep(min(session.pace, 10.0))
             session.set_pointers([])
@@ -547,7 +538,7 @@ class ToolHost:
                                    "step to keep waiting, or end your turn.")
             if self._wait_signal(timeout=0.5):
                 outcome = {"done": "user_said_done", "show_me": "show_me",
-                           "skip": "skipped"}.get(session.teach_choice, "user_said_done")
+                           "skip": "skipped", "mode_changed": "mode_changed"}.get(session.teach_choice, "user_said_done")
                 break
             if check:
                 ok = bridge.call(_eval_check, check)
@@ -559,7 +550,8 @@ class ToolHost:
         if outcome == "show_me":
             self.show_me_allowed = True
         session.add("info", {"completed": "Nice, step done.", "user_said_done": "Marked done.",
-                             "show_me": "Showing you how.", "skipped": "Skipped."}[outcome])
+                             "show_me": "Showing you how.", "skipped": "Skipped.",
+                             "mode_changed": "Lesson stopped because the mode changed."}[outcome])
         session.set_status(THINKING)
         result = {"result": outcome, "user_changes_in_this_step": lines[:30] or ["(no object-level changes)"]}
         if check:
