@@ -1,8 +1,9 @@
 """Formatted text regressions; no subscription clients."""
 import os
 import sys
+import threading
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from blendwme import richtext
+from blendwme import bridge, richtext
 passed = 0
 
 def check(name, condition):
@@ -10,6 +11,22 @@ def check(name, condition):
     assert condition, name
     passed += 1
     print("ok -", name, flush=True)
+
+effects, errors = [], []
+
+
+def expired():
+    try:
+        bridge.call(lambda: effects.append("expired"), timeout=0.01)
+    except TimeoutError as error:
+        errors.append(str(error))
+
+
+worker = threading.Thread(target=expired)
+worker.start()
+worker.join(1)
+bridge._pump()
+check("expired pending work never executes", not effects and errors)
 
 source = "plain **bold text** and `bpy.data`\n\n- first\n- **second**\nEND"
 measure = lambda role, size, value: len(value) * (9 if role == "BLACK" else 7)

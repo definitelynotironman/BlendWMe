@@ -139,8 +139,8 @@ async def run_tests():
             # The add-on restarts with a new token: the server reads the file again on every call.
             write_connection(folder, addon.port, "stale-token")
             result = await client.call_tool("run_python", {"code": "x = 1"})
-            check("a wrong token is refused with a clear message",
-                  attr(result, "isError") and "token" in result.content[0].text.lower(), result.content[0].text)
+            check("a changed connection is refused without redirection",
+                  attr(result, "isError") and "connection changed" in result.content[0].text.lower(), result.content[0].text)
             write_connection(folder, addon.port)
 
             # Blender closed: the brain gets instructions, not a crash.

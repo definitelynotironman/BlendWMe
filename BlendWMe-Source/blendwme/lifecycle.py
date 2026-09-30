@@ -63,9 +63,9 @@ def on_load_pre(*_args):
     try:
         from .relay import relay
         working = relay.is_running()
+        bridge.cancel_all("A different file was opened, so BlendWMe stopped this step.")
         if working:
             relay.stop()
-        bridge.cancel_all("A different file was opened, so BlendWMe stopped this step.")
         session.set_card(None)
         session.set_pointers([])
         global _load_note

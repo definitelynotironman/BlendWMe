@@ -18,10 +18,12 @@ import json
 import os
 import shutil
 import sys
+import uuid
 
 ADDON_DIR = os.path.dirname(os.path.abspath(__file__))
 CONNECTION_FILE = "connection.json"
 SERVER_PACKAGE = "blendwme_mcp"
+INSTANCE_ID = str(uuid.uuid4())
 
 
 def default_folder():
@@ -46,7 +48,7 @@ def set_folder(path):
     _override["folder"] = path or ""
 
 
-def folder(create=True):
+def root_folder(create=True):
     p = _prefs()
     path = _override["folder"] or (getattr(p, "workspace_folder", "") or "").strip() or default_folder()
     try:
@@ -59,7 +61,19 @@ def folder(create=True):
     return path
 
 
+def folder(create=True):
+    """Per-process instructions/discovery prevent simultaneous Blender windows
+    from replacing each other's MCP configuration before a client starts."""
+    root = root_folder(create)
+    target = root if _override["folder"] else os.path.join(root, "instances", INSTANCE_ID)
+    if create:
+        os.makedirs(target, exist_ok=True)
+    return target
+
+
 def path(name):
+    if name == "venv":
+        return os.path.join(root_folder(), name)
     return os.path.join(folder(), name)
 
 
@@ -68,7 +82,13 @@ def path(name):
 # ----------------------------------------------------------------------
 
 def write_connection(port, token):
-    data = {"host": "127.0.0.1", "port": port, "token": token, "pid": os.getpid()}
+    import bpy
+    from .tool_host import host
+    if not bpy.context.scene.get("blendwme_scene_id"):
+        bpy.context.scene["blendwme_scene_id"] = str(uuid.uuid4())
+    data = {"host": "127.0.0.1", "port": port, "token": token, "pid": os.getpid(),
+            "instance": INSTANCE_ID, "task": host.task_id,
+            "scene": bpy.context.scene["blendwme_scene_id"]}
     target = path(CONNECTION_FILE)
     tmp = target + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -147,7 +167,8 @@ def blender_python():
 
 def server_command(brain):
     """[program, args...] that starts the MCP server for one brain."""
-    return [server_python(), server_script(), "--brain", brain, "--workspace", folder()]
+    return [server_python(), server_script(), "--instance", INSTANCE_ID,
+            "--brain", brain, "--workspace", folder()]
 
 
 def mcp_config(brain):

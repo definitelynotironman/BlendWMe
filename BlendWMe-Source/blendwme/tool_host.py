@@ -27,6 +27,7 @@ import re
 import threading
 import time
 import traceback
+import uuid
 
 import bpy
 
@@ -90,6 +91,7 @@ class ToolHost:
     # ------------------------------------------------------------------
     def reset_task(self, brief, references):
         """A new task: forget per-task counters (the journal keeps the history)."""
+        self.task_id = str(uuid.uuid4())
         self.brief = brief or ""
         self.references = [p for p in references or [] if os.path.isfile(p)][:2]
         self.show_me_allowed = False
@@ -99,6 +101,11 @@ class ToolHost:
         self.task_started_at = time.time()
         self.looked_at_step = 0          # ok_steps when the brain last looked (plan done=[n] needs it)
         self.begin_turn()
+        if globals().get("host") is self:
+            from . import socket_bridge, workspace
+            current = socket_bridge.get()
+            if current.running:
+                bridge.call(workspace.write_connection, current.port, current.token)
 
     def begin_turn(self):
         """A new message from the user: a fresh failure count and one final check again."""
@@ -141,7 +148,8 @@ class ToolHost:
             return {"result": {"error": f"{name!r} cannot be used in {session.mode} mode. "
                                         f"Tools here: {', '.join(sorted(allowed))}."}, "images": []}
         args = _coerce_types(name, args)
-        with self.lock:
+        request_epoch = bridge.epoch()
+        with self.lock, bridge.scope(request_epoch):
             images = []
             try:
                 self._check_stop()
@@ -178,7 +186,7 @@ class ToolHost:
     # Waiting for the user (always capped, always stoppable)
     # ------------------------------------------------------------------
     def _check_stop(self):
-        if session.stop_flag.is_set():
+        if session.stop_flag.is_set() or bridge.expired():
             raise Stopped()
 
     def _wait_if_paused(self, card=None):

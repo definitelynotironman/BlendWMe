@@ -74,6 +74,7 @@ class Relay:
         self.transcript = []         # the full log, in the 1.0.5 log format
         self.trace = []
         self.brief = ""
+        self.generation = 0
         host.journal = journal
 
     # ------------------------------------------------------------------
@@ -116,14 +117,23 @@ class Relay:
         self._start(brain, text)
 
     def stop(self):
+        self.generation += 1
+        bridge.cancel_all("This task was stopped before its pending job ran.")
         session.stop_flag.set()
         session.wake()
         if self.running:
-            self.engine(self.running).interrupt()
+            engine = self.engine(self.running)
+            engine.interrupt()
+            if engine.thread is not None and engine.thread is not threading.current_thread():
+                engine.thread.join(timeout=5)
             session.set_card(None)
             session.set_pointers([])
             session.set_plan([])        # the plan card closes; the journal keeps the plan
             session.add("info", "Stopped. Everything already built stays in your scene.")
+        self.running = None
+        self.handing_over = False
+        self.turn_done.set()
+        session.set_status(IDLE)
 
     def reset(self):
         """Forget the conversation (the scene and the project journal stay)."""
@@ -177,13 +187,15 @@ class Relay:
             self.active = target
             return
         self.handing_over = True
-        threading.Thread(target=self._hand_over, args=(source, target, reason), name="BlendWMe hand-over",
+        threading.Thread(target=self._hand_over, args=(source, target, reason, self.generation), name="BlendWMe hand-over",
                          daemon=True).start()
 
-    def _hand_over(self, source, target, reason):
+    def _hand_over(self, source, target, reason, generation):
         try:
             if self.running:
                 self._interrupt_and_wait(self.running)
+            if generation != self.generation:
+                return
             limited = bool(self.limit and self.limit["brain"] == source)
             pending = []
             while not session.inbox.empty():
@@ -191,6 +203,8 @@ class Relay:
             if not limited and source in self.told and self.config.get("ask_handoff_note", True):
                 session.add("info", f"Asking {label(source)} for a handoff note ...")
                 end = self._quiet_turn(source, prompts.HANDOFF_REQUEST.format(target=label(target)))
+                if generation != self.generation:
+                    return
                 if end != "done":
                     session.add("info", f"{label(source)} could not write a note. The journal has everything.")
             journal.record_switch(source, target, reason)
@@ -208,16 +222,18 @@ class Relay:
             self._fail(f"The hand-over failed: {e}")
             return
         self.handing_over = False
-        self._start(target, text, handoff=brief)
+        self._start(target, text, handoff=brief, generation=generation)
 
     def _interrupt_and_wait(self, brain):
+        generation = self.generation
         engine = self.engine(brain)
         session.stop_flag.set()
         session.wake()
         engine.interrupt()
         if engine.thread is not None:
             engine.thread.join(timeout=30)
-        session.stop_flag.clear()
+        if generation == self.generation:
+            session.stop_flag.clear()
 
     def _quiet_turn(self, brain, text):
         """Run one short turn (the handoff note) and wait for its end. Returns done, error or limit_reached."""
@@ -263,6 +279,7 @@ class Relay:
     def compose(self, brain, text, handoff=""):
         """The message a brain gets: mode header, scene facts the first time, the user's edits, the text."""
         parts = [prompts.turn_header(session.mode, session.level, session.build_style)]
+        parts.append(prompts.MODES[session.mode if session.mode in prompts.MODES else "AUTO"])
         if brain not in self.told:
             scene = json.dumps(bridge.call(scene_info.get_scene_info), ensure_ascii=False, default=str)
             if len(scene) > MAX_SCENE_CHARS:
@@ -281,13 +298,16 @@ class Relay:
         parts.append("[Message from the user]\n" + text)
         return "\n\n".join(parts)
 
-    def _start(self, brain, text, handoff=""):
+    def _start(self, brain, text, handoff="", generation=None):
+        generation = self.generation if generation is None else generation
+        if generation != self.generation:
+            return
         engine = self.engine(brain)
         self.last_text = text
         if not handoff and self.resumed_project and brain not in self.told and journal.has_history():
             handoff = self._brief(brain)
         try:
-            config = self._engine_config(brain)
+            config = bridge.call(self._engine_config, brain)
             message = self.compose(brain, text, handoff)
             self.told.add(brain)
         except Exception as e:
@@ -295,6 +315,8 @@ class Relay:
             self._fail(f"Could not prepare {label(brain)}: {e}")
             return
         host.active_brain = brain
+        if generation != self.generation:
+            return
         host.begin_turn()
         session.stop_flag.clear()
         session.pause_flag.clear()
@@ -310,7 +332,8 @@ class Relay:
         self.transcript.append({"role": "user", "content": message})
         self._trace("turn", brain=brain, chars=len(message))
         try:
-            engine.start(message, self._on_event, config)
+            engine.start(message, lambda event: self._on_event(event)
+                         if generation == self.generation else None, config)
         except Exception as e:      # the program is missing, or similar
             self.running = None
             self._fail(str(e))
@@ -320,11 +343,13 @@ class Relay:
         """Run fn once the brain's current turn thread has ended (events arrive from inside it)."""
         engine = self.engine(brain)
         worker = engine.thread
+        generation = self.generation
 
         def wait_then_run():
             if worker is not None and worker is not threading.current_thread():
                 worker.join(timeout=30)
-            fn()
+            if generation == self.generation:
+                fn()
         threading.Thread(target=wait_then_run, daemon=True).start()
 
     # ------------------------------------------------------------------
@@ -425,6 +450,7 @@ class Relay:
                 self.resume_retried = True
                 engine.reset()
                 self.told.discard(brain)
+                self.running = brain       # preparing the retry is still active work
                 self._later(brain, lambda: self._start(brain, self.last_text))
                 self._signal_end(kind)
                 return

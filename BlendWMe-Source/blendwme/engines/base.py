@@ -121,7 +121,7 @@ class ProcessEngine(Engine):
             self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, cwd=config.get("workspace") or None,
                                          env=clean_env(extra_env), creationflags=no_window())
-        except OSError as e:
+        except (OSError, ValueError, TypeError) as e:
             emit({"type": "error", "text": f"Could not start {self.label}: {e}. Run the setup check."})
             return
         if self._stop.is_set():
@@ -143,9 +143,25 @@ class ProcessEngine(Engine):
                 obj = json.loads(line)
                 events = self.parse(obj) if isinstance(obj, dict) else []
             except ValueError:
-                events = self.parse_text_line(line)
-            for event in events:
-                emit(event)
+                try:
+                    events = self.parse_text_line(line)
+                except Exception:
+                    emit({"type": "error", "text": f"{self.label} sent an invalid text event."})
+                    self.interrupt()
+                    break
+            except Exception as e:
+                emit({"type": "error", "text": f"{self.label} sent an invalid event ({type(e).__name__})."})
+                self.interrupt()
+                break
+            try:
+                for event in events or []:
+                    if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+                        raise ValueError("Malformed engine event")
+                    emit(event)
+            except Exception:
+                emit({"type": "error", "text": f"{self.label} sent a malformed event."})
+                self.interrupt()
+                break
         self.proc.wait()
         err_thread.join(timeout=2)
         tail = "\n".join(errors[-8:]).strip()
@@ -173,7 +189,9 @@ class ProcessEngine(Engine):
         if proc is None or proc.poll() is not None:
             return
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
-                           creationflags=no_window())
+            result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                                    creationflags=no_window())
+            if result.returncode and proc.poll() is None:
+                proc.kill()       # still stop our own child if tree termination is restricted
         else:
             proc.terminate()

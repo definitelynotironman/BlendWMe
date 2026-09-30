@@ -98,7 +98,8 @@ def raw(request, token=None):
     """One request over the socket, the way blendwme_mcp/link.py sends it."""
     with open(os.path.join(WORKSPACE, "connection.json"), encoding="utf-8") as f:
         conn = json.load(f)
-    request = dict(request, token=conn["token"] if token is None else token, id=1)
+    request = dict(request, token=conn["token"] if token is None else token, id=1,
+                   task=tool_host.host.task_id, scene=conn.get("scene"))
     with socket.create_connection(("127.0.0.1", conn["port"]), timeout=5) as s:
         s.settimeout(120)
         s.sendall(json.dumps(request).encode() + b"\n")

@@ -8,6 +8,8 @@ every request, so restarting Blender never leaves a stale socket behind.
 import json
 import os
 import socket
+import uuid
+import time
 
 CONNECTION_FILE = "connection.json"
 CONNECT_TIMEOUT = 5
@@ -23,15 +25,29 @@ class LinkError(Exception):
 
 
 class BlenderLink:
-    def __init__(self, workspace):
+    def __init__(self, workspace, instance=None):
         self.workspace = workspace
         self.next_id = 0
+        self.instance = instance
+        self.pinned = None
+        self.task = None
+        self.scene = None
+        self.client = str(uuid.uuid4())
 
     def _connection(self):
         path = os.path.join(self.workspace, CONNECTION_FILE)
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
+            if self.instance and data.get("instance") != self.instance:
+                raise LinkError("The Blender instance changed. Start a new client from the intended Blender window.")
+            identity = (data["port"], data["token"])
+            if self.pinned is not None and identity != self.pinned:
+                raise LinkError("The Blender connection changed. Start a new client; this request was not redirected.")
+            self.pinned = identity
+            if self.task is None:
+                self.task = data.get("task")
+                self.scene = data.get("scene")
             return data.get("host") or "127.0.0.1", int(data["port"]), str(data["token"])
         except (OSError, ValueError, KeyError, TypeError):
             raise LinkError(NOT_RUNNING) from None
@@ -41,7 +57,8 @@ class BlenderLink:
         if host not in ("127.0.0.1", "localhost"):
             raise LinkError("The connection file points away from this computer. Refusing to connect.")
         self.next_id += 1
-        message = dict(fields, op=op, id=self.next_id, token=token)
+        message = dict(fields, op=op, id=self.next_id, token=token, task=self.task,
+                       scene=self.scene, client=self.client, expires=time.time() + timeout)
         try:
             with socket.create_connection((host, port), timeout=CONNECT_TIMEOUT) as sock:
                 sock.settimeout(timeout)

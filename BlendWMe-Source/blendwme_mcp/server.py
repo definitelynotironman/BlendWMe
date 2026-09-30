@@ -43,9 +43,9 @@ def _log(text):
 class Bridge:
     """MCP-side behaviour, independent of the SDK version."""
 
-    def __init__(self, brain, workspace):
+    def __init__(self, brain, workspace, instance=None):
         self.brain = brain
-        self.link = BlenderLink(workspace)
+        self.link = BlenderLink(workspace, instance)
 
     def tool_specs(self):
         try:
@@ -114,8 +114,8 @@ def build_server(bridge):
     return server
 
 
-async def serve(brain, workspace):
-    bridge = Bridge(brain, workspace)
+async def serve(brain, workspace, instance=None):
+    bridge = Bridge(brain, workspace, instance)
     server = build_server(bridge)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
@@ -126,9 +126,10 @@ def main(argv=None):
     parser.add_argument("--brain", default="claude", choices=["claude", "codex", "api"],
                         help="Which brain uses this server (signs every step it makes)")
     parser.add_argument("--workspace", required=True, help="The BlendWMe workspace folder")
+    parser.add_argument("--instance", help="Expected Blender instance, never redirect to another process")
     args = parser.parse_args(argv)
     _log(f"started for {args.brain}")
-    anyio.run(serve, args.brain, args.workspace)
+    anyio.run(serve, args.brain, args.workspace, args.instance)
 
 
 if __name__ == "__main__":

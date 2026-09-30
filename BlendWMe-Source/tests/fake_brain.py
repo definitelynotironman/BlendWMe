@@ -55,7 +55,7 @@ def tool_call(name, args, brain):
     conn = json.load(open(os.path.join(FOLDER, "connection.json"), encoding="utf-8"))
     with socket.create_connection(("127.0.0.1", conn["port"]), timeout=10) as s:
         s.settimeout(300)
-        s.sendall(json.dumps({"op": "call", "id": 1, "token": conn["token"], "tool": name, "args": args,
+        s.sendall(json.dumps({"op": "call", "id": 1, "token": conn["token"], "task": conn.get("task"), "scene": conn.get("scene"), "tool": name, "args": args,
                               "brain": brain}).encode() + b"\n")
         return json.loads(s.makefile("rb").readline())
 

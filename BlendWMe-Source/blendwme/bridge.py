@@ -16,12 +16,38 @@ When a different file is opened, waiting jobs are cancelled, never run in it.
 
 import queue
 import threading
+import time
+import contextlib
 
 import bpy
 
 _jobs = queue.Queue()
 _POLL = 0.05
 _held = False          # True while a file loads
+_epoch = 0
+_scope = threading.local()
+
+
+@contextlib.contextmanager
+def scope(epoch=None, deadline=None):
+    previous = getattr(_scope, "epoch", None)
+    previous_deadline = getattr(_scope, "deadline", None)
+    _scope.epoch = _epoch if epoch is None else epoch
+    _scope.deadline = deadline if deadline is not None else previous_deadline
+    try:
+        yield
+    finally:
+        _scope.epoch = previous
+        _scope.deadline = previous_deadline
+
+
+def expired():
+    deadline = getattr(_scope, "deadline", None)
+    return deadline is not None and time.time() >= deadline
+
+
+def epoch():
+    return _epoch
 
 # Modal operators from these Blender areas edit or display the scene: wait for them.
 # (Add-ons' own long-running modals have other prefixes and are not waited for.)
@@ -36,16 +62,38 @@ class _Job:
         self.done = threading.Event()
         self.result = None
         self.error = None
+        self.lock = threading.Lock()
+        self.state = "pending"
+        self.epoch = _epoch
+
+    def cancel(self, reason):
+        with self.lock:
+            if self.state != "pending":
+                return False
+            self.state = "cancelled"
+            self.error = RuntimeError(reason)
+            self.done.set()
+            return True
 
 
 def call(fn, *args, timeout=600, **kwargs):
     """Run fn on the main thread and wait for its result (from a worker thread)."""
+    expected = getattr(_scope, "epoch", None)
+    if expected is not None and expected != _epoch:
+        raise RuntimeError("This task is obsolete; its pending work was cancelled.")
+    deadline = getattr(_scope, "deadline", None)
+    if deadline is not None:
+        timeout = min(timeout, deadline - time.time())
+        if timeout <= 0:
+            raise TimeoutError("This request expired before scene work could run.")
     if threading.current_thread() is threading.main_thread():
         return fn(*args, **kwargs)
     job = _Job(fn, args, kwargs)
     _jobs.put(job)
     if not job.done.wait(timeout):
-        raise TimeoutError("Blender did not respond in time (is a modal operator running?)")
+        cancelled = job.cancel("The pending Blender job expired before it ran.")
+        raise TimeoutError("Pending Blender job cancelled." if cancelled else
+                           "Blender job is already running; cancellation cannot interrupt native work.")
     if job.error is not None:
         raise job.error
     return job.result
@@ -59,13 +107,14 @@ def hold(on):
 
 def cancel_all(reason):
     """Answer every waiting job with an error instead of running it."""
+    global _epoch
+    _epoch += 1
     while True:
         try:
             job = _jobs.get_nowait()
         except queue.Empty:
             return
-        job.error = RuntimeError(reason)
-        job.done.set()
+        job.cancel(reason)
 
 
 def pending():
@@ -94,16 +143,31 @@ def _pump():
         return _POLL
     # Run at most a few jobs per tick so the UI stays responsive.
     for _ in range(4):
+        if _held or user_busy():
+            break
         try:
             job = _jobs.get_nowait()
         except queue.Empty:
             break
+        with job.lock:
+            if job.state != "pending":
+                continue
+            if job.epoch != _epoch:
+                job.state = "cancelled"
+                job.error = RuntimeError("The task changed before this job ran.")
+                job.done.set()
+                continue
+            job.state = "running"
+        started = time.monotonic()
         try:
             job.result = job.fn(*job.args, **job.kwargs)
         except BaseException as e:  # hand every failure back to the agent
             job.error = e
         finally:
+            job.state = "completed"
             job.done.set()
+        if time.monotonic() - started > _POLL:
+            break
     return _POLL
 
 
