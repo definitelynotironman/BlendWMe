@@ -496,6 +496,8 @@ def do_action(context, action, event=None):
         if not setup_checks.results:
             bpy.ops.blendwme.setup_check(which="ALL")
         open_settings(context)
+    elif kind == "reader":
+        bpy.ops.blendwme.reader("INVOKE_DEFAULT", kind=arg or "all")
     elif kind == "example":
         set_text(EXAMPLE_PROMPTS.get(arg, arg))
         state.focused = True

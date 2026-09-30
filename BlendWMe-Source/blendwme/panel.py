@@ -871,7 +871,7 @@ class Painter:
         if self.strip_text():
             h += self.px(44) + gap
         h += self.action_height() + self.limit_height()
-        h += self.input_height(w, max_lines=3)
+        h += self.input_height(w, max_lines=3) + self.px(30)
         return h
 
     def limit_height(self):
@@ -968,7 +968,8 @@ class Painter:
             self.limit_buttons(x0, top - limit + self.px(GAP), w)
             top -= limit
         input_h = self.input_height(w, max_lines=3)
-        self.text_input(x0, max(y0, top - input_h), w, input_h, max_lines=3)
+        self.footer(x0, y0, w)
+        self.text_input(x0, max(y0 + self.px(30), top - input_h), w, input_h, max_lines=3)
 
     def strip_text(self):
         """(label, words, yours) for the Compact strip, or None."""
@@ -1077,7 +1078,7 @@ class Painter:
         h = self.px(24)
         cy = y + h / 2
         right = x + w
-        links = (("Settings", "settings"), ("Journal", "screen:journal"))
+        links = (("Settings", "settings"), ("Full text", "reader:all"), ("Draft", "reader:draft"))
         for name, action in links:
             tw = d.width_of("HAND", size, name)
             tx = right - tw
@@ -1548,11 +1549,12 @@ class Painter:
                 d.paragraph("HAND", size, x + w - body_w, top - h, text, p.ink, body_w, align="right")
             return h + body_h
         if who == "ai":
+            from . import richtext
             brain = e.get("brain") or "claude"
             label_size = self.px(11)
             size = self.px(16)
             h = label_size + self.px(8)
-            lines = d.wrap("BODY", size, text, w)
+            lines = richtext.layout(text, size, w, d.width_of)
             eid = self.entry_id(e)
             long = len(lines) > READ_MORE_LINES and eid not in state.expanded
             shown = lines[:READ_MORE_LINES - 2] if long else lines
@@ -1564,7 +1566,7 @@ class Painter:
                 lh = d.line_height("BODY", size)
                 ly = top - h - round(size * 0.95)
                 for line in shown:
-                    d.text("BODY", size, x, ly, line, p.ink)
+                    richtext.draw_line(line, size, x, ly, p.ink)
                     ly -= lh
                 if long:
                     my = top - h - body_h - self.px(18)

@@ -790,6 +790,9 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         sub.operator("blendwme.hand_over", text="Hand over", icon="FILE_REFRESH").target = relay.other(brain)
 
         layout.row().prop(s, "mode", expand=True)
+        readers = layout.row(align=True)
+        readers.operator("blendwme.reader", text="Full text", icon="TEXT").kind = "all"
+        readers.operator("blendwme.reader", text="Read draft").kind = "draft"
 
         card = session.card
         if card and not card.get("hidden") and card.get("kind") != "work":
@@ -873,6 +876,8 @@ class BWM_PT_conversation(_Base, bpy.types.Panel):
                 col, _ = _wrapped(box, text, width - 4)
                 col.alignment = "RIGHT"
             elif who == "ai":
+                from . import richtext
+                text = richtext.plain(text)
                 box = layout.box()
                 brain = e.get("brain") or "claude"
                 box.label(text=brain_label(brain).upper(),
@@ -959,7 +964,10 @@ def draw_header_button(self, context):
     self.layout.operator("blendwme.open", text="BlendWMe", icon="GREASEPENCIL", depress=on)
 
 
+from .reader import BWM_OT_reader
+
 classes = (
+    BWM_OT_reader,
     BWM_OT_send, BWM_OT_paste, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
