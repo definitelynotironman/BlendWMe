@@ -151,12 +151,23 @@ check("there are five themes", [t[0] for t in prefs.THEMES] == ["GRAPHITE", "RED
 y2k = theme.Palette("Y2K")
 check("the 2000s theme has Theme 2000's blue title band and orange tag",
       y2k.band is not None and theme.TOKENS["Y2K"]["band"] == "5070D3" and theme.TOKENS["Y2K"]["tag"] == "F3963D")
-check("the 2000s theme writes its hand text in Archivo", y2k.roles.get("HAND")[0] == "BODY")
+check("the 2000s theme keeps handwriting", not y2k.roles.get("HAND"))
 with draw2d.scaled(1.0, 1.0, 1.0, y2k.roles):
     role_w = draw2d.width_of("HAND", 20, "Tell Claude what to change")
-    role_font = draw2d.font("HAND") == draw2d.font("BODY")
-check("a theme role swaps the font and sets it smaller", role_font and
-      abs(role_w - draw2d.width_of("BODY", 16, "Tell Claude what to change")) < 1, role_w)
+    role_font = draw2d.font("HAND") != draw2d.font("BODY")
+check("theme handwriting uses consistent metrics", role_font and
+      abs(role_w - draw2d.width_of("HAND", 20, "Tell Claude what to change")) < 1, role_w)
+saved_host = panel_ops.host
+panel_ops.host = lambda context: (None, type("Region", (), {"x": 0, "y": 0})())
+panel.state.text = "mixed handwriting"
+for factor in (0.75, 1.0, 1.5, 2.0):
+    with draw2d.scaled(1.0, factor):
+        advances = [draw2d.width_of("HAND", 20, panel.state.text[:i])
+                    for i in range(len(panel.state.text) + 1)]
+    panel.state.input_layout = (10, 100, 30, 20, 0, [(0, len(panel.state.text))], [advances])
+    event = type("Mouse", (), {"mouse_x": 10 + advances[6], "mouse_y": 90})()
+    check(f"caret uses drawn advances at text scale {factor}", panel_ops.caret_at(None, event) == 6)
+panel_ops.host = saved_host
 native_pal = theme.Palette("NATIVE")
 check("Blender UI takes its colours from Blender's own theme",
       all(len(getattr(native_pal, k)) == 4 for k in ("panel", "ink", "accent", "hot")))

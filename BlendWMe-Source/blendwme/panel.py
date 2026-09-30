@@ -1153,7 +1153,11 @@ class Painter:
                 row = caret_line - first
                 cx = tx + d.width_of("HAND", size, state.text[a:state.cursor])
                 d.rect(cx, top - round(size * 1.05) - row * lh, self.px(2), round(size * 1.05), p.ink)
-        state.input_layout = (tx, top, lh, size, first, lines)
+        # Hit testing runs outside the scaled drawing context. Preserve exactly
+        # the advances used above instead of remeasuring with default settings.
+        advances = [[d.width_of("HAND", size, state.text[a:i]) for i in range(a, b + 1)]
+                    for a, b in lines]
+        state.input_layout = (tx, top, lh, size, first, lines, advances)
 
     def chips_row(self, x, y, w):
         mode = self.props.mode if self.props else session.mode

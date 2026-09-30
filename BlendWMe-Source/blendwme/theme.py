@@ -30,9 +30,8 @@ TOKENS = {
 }
 NAMES = {"GRAPHITE": "Graphite", "RED": "Red", "BLENDER": "Blender Grey", "Y2K": "2000s", "NATIVE": "Blender UI"}
 DRAWN = ("GRAPHITE", "RED", "BLENDER", "Y2K")
-# A theme's font roles: the 2000s theme writes the hand-lettered text in Archivo, set
-# smaller because Archivo is wider than Patrick Hand (the same words fit the same room).
-FONT_ROLES = {"Y2K": {"HAND": ("BODY", 0.8)}}
+# All drawn themes keep the same handwriting and text metrics.
+FONT_ROLES = {}
 
 # Shapes, in design pixels at 100 % scale. Rounded to whole pixels when drawn (rule R3).
 BORDER_PANEL = 3.0

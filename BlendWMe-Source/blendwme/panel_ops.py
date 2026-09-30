@@ -732,7 +732,7 @@ def caret_at(context, event):
     area, region = host(context)
     if not layout or region is None:
         return None
-    tx, top, lh, size, first, lines = layout
+    tx, top, lh, size, first, lines, advances = layout
     x = event.mouse_x - region.x
     y = event.mouse_y - region.y
     row = int((top - y) // lh) + first if lh else 0
@@ -740,7 +740,7 @@ def caret_at(context, event):
     a, b = lines[row]
     best, best_d = a, abs(x - tx)
     for i in range(a, b + 1):
-        cx = tx + d.width_of("HAND", size, state.text[a:i])
+        cx = tx + advances[row][i - a]
         if abs(cx - x) < best_d:
             best, best_d = i, abs(cx - x)
     return best
