@@ -1,22 +1,7 @@
-"""BlendWMe's one renderer: hard-pixel boxes, lines, icons and text (gpu + blf).
+"""Shared GPU boxes, smooth curves/diagonals, crisp text and measured layouts.
 
-Everything is drawn in region pixels with the origin at the bottom left. The look is
-"hard pixels": solid straight edges and stair-step corners, with no smoothing and no
-grey in-between pixels (docs: the 2.2 UI rules R1 to R6).
-
-- R1 One renderer for every box. Fill, border, rounded corners and the hard shadow come
-  from one shader with a hard cutoff, so every corner is the same at every size.
-- R2 Scale with Blender: `ui()` is Resolution Scale times the screen's DPI
-  (preferences.system.ui_scale), times the panel size while the panel draws.
-- R3 Whole pixels: every position, size, radius, border and shadow offset is rounded.
-- R4 Text never escapes its box: measured word wrap, clipping, "…" for single lines.
-- R5 Text is drawn at whole pixels.
-
-Fonts are bundled in fonts/ (SIL Open Font License) and loaded with blf.load():
-    BLACK  Archivo Black   labels, buttons, the logo
-    HAND   Patrick Hand    UI text, cue cards, your messages, the input
-    BODY   Archivo         Claude's and Codex's messages, notes, traces
-A theme can map a role to another font (the 2000s theme writes HAND text in Archivo).
+SDF boundaries use pixel-sized coverage; solid colors retain the theme values.
+Fonts are bundled under SIL OFL. Handwriting is shared by all drawn themes.
 """
 
 import math
@@ -122,7 +107,7 @@ def unload_fonts():
 def font(key):
     if not _font_ids:
         load_fonts()
-    return _font_ids.get(ROLES.get(key, key), 0)
+    return _font_ids.get(ROLES.get(key, "BODY" if key == "CODE" else key), 0)
 
 
 def system_scale():
@@ -167,8 +152,11 @@ float sd_round_box(vec2 p, vec2 b, float r){
 }
 void main(){
   float d = sd_round_box(local - size * 0.5, size * 0.5, radius);
-  if (d > 0.0) { discard; }
-  vec4 c = (d + border > 0.0) ? edge : fill;
+  float coverage = 1.0 - smoothstep(-0.5, 0.5, d);
+  float stroke = border > 0.0 ? smoothstep(-border - 0.5, -border + 0.5, d) : 0.0;
+  vec4 c = mix(vec4(fill.rgb * fill.a, fill.a), vec4(edge.rgb * edge.a, edge.a), stroke);
+  c.rgb = c.a > 0.0 ? c.rgb / c.a : vec3(0.0);
+  c.a *= coverage;
   if (c.a <= 0.0) { discard; }
   FragColor = to_framebuffer(c);
 }
@@ -308,7 +296,7 @@ def _poly_shader(color, width):
     shader.uniform_float("lineWidth", float(max(1, round(width))))
     shader.uniform_float("color", _c(color))
     try:
-        shader.uniform_bool("lineSmooth", [False])
+        shader.uniform_bool("lineSmooth", [True])
     except Exception:
         pass
     return shader
@@ -323,7 +311,7 @@ def _snap_points(points, width):
 def polyline(points, color, width=2.0, closed=False):
     if len(points) < 2:
         return
-    pts = _snap_points(list(points) + ([points[0]] if closed else []), width)
+    pts = list(points) + ([points[0]] if closed else [])
     shader = _poly_shader(color, width)
     batch_for_shader(shader, "LINE_STRIP", {"pos": pts}).draw(shader)
 
@@ -332,7 +320,7 @@ def segments(pairs, color, width=2.0):
     """Separate line pieces: [((x0, y0), (x1, y1)), ...]."""
     if not pairs:
         return
-    pts = _snap_points([p for pair in pairs for p in pair], width)
+    pts = [p for pair in pairs for p in pair]
     shader = _poly_shader(color, width)
     batch_for_shader(shader, "LINES", {"pos": pts}).draw(shader)
 
@@ -355,12 +343,22 @@ def fill_poly(points, color):
         return
     cx = sum(p[0] for p in points) / len(points)
     cy = sum(p[1] for p in points) / len(points)
-    verts = [(round(cx), round(cy))] + [(round(x), round(y)) for x, y in points]
+    verts = [(cx, cy)] + list(points)
     n = len(points)
     indices = [(0, 1 + i, 1 + (i + 1) % n) for i in range(n)]
-    shader = _uniform()
-    shader.uniform_float("color", _c(color))
-    batch_for_shader(shader, "TRIS", {"pos": verts}, indices=indices).draw(shader)
+    color = _c(color)
+    colors = [color] * len(verts)
+    # One-pixel coverage fringe, without rounding away the badge's tilt.
+    for x, y in points:
+        dx, dy = x - cx, y - cy
+        distance = max(0.001, math.hypot(dx, dy))
+        verts.append((x + dx / distance, y + dy / distance))
+        colors.append(color[:3] + (0.0,))
+    for i in range(n):
+        j = (i + 1) % n
+        indices.extend([(1 + i, 1 + j, 1 + n + j), (1 + i, 1 + n + j, 1 + n + i)])
+    shader = gpu.shader.from_builtin("SMOOTH_COLOR")
+    batch_for_shader(shader, "TRIS", {"pos": verts, "color": colors}, indices=indices).draw(shader)
 
 
 def dashed_path(points, color, width=2.0, dash=7.0, gap=5.0, offset=0.0, closed=True):
