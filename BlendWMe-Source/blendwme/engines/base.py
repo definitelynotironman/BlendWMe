@@ -141,7 +141,6 @@ class ProcessEngine(Engine):
                 continue
             try:
                 obj = json.loads(line)
-                events = self.parse(obj) if isinstance(obj, dict) else []
             except ValueError:
                 try:
                     events = self.parse_text_line(line)
@@ -149,10 +148,15 @@ class ProcessEngine(Engine):
                     emit({"type": "error", "text": f"{self.label} sent an invalid text event."})
                     self.interrupt()
                     break
-            except Exception as e:
-                emit({"type": "error", "text": f"{self.label} sent an invalid event ({type(e).__name__})."})
-                self.interrupt()
-                break
+            else:
+                try:
+                    if not isinstance(obj, dict):
+                        raise TypeError("An engine event must be an object")
+                    events = self.parse(obj)
+                except Exception as e:
+                    emit({"type": "error", "text": f"{self.label} sent an invalid event ({type(e).__name__})."})
+                    self.interrupt()
+                    break
             try:
                 for event in events or []:
                     if not isinstance(event, dict) or not isinstance(event.get("type"), str):
