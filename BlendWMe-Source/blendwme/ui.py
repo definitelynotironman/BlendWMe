@@ -140,10 +140,19 @@ class BWM_OT_undo_step(bpy.types.Operator):
 class BWM_OT_new(bpy.types.Operator):
     bl_idname = "blendwme.new_task"
     bl_label = "New Conversation"
-    bl_description = "Forget this conversation and start fresh (your scene is not changed)"
+    bl_description = "Start fresh with your scene unchanged; previous conversations stay in the project journal"
 
     def execute(self, context):
         relay.reset()
+        from .journal import journal
+        journal.record_task("")
+        from . import panel, panel_ops
+        panel_ops.set_text("", undoable=False)
+        panel.state.scroll = panel.state.body_scroll = 0.0
+        panel.state.screen = "main"
+        panel.state.settings_click = None
+        props = context.window_manager.blendwme
+        props.prompt = props.reference_1 = props.reference_2 = ""
         return {"FINISHED"}
 
 
@@ -791,6 +800,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         readers = layout.row(align=True)
         readers.operator("blendwme.reader", text="Full text", icon="TEXT").kind = "all"
         readers.operator("blendwme.reader", text="Read draft").kind = "draft"
+        layout.operator("blendwme.new_task", text="New lesson" if s.mode == "TEACH" else "New task", icon="ADD")
 
         card = session.card
         if card and not card.get("hidden") and card.get("kind") != "work":

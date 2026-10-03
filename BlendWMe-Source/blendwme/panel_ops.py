@@ -171,6 +171,12 @@ def send_text(context, text):
 settings_asked = [0.0]      # when Settings was last opened (tests read it)
 
 
+def clear_conversation_view():
+    """Hide displayed history without ending work or changing journal retention."""
+    state.cleared_at = time.time()
+    state.scroll = 0.0
+
+
 def open_settings(context):
     """Settings are Blender's own widgets in a popover (rule R7). Returns True when shown;
     falls back to Preferences > Add-ons > BlendWMe."""
@@ -206,7 +212,7 @@ def run_command(context, name):
     elif name == "/settings":
         open_settings(context)
     elif name == "/new":
-        relay.reset()
+        bpy.ops.blendwme.new_task()
     elif name == "/stop":
         bpy.ops.blendwme.stop()
     elif name == "/help":
@@ -955,8 +961,7 @@ class BWM_OT_panel(bpy.types.Operator):
         elif action == "next_mode":
             next_mode(context)
         elif action == "clear_view":
-            state.cleared_at = time.time()
-            state.scroll = 0.0
+            clear_conversation_view()
         elif state.focused:
             used = type_key(context, event)
         elif event.unicode and event.unicode.isprintable() and not event.ctrl and not event.alt:

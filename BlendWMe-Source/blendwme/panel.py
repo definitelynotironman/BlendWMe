@@ -1086,11 +1086,6 @@ class Painter:
 
     def footer(self, x, y, w):
         p = self.p
-        from . import socket_bridge
-        try:
-            connected = socket_bridge.get().is_running()
-        except Exception:
-            connected = False
         size = self.px(17)
         h = self.px(24)
         cy = y + h / 2
@@ -1103,13 +1098,9 @@ class Painter:
             d.rect(tx, round(cy - size * 0.42), tw, self.px(1), p.ink)
             self.hit(tx - self.px(4), y, tw + self.px(8), h, action)
             right = tx - self.px(14)
-        if connected:
-            d.disc(x + self.px(8), cy, self.px(6), p.ink)
-            words = "Connected to Blender"
-        else:
-            d.circle(x + self.px(8), cy, self.px(6), p.hot, self.px(2))
-            words = "Not connected. Open Settings"
-        d.text("HAND", size, x + self.px(22), cy - size * 0.32, d.fit("HAND", size, words, right - x - self.px(26)), p.ink)
+        words = "New lesson" if session.mode == "TEACH" else "New task"
+        d.text("HAND", size, x, cy - size * 0.32, words, p.ink)
+        self.hit(x, y, min(right - x, d.width_of("HAND", size, words)), h, "op:blendwme.new_task")
         return h
 
     # -- input and chips ----------------------------------------------------
