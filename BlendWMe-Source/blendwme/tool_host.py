@@ -148,8 +148,9 @@ class ToolHost:
             return {"result": {"error": f"{name!r} cannot be used in {session.mode} mode. "
                                         f"Tools here: {', '.join(sorted(allowed))}."}, "images": []}
         args = _coerce_types(name, args)
-        request_epoch = bridge.epoch()
-        with self.lock, bridge.scope(request_epoch):
+        # Capture the generation before waiting for another tool, and retain
+        # any socket-supplied scene/task validator throughout the call.
+        with bridge.scope(), self.lock:
             images = []
             try:
                 self._check_stop()
@@ -186,7 +187,7 @@ class ToolHost:
     # Waiting for the user (always capped, always stoppable)
     # ------------------------------------------------------------------
     def _check_stop(self):
-        if session.stop_flag.is_set() or bridge.expired():
+        if session.stop_flag.is_set() or not bridge.current_valid():
             raise Stopped()
 
     def _wait_if_paused(self, card=None):

@@ -29,16 +29,20 @@ _scope = threading.local()
 
 
 @contextlib.contextmanager
-def scope(epoch=None, deadline=None):
+def scope(epoch=None, deadline=None, validate=None):
     previous = getattr(_scope, "epoch", None)
     previous_deadline = getattr(_scope, "deadline", None)
-    _scope.epoch = _epoch if epoch is None else epoch
-    _scope.deadline = deadline if deadline is not None else previous_deadline
+    previous_validate = getattr(_scope, "validate", None)
+    _scope.epoch = (previous if previous is not None else _epoch) if epoch is None else epoch
+    _scope.deadline = (min(deadline, previous_deadline) if deadline is not None and previous_deadline is not None
+                       else deadline if deadline is not None else previous_deadline)
+    _scope.validate = validate if validate is not None else previous_validate
     try:
         yield
     finally:
         _scope.epoch = previous
         _scope.deadline = previous_deadline
+        _scope.validate = previous_validate
 
 
 def expired():
@@ -49,6 +53,11 @@ def expired():
 def epoch():
     return _epoch
 
+
+def current_valid():
+    expected = getattr(_scope, "epoch", None)
+    return (expected is None or expected == _epoch) and not expired()
+
 # Modal operators from these Blender areas edit or display the scene: wait for them.
 # (Add-ons' own long-running modals have other prefixes and are not waited for.)
 _RISKY_MODALS = {"TRANSFORM", "SCULPT", "PAINT", "PAINTCURVE", "VIEW3D", "MESH", "OBJECT", "CURVE", "CURVES",
@@ -57,14 +66,18 @@ _RISKY_MODALS = {"TRANSFORM", "SCULPT", "PAINT", "PAINTCURVE", "VIEW3D", "MESH",
 
 
 class _Job:
-    def __init__(self, fn, args, kwargs):
+    def __init__(self, fn, args, kwargs, deadline):
         self.fn, self.args, self.kwargs = fn, args, kwargs
         self.done = threading.Event()
         self.result = None
         self.error = None
         self.lock = threading.Lock()
         self.state = "pending"
-        self.epoch = _epoch
+        self.epoch = getattr(_scope, "epoch", None)
+        if self.epoch is None:
+            self.epoch = _epoch
+        self.deadline = deadline
+        self.validate = getattr(_scope, "validate", None)
 
     def cancel(self, reason):
         with self.lock:
@@ -87,8 +100,11 @@ def call(fn, *args, timeout=600, **kwargs):
         if timeout <= 0:
             raise TimeoutError("This request expired before scene work could run.")
     if threading.current_thread() is threading.main_thread():
+        validate = getattr(_scope, "validate", None)
+        if validate is not None and not validate():
+            raise RuntimeError("The request belongs to an obsolete task, scene or connection.")
         return fn(*args, **kwargs)
-    job = _Job(fn, args, kwargs)
+    job = _Job(fn, args, kwargs, time.time() + timeout)
     _jobs.put(job)
     if not job.done.wait(timeout):
         cancelled = job.cancel("The pending Blender job expired before it ran.")
@@ -160,7 +176,12 @@ def _pump():
             job.state = "running"
         started = time.monotonic()
         try:
-            job.result = job.fn(*job.args, **job.kwargs)
+            # The socket's earlier validation is not authority to mutate a later
+            # task/scene. Validate on the main thread at every dispatch boundary.
+            with scope(job.epoch, job.deadline, job.validate):
+                if not current_valid():
+                    raise RuntimeError("The request expired or was cancelled before dispatch.")
+                job.result = call(job.fn, *job.args, **job.kwargs)
         except BaseException as e:  # hand every failure back to the agent
             job.error = e
         finally:
