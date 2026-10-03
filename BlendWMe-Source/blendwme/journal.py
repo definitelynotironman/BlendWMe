@@ -154,8 +154,12 @@ class Journal:
             self._add("plan_skip", brain, part=part, text=skipped)
 
     def record_step(self, brain, title, explain, code, ok, error="", added=(), modified=(), part=None):
-        if ok and part:
-            self.record_plan_tick(part, brain)
+        """Record one run_python step.
+
+        A successful step never ticks its plan part here: only the tool host
+        knows whether the step changed the scene, and a no-op script must not
+        mark a missing part as built. The host calls record_plan_tick itself.
+        """
         self._add("step", brain, title=title, explain=explain, code=code,
                   ok=bool(ok), error=(error or "")[:400], added=list(added)[:20], modified=list(modified)[:20],
                   part=part)

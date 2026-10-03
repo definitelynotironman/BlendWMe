@@ -66,16 +66,48 @@ class NullJournal:
 
 
 def _image(path):
-    """{"data": base64, "mime": ...} for a picture file, or None."""
+    """Encode only a bounded image Blender can actually decode."""
     try:
         if not path or not os.path.isfile(path) or os.path.getsize(path) > MAX_IMAGE_BYTES:
             return None
-        ext = os.path.splitext(path)[1].lower()
-        mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(ext, "image/png")
         with open(path, "rb") as f:
-            return {"data": base64.b64encode(f.read()).decode("ascii"), "mime": mime}
-    except OSError:
+            data = f.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            return None
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime = "image/png"
+            if len(data) < 33 or data[12:16] != b"IHDR":
+                return None
+            width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
+                return None
+        elif data.startswith(b"\xff\xd8\xff"):
+            mime = "image/jpeg"
+        elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            mime = "image/webp"
+        else:
+            return None
+        if not bridge.call(_decodable_image, path):
+            return None
+        with open(path, "rb") as f:
+            if f.read(MAX_IMAGE_BYTES + 1) != data:
+                return None     # a reference changed while being decoded
+        return {"data": base64.b64encode(data).decode("ascii"), "mime": mime}
+    except (OSError, RuntimeError, ValueError):
         return None
+
+
+def _decodable_image(path):
+    image = None
+    try:
+        image = bpy.data.images.load(path, check_existing=False)
+        width, height = image.size
+        if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
+            return False
+        return bool(image.has_data and len(image.pixels) and image.pixels[0] >= 0)
+    finally:
+        if image is not None:
+            bpy.data.images.remove(image)
 
 
 class ToolHost:
@@ -100,6 +132,7 @@ class ToolHost:
         self.plan_done_noted = False
         self.task_started_at = time.time()
         self.looked_at_step = 0          # ok_steps when the brain last looked (plan done=[n] needs it)
+        self.inspection_snapshot = None
         self.begin_turn()
         if globals().get("host") is self:
             from . import socket_bridge, workspace
@@ -336,6 +369,8 @@ class ToolHost:
         self.journal.record_step(brain, title, explain, code, result["ok"], result.get("error", ""),
                                  added, modified, part)
         if result["ok"]:
+            if any(changed.get(k) for k in ("added", "modified", "removed")):
+                self.final_reviewed = False
             if self.fail_streak and self.retry_entry is not None:
                 self.retry_entry["text"] = f"{title}: fixed a code error ({self.fail_streak + 1} tries)"
                 self.retry_entry["detail"] = ""
@@ -347,9 +382,11 @@ class ToolHost:
             self.journal.solve_struggle(brain, key)
             self.ok_steps += 1
             session.add("step", title, detail=explain, ok=True, brain=brain)
-            if part:
+            if part and any(changed.get(k) for k in ("added", "modified", "removed")):
                 session.tick_plan(part)
-                self.journal.record_plan_tick(part)
+                self.journal.record_plan_tick(part, brain)
+            elif part:
+                result["requirement_unverified"] = "This step made no observed scene change; its plan part remains open."
         else:
             self._step_failed(result, title, key, brain)
 
@@ -423,19 +460,21 @@ class ToolHost:
         images = [_image(info["path"])]
         refs = self.references if compare_reference else []
         images += [_image(p) for p in refs]
-        info["references_attached"] = len([r for r in refs if r])
+        info["references_attached"] = sum(bool(image) for image in images[1:])
+        if refs and not all(images[1:]):
+            info["error"] = "A reference image could not be decoded or exceeded the image limits. Replace it and inspect again."
         return info, images
 
     def _tool_look(self, args, brain):
-        if session.mode == "AUTO" and self.plan_done_noted:
-            return {"note": "The build is complete enough: you were asked to wrap up. Do not start new polish "
-                            "rounds. Add only brief items that are still missing, delete leftovers, then call "
-                            "finish."}, []
         mode = args.get("mode") or "angles"
         session.add("look", f"Looking at the scene ({mode})", brain=brain)
-        self.looked_at_step = self.ok_steps
         info, images = self._capture_images(mode, args.get("targets"), args.get("views"), args.get("shading"),
                                             bool(args.get("compare_reference")))
+        if info.get("error") or not images or not images[0]:
+            self.looked_at_step = -1
+            return {"error": info.get("error") or "The capture did not deliver a usable image. Try look again."}, []
+        self.looked_at_step = self.ok_steps
+        self.inspection_snapshot = bridge.call(scene_info.snapshot)
         if info.get("error"):
             return info, []
         layout = ""
@@ -463,11 +502,12 @@ class ToolHost:
     def _review(self, brain, when):
         """(review text, images) from a multi-angle capture, or None."""
         info, images = self._capture_images("angles", compare_reference=bool(self.references))
-        if info.get("error"):
+        if info.get("error") or not images or not images[0]:
             return None
         self.reviews += 1
         self.reviewed_at = self.ok_steps
         self.looked_at_step = self.ok_steps
+        self.inspection_snapshot = bridge.call(scene_info.snapshot)
         self.review_pending = True      # the brain's next words are its verdict (the relay records them)
         session.add("look", "Art director review " + when, brain=brain)
         stock = bridge.call(scene_info.inventory)
@@ -613,6 +653,9 @@ class ToolHost:
 
     def _tool_finish(self, args, brain):
         summary = str(args.get("summary") or "Done.")
+        if self.inspection_snapshot is not None and bridge.call(scene_info.snapshot) != self.inspection_snapshot:
+            self.final_reviewed = False
+            self.reviewed_at = -1
         # Done is never self-declared: every plan part is built, checked or skipped with a reason.
         still_open = session.open_parts()
         if still_open:
@@ -639,6 +682,13 @@ class ToolHost:
                                             "brief, floating or intersecting parts, wrong proportions). If it is "
                                             "good, call finish again.",
                         "art_director": text}, images
+            self.final_reviewed = False
+            return {"not_finished_yet": "Inspection failed to deliver usable images. Try look again; completion remains unverified."}, []
+        data = getattr(self.journal, "data", {})
+        review_data = (data.get("review") or {}) if isinstance(data, dict) else {}
+        verdict = str(review_data.get("verdict", "")).upper().replace("_", " ")
+        if "NEEDS WORK" in verdict:
+            return {"not_finished_yet": "The current review says NEEDS WORK. Fix its issues and request a fresh review."}, []
         session.add("ai", summary, brain=brain)
         session.set_card({"kind": "done", "title": "Done", "text": summary})
         session.set_plan([])            # the plan card closes with the task (the journal keeps the plan)
