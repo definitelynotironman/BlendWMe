@@ -6,6 +6,8 @@ what you changed, so it builds on your version instead of undoing it.
 """
 
 import math
+import hashlib
+import uuid
 
 import bpy
 from mathutils import Vector
@@ -90,6 +92,7 @@ def get_scene_info():
         "collections": [c.name for c in bpy.data.collections][:40],
         "object_count": len(objs),
         "objects": [object_summary(o) for o in objs[:MAX_OBJECTS]],
+        "change_detection_limits": "Large mesh domains and animation curves are sampled. Custom attributes, drivers, simulations and external asset edits are not fully tracked; inspect them explicitly before changing them.",
     }
     if len(objs) > MAX_OBJECTS:
         info["note"] = f"Only the first {MAX_OBJECTS} objects are listed."
@@ -199,9 +202,73 @@ def get_object_info(name):
 # Snapshots and diffs
 # ----------------------------------------------------------------------
 
+def _animation_values(owner):
+    animation = getattr(owner, "animation_data", None)
+    action = animation.action if animation else None
+    if action is None:
+        return None
+    curves = list(getattr(action, "fcurves", ()))
+    # Blender 4.2 uses action.fcurves; newer layered actions expose channelbags.
+    if not curves:
+        for layer in getattr(action, "layers", ()):
+            for strip in layer.strips:
+                for bag in getattr(strip, "channelbags", ()):
+                    curves.extend(bag.fcurves)
+    values = []
+    for curve in curves[:1000]:
+        keys = curve.keyframe_points
+        stride = max(1, (len(keys) + 999) // 1000)
+        values.append((curve.data_path, curve.array_index, len(keys),
+                       [(tuple(key.co), tuple(key.handle_left), tuple(key.handle_right), key.interpolation)
+                        for key in keys[::stride]]))
+    return (action.name, len(curves), values)
+
+
+def _fingerprint(obj):
+    """Domain evidence at tool boundaries, never on every redraw.
+
+    Geometry above 100k vertices is sampled; this is disclosed in scene facts.
+    """
+    values = []
+    if obj.type == "MESH":
+        verts = obj.data.vertices
+        stride = max(1, (len(verts) + 99999) // 100000)
+        values.append([(v.index, tuple(v.co)) for v in verts[::stride]])
+        for domain in (obj.data.edges, obj.data.polygons):
+            domain_stride = max(1, (len(domain) + 99999) // 100000)
+            values.append([(item.index, tuple(item.vertices)) for item in domain[::domain_stride]])
+        keys = obj.data.shape_keys
+        if keys:
+            values.append([(k.name, k.value, [tuple(v.co) for v in k.data[::stride]]) for k in keys.key_blocks])
+            values.append(_animation_values(keys))
+    values.append(_animation_values(obj))
+    if obj.data:
+        values.append(_animation_values(obj.data))
+    for mod in obj.modifiers:
+        values.append((mod.type, [(p.identifier, str(getattr(mod, p.identifier, "")))
+                                 for p in mod.bl_rna.properties if p.type in {"INT", "FLOAT", "BOOLEAN", "ENUM"}]))
+    for slot in obj.material_slots:
+        mat = slot.material
+        if mat:
+            values.append((mat.name, tuple(mat.diffuse_color)))
+            if mat.node_tree:
+                values.append([(n.name, [(s.name, str(s.default_value)) for s in n.inputs
+                                        if hasattr(s, "default_value")]) for n in mat.node_tree.nodes])
+                values.append([(l.from_node.name, l.from_socket.name, l.to_node.name, l.to_socket.name)
+                               for l in mat.node_tree.links])
+    if obj.pose:
+        values.append([(b.name, tuple(v for row in b.matrix_basis for v in row)) for b in obj.pose.bones])
+    return hashlib.sha256(repr(values).encode()).hexdigest()
+
+
 def snapshot():
     snap = {}
+    identities = set()
     for obj in bpy.context.scene.objects:
+        identity = obj.get("blendwme_id")
+        if not identity or identity in identities:
+            identity = obj["blendwme_id"] = str(uuid.uuid4())
+        identities.add(identity)
         if obj.mode == "EDIT":
             try:
                 obj.update_from_editmode()  # edit-mode geometry is not synced otherwise
@@ -210,6 +277,8 @@ def snapshot():
         mats = tuple(s.material.name for s in getattr(obj, "material_slots", []) if s.material)
         mods = tuple(f"{m.type}:{m.name}" for m in getattr(obj, "modifiers", []))
         snap[obj.name] = {
+            "identity": identity,
+            "domains": _fingerprint(obj),
             "type": obj.type,
             "loc": tuple(_r(obj.location, 3)),
             "rot": tuple(round(math.degrees(a), 1) for a in obj.rotation_euler),
@@ -225,6 +294,7 @@ def snapshot():
 
 
 _LABELS = {"loc": "moved", "rot": "rotated", "scale": "scaled", "dims": "resized",
+           "domains": "geometry, material, modifier, shape-key or pose values edited",
            "mesh": "geometry edited", "materials": "materials changed",
            "modifiers": "modifiers changed", "parent": "parent changed",
            "hidden": "visibility changed", "type": "type changed"}
@@ -233,6 +303,14 @@ _LABELS = {"loc": "moved", "rot": "rotated", "scale": "scaled", "dims": "resized
 def diff(before, after):
     """Return a list of readable change lines and the names that changed."""
     lines, changed = [], {"added": [], "removed": [], "modified": []}
+    before = dict(before)
+    old_names = {v.get("identity"): k for k, v in before.items() if v.get("identity")}
+    for name, value in after.items():
+        old = old_names.get(value.get("identity"))
+        if old and old != name and name not in before:
+            before[name] = before.pop(old)
+            lines.append(f"~ renamed {old} -> {name}")
+            changed["modified"].append(name)
     for name in after:
         if name not in before:
             changed["added"].append(name)
@@ -265,17 +343,26 @@ def tag_author(names, author):
     for name in names:
         obj = bpy.data.objects.get(name)
         if obj is not None:
+            if not obj.get("blendwme_creator"):
+                obj["blendwme_creator"] = obj.get(BRAIN_KEY, obj.get(AUTHOR_KEY, author))
+            obj["blendwme_last_editor"] = author
+            if author == "user":
+                obj["blendwme_protected"] = True
             obj[AUTHOR_KEY] = author
             if author != "ai" and BRAIN_KEY in obj:
                 del obj[BRAIN_KEY]
 
 
 def tag_brain(names, brain):
-    """Sign AI objects with the brain that made them (the journal shows who made what)."""
+    """Record the editor without transferring user ownership or protection."""
     for name in names:
         obj = bpy.data.objects.get(name)
+        if obj is not None:
+            obj["blendwme_last_editor"] = brain
         if obj is not None and obj.get(AUTHOR_KEY) == "ai":
             obj[BRAIN_KEY] = brain
+            if obj.get("blendwme_creator") in (None, "ai"):
+                obj["blendwme_creator"] = brain
 
 
 def makers():

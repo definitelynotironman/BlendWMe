@@ -25,6 +25,8 @@ import json
 import os
 import threading
 import time
+import uuid
+import hashlib
 
 TEXT_NAME = "BlendWMe Journal"
 SIDECAR_SUFFIX = "_blendwme"
@@ -41,7 +43,8 @@ def _label(who):
 
 def _empty():
     return {"version": 1, "seq": 0, "brief": "", "decisions": [], "plan": [], "events": [], "struggles": [],
-            "review": None, "handoffs": [], "sessions": {}, "last_seen": {}, "active": "claude", "tasks": []}
+            "review": None, "handoffs": [], "sessions": {}, "last_seen": {}, "active": "claude", "tasks": [],
+            "references": [], "task_start": 0}
 
 
 class Journal:
@@ -49,6 +52,7 @@ class Journal:
         self.lock = threading.RLock()
         self.data = _empty()
         self.dirty = False
+        self.revision = 0       # monotonic in-memory identity, including reset/load
 
     # ------------------------------------------------------------------
     # Recording (any thread)
@@ -56,11 +60,10 @@ class Journal:
     def _add(self, kind, by, **fields):
         with self.lock:
             self.data["seq"] += 1
+            self.revision += 1
             event = {"n": self.data["seq"], "t": round(time.time()), "kind": kind, "by": by}
             event.update({k: v for k, v in fields.items() if v not in (None, "", [])})
             self.data["events"].append(event)
-            if len(self.data["events"]) > MAX_EVENTS:
-                del self.data["events"][:100]
             self.dirty = True
             return event
 
@@ -73,15 +76,58 @@ class Journal:
             self.data["decisions"] = []
             self.data["plan"] = []
             self.data["review"] = None
+            self.data["references"] = []
+            self.data["handoffs"] = []
+            self.data["sessions"] = {}
+            self.data["last_seen"] = {}
+            self.data["task_start"] = self.data["seq"] + 1
             for s in self.data["struggles"]:
                 s["open"] = False
-            self._add("task", "user", text=brief[:2000])
+            self._add("task", "user", text=brief)
 
     def record_user_message(self, text, decision=False):
         with self.lock:
-            if decision or len(self.data["decisions"]) < 30:
-                self.data["decisions"].append(text[:400])
-            self._add("user_message", "user", text=text[:1000])
+            self.data["decisions"].append(text)
+            self._add("user_message", "user", text=text)
+
+    def record_references(self, paths, blend_path=""):
+        references = []
+        for path in paths:
+            entry = {"path": path, "name": os.path.basename(path), "missing": not os.path.isfile(path)}
+            if blend_path:
+                try:
+                    entry["relative_path"] = os.path.relpath(path, os.path.dirname(blend_path))
+                except ValueError:    # a reference on a different drive stays absolute
+                    pass
+            if not entry["missing"]:
+                try:
+                    with open(path, "rb") as stream:
+                        entry["sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+                except OSError:
+                    entry["missing"] = True
+            references.append(entry)
+        with self.lock:
+            self.data["references"] = references
+            self._add("references", "user", references=references)
+
+    def resolve_references(self, blend_path=""):
+        """Resolve portable copies without overwriting the original reference record."""
+        with self.lock:
+            entries = [dict(entry) for entry in self.data.get("references", [])]
+        for entry in entries:
+            relative = entry.get("relative_path")
+            candidate = os.path.normpath(os.path.join(os.path.dirname(blend_path), relative)) if blend_path and relative else ""
+            if candidate and os.path.isfile(candidate):
+                entry["path"] = candidate
+            path = entry["path"]
+            entry["missing"] = not os.path.isfile(path)
+            if not entry["missing"] and entry.get("sha256"):
+                try:
+                    with open(path, "rb") as stream:
+                        entry["changed"] = hashlib.file_digest(stream, "sha256").hexdigest() != entry["sha256"]
+                except OSError:
+                    entry["missing"] = True
+        return entries
 
     def record_user_edits(self, lines):
         self._add("user_edit", "user", lines=[str(x)[:200] for x in lines[:20]])
@@ -103,13 +149,14 @@ class Journal:
                 if brain:
                     self.data["plan"][part - 1]["by"] = brain
                 self.dirty = True
+                self._add("plan_tick", brain, part=part)
         if skipped:
             self._add("plan_skip", brain, part=part, text=skipped)
 
     def record_step(self, brain, title, explain, code, ok, error="", added=(), modified=(), part=None):
         if ok and part:
             self.record_plan_tick(part, brain)
-        self._add("step", brain, title=title, explain=explain, code=code[:MAX_CODE],
+        self._add("step", brain, title=title, explain=explain, code=code,
                   ok=bool(ok), error=(error or "")[:400], added=list(added)[:20], modified=list(modified)[:20],
                   part=part)
 
@@ -118,12 +165,12 @@ class Journal:
             for s in self.data["struggles"]:
                 if s["open"] and s["key"] == key:
                     s.update(text=text, by=brain, count=s.get("count", 1) + 1, t=round(time.time()))
-                    self.dirty = True
+                    self._add("struggle", brain, key=key, text=text)
                     return s
             s = {"key": key, "text": text, "by": brain, "count": 1, "open": True, "t": round(time.time())}
             self.data["struggles"].append(s)
             del self.data["struggles"][:-30]
-            self.dirty = True
+            self._add("struggle", brain, key=key, text=text)
             return s
 
     def solve_struggle(self, brain, key):
@@ -144,12 +191,12 @@ class Journal:
         with self.lock:
             if self.data["review"] is not None:
                 self.data["review"]["verdict"] = text[:800]
-                self.dirty = True
+                self._add("review_verdict", brain, text=text)
 
     def record_said(self, brain, text):
         """A short note of what a brain told the user (context for the next brain)."""
         if text.strip():
-            self._add("said", brain, text=text.strip()[:400])
+            self._add("said", brain, text=text.strip())
 
     def record_handoff(self, brain, summary, next_steps=(), struggles=()):
         with self.lock:
@@ -159,7 +206,7 @@ class Journal:
             del self.data["handoffs"][:-10]
             for text in note["struggles"]:
                 self.record_struggle(brain, "note: " + text[:60], text)
-            self._add("handoff_note", brain, text=summary[:400])
+            self._add("handoff_note", brain, text=summary, next_steps=list(next_steps), struggles=list(struggles))
 
     def record_finish(self, brain, summary):
         self._add("finish", brain, text=summary)
@@ -176,13 +223,13 @@ class Journal:
         with self.lock:
             if session_id and self.data["sessions"].get(brain) != session_id:
                 self.data["sessions"][brain] = session_id
-                self.dirty = True
+                self._add("session", brain)
 
     def mark_seen(self, brain):
         """The brain has now seen everything up to here ("since you last worked here" starts after it)."""
         with self.lock:
             self.data["last_seen"][brain] = self.data["seq"]
-            self.dirty = True
+            self._add("seen", brain)
 
     def has_history(self):
         return bool(self.data["events"])
@@ -193,7 +240,7 @@ class Journal:
     def changes_since(self, brain):
         """Events by others since this brain last worked here, oldest first."""
         with self.lock:
-            seen = self.data["last_seen"].get(brain, 0)
+            seen = max(self.data["last_seen"].get(brain, 0), self.data.get("task_start", 0) - 1)
             return [e for e in self.data["events"] if e["n"] > seen and e["by"] != brain]
 
     @staticmethod
@@ -236,7 +283,8 @@ class Journal:
         """
         with self.lock:
             d = self.data
-            others = sorted({e["by"] for e in d["events"] if e["by"] not in (brain, "user")})
+            others = sorted({e["by"] for e in d["events"] if e["by"] not in (brain, "user") and
+                             e["n"] >= d.get("task_start", 0)})
             came_back = d["last_seen"].get(brain, 0) > 0
             head = ["=== HANDOFF BRIEF (BlendWMe's project journal) ===",
                     f"You are {_label(brain)}. " + (f"You worked on this project before. Since then "
@@ -250,6 +298,10 @@ class Journal:
                 sections.append(("THE BRIEF", [d["brief"][:1500]], False))
             if d["decisions"]:
                 sections.append(("THE USER'S DECISIONS AND MESSAGES", ["- " + x for x in d["decisions"][-8:]], True))
+            if d.get("references"):
+                sections.append(("REFERENCES", ["- " + entry["name"] +
+                                 (" (recorded missing; check availability)" if entry.get("missing") else "")
+                                 for entry in d["references"]], True))
             open_struggles = [s for s in d["struggles"] if s["open"]]
             if open_struggles:
                 sections.append(("OPEN STRUGGLES (fix these first)",
@@ -313,8 +365,9 @@ class Journal:
                 return d["handoffs"][-5:]
             if name == "everything":
                 return {"brief": d["brief"], "decisions": d["decisions"], "plan": d["plan"],
-                        "events": [self.describe(e) for e in d["events"][-80:]], "struggles": d["struggles"][-20:],
-                        "review": d["review"], "handoffs": d["handoffs"][-5:], "objects": makers or {}}
+                        "events": list(d["events"]), "struggles": d["struggles"][-20:],
+                        "review": d["review"], "handoffs": d["handoffs"][-5:],
+                        "references": d.get("references", []), "objects": makers or {}}
         return self.handoff_brief(brain, makers)
 
     # ------------------------------------------------------------------
@@ -329,19 +382,70 @@ class Journal:
             data = json.loads(text)
         except (ValueError, TypeError):
             return False
-        if not isinstance(data, dict) or "events" not in data:
+        if (not isinstance(data, dict) or not isinstance(data.get("events"), list)
+                or not isinstance(data.get("seq"), int) or data["seq"] < 0
+                or data.get("version") != 1):
             return False
         merged = _empty()
         merged.update(data)
+        if not _valid_schema(merged):
+            return False
         with self.lock:
             self.data = merged
             self.dirty = False
+            self.revision += 1
         return True
 
     def reset(self):
         with self.lock:
             self.data = _empty()
             self.dirty = True
+            self.revision += 1
+
+
+def _valid_schema(data):
+    """Validate the nested structures consumers rely on before replacing state."""
+    if (isinstance(data["seq"], bool) or not isinstance(data["brief"], str) or
+            not isinstance(data["active"], str)):
+        return False
+    for name in ("decisions", "plan", "struggles", "handoffs", "tasks", "references"):
+        if not isinstance(data.get(name, []), list):
+            return False
+    if not all(isinstance(item, str) for item in data["decisions"]):
+        return False
+    for event in data["events"]:
+        if (not isinstance(event, dict) or not isinstance(event.get("n"), int) or
+                not 0 <= event["n"] <= data["seq"] or
+                not all(isinstance(event.get(key), str) for key in ("by", "kind"))):
+            return False
+    for part in data["plan"]:
+        if not isinstance(part, dict) or not isinstance(part.get("name"), str) or not isinstance(part.get("done"), bool):
+            return False
+    for item in data["struggles"]:
+        if (not isinstance(item, dict) or not isinstance(item.get("open"), bool) or
+                not all(isinstance(item.get(key), str) for key in ("key", "text", "by"))):
+            return False
+    for item in data["handoffs"]:
+        if (not isinstance(item, dict) or not all(isinstance(item.get(key), str) for key in ("by", "summary")) or
+                not all(isinstance(item.get(key), list) and all(isinstance(v, str) for v in item[key])
+                        for key in ("next_steps", "struggles"))):
+            return False
+    review = data["review"]
+    if review is not None and (not isinstance(review, dict) or
+                               not all(isinstance(review.get(key), str) for key in ("by", "when", "verdict"))):
+        return False
+    for name in ("sessions", "last_seen"):
+        if not isinstance(data[name], dict):
+            return False
+        expected = str if name == "sessions" else int
+        if not all(isinstance(k, str) and isinstance(v, expected) for k, v in data[name].items()):
+            return False
+    for entry in data.get("references", []):
+        if not isinstance(entry, dict) or not all(isinstance(entry.get(key), str) for key in ("path", "name")):
+            return False
+        if any(key in entry and not isinstance(entry[key], str) for key in ("relative_path", "sha256")):
+            return False
+    return True
 
 
 def _fit(head, sections, rules, limit):
@@ -386,25 +490,40 @@ def sidecar_path(blend_path):
 def save():
     """Write the Text block (and the sidecar when the file is saved). Main thread."""
     import bpy
-    if not journal.dirty:
-        return
-    text = journal.to_text()
+    with journal.lock:
+        if not journal.dirty:
+            return
+        revision = journal.revision
+        text = journal.to_text()
     block = bpy.data.texts.get(TEXT_NAME) or bpy.data.texts.new(TEXT_NAME)
     block.from_string(text)
     if bpy.data.filepath:
-        write_sidecar(bpy.data.filepath, text)
-    journal.dirty = False
+        if not write_sidecar(bpy.data.filepath, text):
+            return
+    with journal.lock:
+        if journal.revision == revision:
+            journal.dirty = False
 
 
 def write_sidecar(blend_path, text=None):
     path = sidecar_path(blend_path)
+    temporary = path + "." + uuid.uuid4().hex + ".tmp"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path + ".tmp", "w", encoding="utf-8") as f:
+        with open(temporary, "w", encoding="utf-8") as f:
             f.write(text or journal.to_text())
-        os.replace(path + ".tmp", path)
+        os.replace(temporary, path)
+        return True
     except OSError as e:
         print("BlendWMe: could not write the journal sidecar:", e)
+        return False
+    finally:
+        try:
+            os.remove(temporary)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
 
 def load_for_file():
@@ -413,7 +532,14 @@ def load_for_file():
     candidates = []
     block = bpy.data.texts.get(TEXT_NAME)
     if block is not None:
-        candidates.append(block.as_string())
+        # The saved blend is authoritative. A newer sidecar can describe work
+        # the user deliberately discarded and must not resurrect that task.
+        if journal.load_text(block.as_string()):
+            return True
+        journal.reset()
+        journal.dirty = False
+        print("BlendWMe: the saved journal is invalid; previous project context was cleared.")
+        return False
     if bpy.data.filepath and os.path.isfile(sidecar_path(bpy.data.filepath)):
         try:
             with open(sidecar_path(bpy.data.filepath), encoding="utf-8") as f:
@@ -438,6 +564,10 @@ def _flush_timer():
     except Exception as e:      # never break Blender over the journal
         print("BlendWMe: journal save failed:", e)
     return 2.0
+
+
+def _on_save_pre(*_args):
+    save()
 
 
 def _on_save_post(*_args):
@@ -465,7 +595,8 @@ def _handlers():
     from bpy.app.handlers import persistent
     # persistent: the handler stays registered when a file is loaded.
     persistent(_on_save_post)
-    return ((bpy.app.handlers.save_post, _on_save_post),)
+    persistent(_on_save_pre)
+    return ((bpy.app.handlers.save_pre, _on_save_pre), (bpy.app.handlers.save_post, _on_save_post))
 
 
 def register():

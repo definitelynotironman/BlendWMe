@@ -40,6 +40,11 @@ MAX_SCENE_CHARS = 5000
 NOTE_TIMEOUT = 180          # seconds the old brain gets to write its handoff note
 
 
+def _current_filepath():
+    import bpy
+    return bpy.data.filepath
+
+
 
 def addon_version():
     """The version in blender_manifest.toml (one source of truth for logs)."""
@@ -160,11 +165,17 @@ class Relay:
                     engine.started_session = True
         if data.get("active") in self.engines:
             self.active = data["active"]
-        if journal.has_history():
+        if data.get("brief"):
             self.task_started = True
             self.resumed_project = True
             self.brief = data.get("brief", "")
-            host.reset_task(self.brief, [])
+            references = journal.resolve_references(bridge.call(_current_filepath))
+            host.reset_task(self.brief, [r["path"] for r in references if not r["missing"]])
+            for reference in references:
+                if reference["missing"]:
+                    session.add("info", "Reference is missing: " + reference.get("name", "unnamed image"))
+                elif reference.get("changed"):
+                    session.add("info", "Reference changed since it was recorded: " + reference["name"])
             session.set_plan([p["name"] for p in data.get("plan", [])])
             for i, p in enumerate(data.get("plan", []), 1):
                 if p.get("done"):
@@ -217,6 +228,8 @@ class Relay:
             text = ("\n".join(pending) if pending else
                     f"{label(source)} handed the work to you. Take over and continue the task.")
         except Exception as e:
+            if generation != self.generation:
+                return
             traceback.print_exc()
             self.handing_over = False
             self._fail(f"The hand-over failed: {e}")
@@ -262,6 +275,7 @@ class Relay:
         host.reset_task(text, self.config.get("references", []))
         host.last_snapshot = None
         journal.record_task(text)
+        journal.record_references(self.config.get("references", []), bridge.call(_current_filepath))
 
     def _engine_config(self, brain):
         if not socket_bridge.get().is_running():
@@ -451,7 +465,7 @@ class Relay:
                 engine.reset()
                 self.told.discard(brain)
                 self.running = brain       # preparing the retry is still active work
-                self._later(brain, lambda: self._start(brain, self.last_text))
+                self._later(brain, lambda: self._start(brain, self.last_text, handoff=self._brief(brain)))
                 self._signal_end(kind)
                 return
             journal.record_error(brain, text)

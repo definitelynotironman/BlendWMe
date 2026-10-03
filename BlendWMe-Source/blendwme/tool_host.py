@@ -329,8 +329,8 @@ class ToolHost:
         changed = result.pop("_changed", {}) or {}
         added = list(changed.get("added", []))
         modified = list(changed.get("modified", []))
-        if result["ok"] and added:
-            bridge.call(scene_info.tag_brain, added, brain)
+        if result["ok"] and (added or modified):
+            bridge.call(scene_info.tag_brain, added + modified, brain)
         session.steps.append({"title": title, "explain": explain, "code": code, "ok": result["ok"], "brain": brain})
         self.last_snapshot = bridge.call(scene_info.snapshot)
         key = _step_key(title, part)
