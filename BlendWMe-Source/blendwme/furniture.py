@@ -624,7 +624,22 @@ class FurnitureKit(PieceBuilder):
 architecture = ArchitectureKit()
 furniture = FurnitureKit()
 
-for _name in __all__:
-    _owner = architecture if hasattr(architecture, _name) else furniture
-    globals()[_name] = _s.forgiving(getattr(_owner, _name))
-del _name, _owner
+wall = _s.forgiving(architecture.wall)
+floor = _s.forgiving(architecture.floor)
+opening = _s.forgiving(architecture.opening)
+window = _s.forgiving(architecture.window)
+door = _s.forgiving(architecture.door)
+path = _s.forgiving(architecture.path)
+table = _s.forgiving(furniture.table)
+desk = _s.forgiving(furniture.desk)
+chair = _s.forgiving(furniture.chair)
+bed = _s.forgiving(furniture.bed)
+wardrobe = _s.forgiving(furniture.wardrobe)
+closet = _s.forgiving(furniture.closet)
+shelf = _s.forgiving(furniture.shelf)
+monitor = _s.forgiving(furniture.monitor)
+keyboard = _s.forgiving(furniture.keyboard)
+pc_tower = _s.forgiving(furniture.pc_tower)
+rug = _s.forgiving(furniture.rug)
+lamp = _s.forgiving(furniture.lamp)
+plant = _s.forgiving(furniture.plant)
