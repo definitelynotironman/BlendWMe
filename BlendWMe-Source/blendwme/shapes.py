@@ -39,6 +39,47 @@ __all__ = [
 # Tolerant argument readers
 # ----------------------------------------------------------------------
 
+MAX_SEGMENTS = 256
+MAX_HELPER_VERTICES = 100_000
+MAX_MODIFIER_FACES = 250_000
+
+
+def _count(value, default, minimum=3, maximum=MAX_SEGMENTS, label="segments"):
+    """Refuse excessive work before allocating geometry; never silently clamp it."""
+    try:
+        number = float(default if value is None else value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be an integer from {minimum} to {maximum}.") from None
+    if isinstance(value, bool) or not math.isfinite(number) or not number.is_integer() or not minimum <= number <= maximum:
+        raise ValueError(f"{label} must be an integer from {minimum} to {maximum}; split larger work into smaller steps.")
+    return int(number)
+
+
+def _geometry_budget(vertices):
+    if vertices > MAX_HELPER_VERTICES:
+        raise ValueError(f"This helper would create over {MAX_HELPER_VERTICES:,} vertices. Use fewer sections or segments.")
+
+
+def _modifier_budget(target, factor, replacing=None):
+    """Conservative face estimate for supported multiplying modifiers, not a Python sandbox."""
+    if target.type != "MESH":
+        return
+    # Subdivision turns n-gons into n quads at the first level.
+    faces = max(1, len(target.data.polygons), sum(len(p.vertices) for p in target.data.polygons) / 4)
+    for modifier in target.modifiers:
+        if modifier == replacing:
+            continue
+        if modifier.type == "SUBSURF":
+            faces *= 4 ** max(modifier.levels, modifier.render_levels)
+        elif modifier.type == "ARRAY":
+            faces *= modifier.count
+        elif modifier.type == "MIRROR":
+            faces *= 2 ** sum(modifier.use_axis)
+        elif modifier.type == "SOLIDIFY":
+            faces *= 2
+    if faces * factor > MAX_MODIFIER_FACES:
+        raise ValueError(f"The supported modifier stack would exceed an estimated {MAX_MODIFIER_FACES:,} faces. Reduce its density first.")
+
 
 def num(value, default=0.0):
     """A float from 2, 2.0, "2", "2.0 m" or None (-> default)."""
@@ -132,9 +173,10 @@ def cone(name, radius_bottom=0.5, radius_top=0.0, depth=1.0, location=(0, 0, 0),
     axis 'Z' stands it up (bottom at location.z - depth/2). Use axis='-Z' to flip it
     (point down, like an ice cream cone).
     """
+    segments = _count(segments, 24)
     bm = bmesh.new()
     r1, r2, d = num(radius_bottom, 0.5), num(radius_top, 0.0), num(depth, 1.0)
-    bmesh.ops.create_cone(bm, cap_ends=bool(caps), cap_tris=False, segments=max(3, int(num(segments, 24))),
+    bmesh.ops.create_cone(bm, cap_ends=bool(caps), cap_tris=False, segments=segments,
                           radius1=r1, radius2=r2, depth=d)
     turn = _axis_matrix(axis)
     if str(axis).startswith("-"):
@@ -149,9 +191,10 @@ def cone(name, radius_bottom=0.5, radius_top=0.0, depth=1.0, location=(0, 0, 0),
 def sphere(name, radius=0.5, location=(0, 0, 0), collection=None, material=None, segments=32, rings=16,
            smooth=True):
     """A UV sphere. radius can be (rx, ry, rz) for an ellipsoid (egg, head, scoop)."""
+    segments, rings = _count(segments, 32), _count(rings, 16, label="rings")
+    _geometry_budget(segments * rings)
     bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=max(3, int(num(segments, 32))),
-                              v_segments=max(3, int(num(rings, 16))), radius=1.0)
+    bmesh.ops.create_uvsphere(bm, u_segments=segments, v_segments=rings, radius=1.0)
     rx, ry, rz = vec(radius, 3, 0.5) if not isinstance(radius, (int, float, str)) else (num(radius, 0.5),) * 3
     bmesh.ops.scale(bm, vec=(rx, ry, rz), verts=bm.verts)
     return _finish(name, bm, location, collection, material, smooth, auto_smooth=0)
@@ -161,7 +204,8 @@ def torus(name, major_radius=1.0, minor_radius=0.25, location=(0, 0, 0), collect
           segments=32, ring_segments=12, axis="Z", smooth=True):
     """A ring (donut, tyre, rim). axis is the hole's direction."""
     R, r = num(major_radius, 1.0), num(minor_radius, 0.25)
-    n, m = max(3, int(num(segments, 32))), max(3, int(num(ring_segments, 12)))
+    n, m = _count(segments, 32), _count(ring_segments, 12, label="ring_segments")
+    _geometry_budget(n * m)
     bm = bmesh.new()
     rings = []
     for i in range(n):
@@ -277,6 +321,7 @@ def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), colle
     tiles=N lays N overlapping rows of tile strips on each slope (name + '_Tiles').
     Returns the roof object (the gables and tiles are parented to it).
     """
+    rows = _count(tiles, 0, minimum=0, label="tiles")
     W, D, R = num(width, 4), num(depth, 3), num(rise, 1.2)
     o, t = num(overhang, 0.3), num(thickness, 0.15)
     cx, cy, z0 = vec(location)
@@ -295,7 +340,6 @@ def gable_roof(name, width=4.0, depth=3.0, rise=1.2, location=(0, 0, 2.4), colle
         mat = gable_material if gable_material is not None else _h.material("Plaster", (0.88, 0.8, 0.66), 0.8)
         g = extrude_profile(name + "_Gables", tri, W, (cx, cy, z0), collection, mat, axis="X" if axis == "X" else "Y")
         parent(g, roof)
-    rows = int(num(tiles))
     if rows > 0:
         base = roof.active_material
         tile_mat = _h.material(base.name + "_Tile", tuple(c * 0.85 for c in base.diffuse_color[:3]), 0.75) \
@@ -317,10 +361,12 @@ def loft(name, sections, location=(0, 0, 0), collection=None, material=None, seg
     Heights are along `axis` ('Z' up by default) and relative to location.
     A radius of 0 closes the body to a point. subdivide adds a Subdivision modifier.
     """
-    n = max(3, int(num(segments, 24)))
+    n = _count(segments, 24)
+    subdivision = _count(subdivide, 0, minimum=0, maximum=4, label="subdivide")
     rings = []
     for s in sections:
         s = list(s)
+        _geometry_budget((len(rings) + 1) * (len(s) if s and isinstance(s[0], (list, tuple, Vector)) else n))
         if s and isinstance(s[0], (list, tuple, Vector)):
             rings.append([Vector(vec(p)) for p in s])
             continue
@@ -336,6 +382,8 @@ def loft(name, sections, location=(0, 0, 0), collection=None, material=None, seg
     count = len(rings[0])
     if any(len(r) != count for r in rings):
         raise ValueError("All point rings in loft need the same number of points.")
+    if (len(rings) - 1) * count * (4 ** subdivision) > MAX_MODIFIER_FACES:
+        raise ValueError("This loft's subdivision would exceed the helper face budget. Reduce sections, segments or subdivision.")
     bm = bmesh.new()
     vrings = []
     for ring in rings:
@@ -366,8 +414,8 @@ def loft(name, sections, location=(0, 0, 0), collection=None, material=None, seg
                     pass
     bmesh.ops.transform(bm, matrix=_axis_matrix(axis), verts=bm.verts)
     obj = _finish(name, bm, location, collection, material, smooth, auto_smooth=0)
-    if num(subdivide):
-        subdivide_mod(obj, int(num(subdivide)))
+    if subdivision:
+        subdivide_mod(obj, subdivision)
     return obj
 
 
@@ -393,7 +441,8 @@ def tube(name, points, radius=0.05, location=(0, 0, 0), collection=None, materia
         raise ValueError("tube needs at least 2 points.")
     radii = [num(r) for r in radius] if isinstance(radius, (list, tuple)) else [num(radius, 0.05)] * len(pts)
     radii += [radii[-1]] * (len(pts) - len(radii))
-    m = max(3, int(num(segments, 12)))
+    m = _count(segments, 12)
+    _geometry_budget(m * len(pts))
     bm = bmesh.new()
     rings = []
     # Parallel transport frames: no twisting along the path.
@@ -457,9 +506,11 @@ def _h_bevel(obj, width, segments=2):
 def bevel(target, width=0.02, segments=2, angle=30):
     """Add (or update) a Bevel modifier: rounded edges that catch the light."""
     target = _h.obj(target)
+    segments = _count(segments, 2, minimum=1, maximum=8, label="bevel segments")
+    _modifier_budget(target, 1 + 4 * segments, target.modifiers.get("Bevel"))
     m = target.modifiers.get("Bevel") or target.modifiers.new("Bevel", "BEVEL")
     m.width = num(width, 0.02)
-    m.segments = int(num(segments, 2))
+    m.segments = segments
     m.limit_method = "ANGLE"
     m.angle_limit = math.radians(num(angle, 30))
     return m
@@ -481,8 +532,10 @@ def array(target, count=3, offset=(1.0, 0, 0), relative=False):
     """Add an Array modifier: count copies, each moved by offset (metres, or a factor of
     the object's size when relative=True). Planks, tiles, fence posts, steps."""
     target = _h.obj(target)
+    count = _count(count, 3, minimum=1, label="array count")
+    _modifier_budget(target, count)
     m = target.modifiers.new("Array", "ARRAY")
-    m.count = max(1, int(num(count, 3)))
+    m.count = count
     off = vec(offset)
     if relative:
         m.use_relative_offset, m.use_constant_offset = True, False
@@ -500,9 +553,12 @@ def subdivide(target, levels=2, render_levels=None):
 
 def subdivide_mod(target, levels=2, render_levels=None):
     target = _h.obj(target)
+    levels = _count(levels, 2, minimum=0, maximum=4, label="subdivision levels")
+    render_levels = _count(render_levels, levels, minimum=0, maximum=4, label="render subdivision levels")
+    _modifier_budget(target, 4 ** max(levels, render_levels), target.modifiers.get("Subdivision"))
     m = target.modifiers.get("Subdivision") or target.modifiers.new("Subdivision", "SUBSURF")
-    m.levels = int(num(levels, 2))
-    m.render_levels = int(num(render_levels, m.levels)) if render_levels is not None else m.levels
+    m.levels = levels
+    m.render_levels = render_levels
     if target.type == "MESH":
         target.data.polygons.foreach_set("use_smooth", [True] * len(target.data.polygons))
         target.data.update()

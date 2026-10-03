@@ -110,7 +110,7 @@ def end_step(ok):
 
 def _delete_tree(old):
     for child in list(old.children):
-        if child.get("blendwme_author") == "user":
+        if child.get("blendwme_author") != "ai" or child.get("blendwme_protected", False):
             world = child.matrix_world.copy()
             child.parent = None
             child.matrix_world = world
@@ -134,7 +134,8 @@ def claim_name(name):
     the new object then simply gets Blender's usual .001 name.
     """
     old = bpy.data.objects.get(name)
-    if old is None or old.as_pointer() not in STEP_START or old.get("blendwme_author") != "ai":
+    if (old is None or old.as_pointer() not in STEP_START or old.get("blendwme_author") != "ai" or
+            old.get("blendwme_protected", False)):
         return
     _REPLACED.append((old, name))
     old.name = name + ".replaced"
@@ -204,7 +205,13 @@ def material(name, color=(0.8, 0.8, 0.8), roughness=0.5, metallic=0.0,
     """
     rgba_in = globals()["color"](color)     # the argument hides the color() function here
     roughness, metallic = float(roughness), float(metallic)
-    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m = bpy.data.materials.get(name)
+    protected = m is not None and (m.get("blendwme_protected", False) or any(
+        slot.material == m and (obj.get("blendwme_author") != "ai" or obj.get("blendwme_protected", False))
+        for obj in bpy.data.objects for slot in obj.material_slots))
+    if m is None or not m.get("blendwme_owned", False) or m.users > 1 or protected:
+        m = m.copy() if m is not None else bpy.data.materials.new(name)
+        m["blendwme_owned"] = True
     m.use_nodes = True
     bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
     if bsdf is None:
@@ -262,6 +269,13 @@ def mesh(name, verts, faces, location=(0, 0, 0), collection=None, material=None)
 
     Faces should wind counter-clockwise seen from outside. Normals are fixed automatically.
     """
+    from itertools import islice
+    from .shapes import MAX_HELPER_VERTICES, MAX_MODIFIER_FACES, _geometry_budget
+    verts = list(islice(iter(verts), MAX_HELPER_VERTICES + 1))
+    faces = list(islice(iter(faces), MAX_MODIFIER_FACES + 1))
+    _geometry_budget(len(verts))
+    if len(faces) > MAX_MODIFIER_FACES:
+        raise ValueError("This helper mesh exceeds the face budget. Split it into smaller steps.")
     claim_name(name)
     data = bpy.data.meshes.new(name)
     data.from_pydata([tuple(v) for v in verts], [], [tuple(f) for f in faces])
@@ -284,6 +298,8 @@ def assign(target, material_, replace=True):
     material_ = as_material(material_, target.name + "_Mat")
     if target.data is None or not hasattr(target.data, "materials"):
         return
+    if target.data.users > 1:
+        target.data = target.data.copy()
     if replace:
         target.data.materials.clear()
     target.data.materials.append(material_)

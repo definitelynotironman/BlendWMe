@@ -17,13 +17,14 @@ import random
 import re
 import sys
 import traceback
+import time
 
 import bmesh
 import bpy
 import mathutils
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import helpers, precheck, repair, scene_info
+from . import helpers, precheck, recovery, repair, scene_info
 
 _BLOCKED = [
     (r"\bimport\s+(os|sys|subprocess|shutil|socket|ctypes|requests|urllib|http|importlib|builtins|pathlib|io)\b", "system/network modules"),
@@ -38,6 +39,30 @@ _BLOCKED = [
 ]
 
 MAX_OUTPUT = 4000
+MAX_STEP_LINES = 100_000
+MAX_STEP_SECONDS = 15.0
+
+
+@contextlib.contextmanager
+def _bounded_python():
+    """Bound generated Python loops; native Blender work yields only on return."""
+    previous = sys.gettrace()
+    deadline = time.monotonic() + MAX_STEP_SECONDS
+    remaining = MAX_STEP_LINES
+    def trace(frame, event, arg):
+        nonlocal remaining
+        if frame.f_code.co_filename != "<blendwme>":
+            return None
+        if event == "line":
+            remaining -= 1
+            if remaining < 0 or time.monotonic() > deadline:
+                raise RuntimeError("This Python step exceeded its work limit. Split it into smaller steps; native operations cannot be interrupted mid-call.")
+        return trace
+    sys.settrace(trace)
+    try:
+        yield
+    finally:
+        sys.settrace(previous)
 
 
 def check_code(code):
@@ -210,12 +235,17 @@ def run(code, title="AI step", author="ai"):
 
     before = scene_info.snapshot()
     before_ids = _id_pointers()
+    try:
+        checkpoint = recovery.capture()
+    except Exception as error:
+        helpers.end_step(False)
+        return {"ok": False, "error": str(error), "rolled_back": "Nothing ran; checkpoint creation failed."}
     _undo_push(f"Before BlendWMe: {title}")
     stdout = io.StringIO()
     window, area, region = helpers.find_view3d()
     ok, error = True, None
     try:
-        with contextlib.redirect_stdout(stdout), _bwm_importable():
+        with contextlib.redirect_stdout(stdout), _bwm_importable(), _bounded_python():
             if window:
                 with bpy.context.temp_override(window=window, area=area, region=region,
                                                screen=window.screen):
@@ -229,6 +259,9 @@ def run(code, title="AI step", author="ai"):
     removed = 0
     if not ok:
         removed = _roll_back(before_ids)
+        recovery.restore(checkpoint)
+    else:
+        recovery.discard(checkpoint)
     # Earlier AI objects this step replaced: deleted on success, restored on failure.
     helpers.end_step(ok)
     try:
@@ -263,6 +296,10 @@ def run(code, title="AI step", author="ai"):
     if printed:
         result["printed"] = printed[:MAX_OUTPUT] + ("..." if len(printed) > MAX_OUTPUT else "")
     if error:
+        result["recovery_checkpoint"] = checkpoint[0]
+        result["recovery_scope"] = ("Transforms, data assignments, material slots and existing material socket values "
+                                    "were restored where their datablocks survived. Other edits require opening "
+                                    "the checkpoint .blend. Stop is only effective between native operations.")
         result["error"] = error
         hint = _hint(error)
         if hint:

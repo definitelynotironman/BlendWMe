@@ -71,7 +71,8 @@ check("bad collection name explained", "No collection named" in r["error"] and "
 r = executor.run("x = 'abc'\nx.objects")
 check("str-instead-of-object hint", "needs the object itself" in r.get("hint", ""), r)
 r = executor.run("D.objects['Door'].location.x += 0.5\nraise RuntimeError('boom')")
-check("changes to existing objects reported", "Door" in r.get("note", ""), r)
+check("failed existing transform is restored with a checkpoint", not r["ok"]
+      and r.get("recovery_checkpoint") and bpy.data.objects["Door"].location.x == 0, r)
 
 # 3. look renders the views in background Blender (there is no viewport to draw)
 from blendwme import look as look_mod, logs  # noqa: E402
