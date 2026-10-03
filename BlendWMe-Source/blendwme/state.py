@@ -37,6 +37,7 @@ class Session:
     def __init__(self):
         self.lock = threading.RLock()
         self.status = IDLE
+        self.turn_started = 0.0
         self.log = []            # [{"who": "you|ai|step|look|info|error", "text": str, "t": float}]
         self.card = None         # overlay card dict or None
         self.pointers = []       # overlay pointers
@@ -108,6 +109,8 @@ class Session:
 
     def set_status(self, status):
         with self.lock:
+            if status in (THINKING, WORKING) and self.status not in (THINKING, WORKING):
+                self.turn_started = time.time()
             self.status = status
             self.changed_flag = True
 

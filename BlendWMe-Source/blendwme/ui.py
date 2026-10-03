@@ -775,7 +775,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         row = box.row()
         row.alert = panel.your_turn()
         if relay.is_running() and status in (THINKING, WORKING):
-            seconds = int(time.time() - (panel.state.turn_started or time.time()))
+            seconds = int(time.time() - (session.turn_started or time.time()))
             verb = "building" if status == WORKING else "thinking"
             row.label(text=f"{brain_label(brain)} is {verb} · {seconds} s", icon=_STATUS_ICON.get(status, "DOT"))
             title = (session.card or {}).get("title") or ""

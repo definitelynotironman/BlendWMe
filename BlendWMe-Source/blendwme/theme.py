@@ -70,7 +70,7 @@ class Palette:
 
     def __init__(self, name):
         self.name = name if (name in TOKENS or name == "NATIVE") else "GRAPHITE"
-        tokens = _blender_tokens() if self.name == "NATIVE" else TOKENS[self.name]
+        tokens = _blender_tokens() if self.name in {"NATIVE", "BLENDER"} else TOKENS[self.name]
         for key, value in tokens.items():
             setattr(self, key, rgba(value))
         self.band = rgba(tokens["band"]) if "band" in tokens else None
