@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """BlendWMe 2.0 headless tests: the MCP bridge, the tool host, the journal, the engines and the relay.
 
 Run (no subscription is used; every brain here is fake):
@@ -17,6 +19,8 @@ import tempfile
 import threading
 import time
 
+__author__ = "definitelynotironman"
+
 sys.stdout.reconfigure(line_buffering=True)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,12 +39,14 @@ passed = []
 
 
 def check(name, cond, detail=""):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     assert cond, f"FAILED {name} {detail}"
     passed.append(name)
     print("ok -", name)
 
 
 def pump_until(predicate, timeout=30):
+    """Run queued main-thread work until predicate() is true; fail with the log tail on timeout."""
     end = time.time() + timeout
     while time.time() < end:
         bridge._pump()
@@ -55,6 +61,7 @@ def in_thread(fn, *args):
     box = {"done": False}
 
     def work():
+        """Run fn and keep its value or exception."""
         try:
             box["value"] = fn(*args)
         except BaseException as e:
@@ -65,6 +72,7 @@ def in_thread(fn, *args):
 
 
 def wait(box, timeout=60):
+    """Pump until the worker finished; return its value or raise its exception."""
     pump_until(lambda: box["done"], timeout)
     if "error" in box:
         raise box["error"]
@@ -72,10 +80,12 @@ def wait(box, timeout=60):
 
 
 def fresh_scene():
+    """An empty factory scene."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
 def reset_session(mode="AUTO"):
+    """A fresh session in the given mode with a new tool-host task."""
     session.reset_conversation()
     session.mode = mode
     session.build_style = "FULL"       # no 0.9 s "landing" pause between parts in tests
@@ -257,6 +267,7 @@ if os.path.isfile(dev_python):
           message)
 
     def build_through_mcp():
+        """Build a sphere through the real MCP server with the stdlib probe client."""
         probe = mcp_probe.Probe(command)
         try:
             probe.initialize()
@@ -285,11 +296,13 @@ CFG = {"brain": "claude", "references": [], "auto_save_logs": False, "blender_ve
 
 
 def script(*turns):
+    """Write the fake brain's turns for the next runs."""
     with open(os.path.join(WORKSPACE, "fake_script.json"), "w", encoding="utf-8") as f:
         json.dump(list(turns), f)
 
 
 def runs():
+    """Every recorded fake-brain run (retrying a half-written file)."""
     path = os.path.join(WORKSPACE, "fake_runs.json")
     # The fake brain may be writing the file right now: try again on a half-written file.
     for _ in range(50):
@@ -304,16 +317,19 @@ def runs():
 
 
 def turn(text, brain="claude", **extra):
+    """Send one message through the relay and wait for the turn to end."""
     relay.send(text, dict(CFG, brain=brain, **extra))
     pump_until(lambda: not relay.is_running(), 90)
 
 
 def after(flag):
+    """The value after a flag in the latest run's argv, or None."""
     argv = runs()[-1]["argv"]
     return argv[argv.index(flag) + 1] if flag in argv else None
 
 
 def ai_texts(brain=None):
+    """The brain's messages in the log (optionally for one brain)."""
     return [e["text"] for e in session.log if e["who"] == "ai" and (brain is None or e.get("brain") == brain)]
 
 
@@ -672,6 +688,7 @@ else:
 
 
 def status_check(fn, key, **fake):
+    """Run a setup check against the fake status program with these answers."""
     os.environ["BWM_FAKE_STATUS"] = json.dumps(fake)
     return fn({key: fake_program})
 

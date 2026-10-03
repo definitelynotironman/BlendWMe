@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Test the BlendWMe MCP server with a fake Blender socket (no Blender, no subscription).
 
 Run with a Python that has the `mcp` package (see blendwme_mcp/requirements.txt):
@@ -20,6 +22,8 @@ import threading
 import anyio
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+__author__ = "definitelynotironman"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(os.path.dirname(HERE), "blendwme_mcp", "run.py")
@@ -44,6 +48,7 @@ def attr(obj, camel):
 
 
 def check(name, cond, detail=""):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     assert cond, f"FAILED {name} {detail}"
     passed.append(name)
     print("ok -", name, flush=True)
@@ -53,6 +58,7 @@ class FakeAddon:
     """Answers like socket_bridge.py: one JSON line per request, token required."""
 
     def __init__(self):
+        """Listen on a free local port and start accepting."""
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
         self.sock.listen(4)
@@ -60,6 +66,7 @@ class FakeAddon:
         threading.Thread(target=self.accept, daemon=True).start()
 
     def accept(self):
+        """Accept connections until the socket closes, one thread each."""
         while True:
             try:
                 conn, _ = self.sock.accept()
@@ -68,6 +75,7 @@ class FakeAddon:
             threading.Thread(target=self.serve, args=(conn,), daemon=True).start()
 
     def serve(self, conn):
+        """Answer one request: token check, then ping, list_tools or a canned tool result."""
         with conn:
             line = conn.makefile("rb").readline()
             if not line:
@@ -90,21 +98,25 @@ class FakeAddon:
             conn.sendall(json.dumps(reply).encode() + b"\n")
 
     def close(self):
+        """Close the listening socket."""
         self.sock.close()
 
 
 def write_connection(folder, port, token=TOKEN):
+    """Write connection.json for the fake add-on into the workspace."""
     with open(os.path.join(folder, "connection.json"), "w", encoding="utf-8") as f:
         json.dump({"host": "127.0.0.1", "port": port, "token": token}, f)
 
 
 async def session_for(folder, brain="claude"):
+    """stdio parameters that start the real MCP server for a brain and workspace."""
     params = StdioServerParameters(command=sys.executable,
                                    args=[RUN, "--brain", brain, "--workspace", folder])
     return params
 
 
 async def run_tests():
+    """Drive the real MCP server through the official client against the fake add-on."""
     addon = FakeAddon()
     folder = tempfile.mkdtemp(prefix="bwm_mcp_test_")
     write_connection(folder, addon.port)

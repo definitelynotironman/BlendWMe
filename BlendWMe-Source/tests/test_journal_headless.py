@@ -1,9 +1,13 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Persistence, schema and reference fault injection; no subscription clients."""
 import json
 import os
 import shutil
 import sys
 import tempfile
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["BLENDWME_LOG_FOLDER"] = tempfile.mkdtemp(prefix="bwm_journal_logs_")
@@ -16,6 +20,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -63,6 +68,7 @@ check("tick-only and client session state survive reopen", j.data["plan"][0]["do
 
 real_write = module.write_sidecar
 def updating_write(blend_path, text=None):
+    """A sidecar writer that records a new decision while the write is in progress."""
     result = real_write(blend_path, text)
     j.record_user_message("UPDATE DURING IO")
     return result
@@ -80,6 +86,7 @@ with open(module.sidecar_path(path), encoding="utf-8") as file:
 j.reset()
 j.record_task("OLD IDENTITY")
 def reset_during_write(blend_path, text=None):
+    """A sidecar writer that replaces the task during the write (same seq, new revision)."""
     result = real_write(blend_path, text)
     j.reset()
     j.record_task("NEW IDENTITY")     # same seq as before, different in-memory revision

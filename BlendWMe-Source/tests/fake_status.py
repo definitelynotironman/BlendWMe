@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """A fake `claude` / `codex` for the setup-check tests: answers only the status commands.
 
 What it answers comes from the BWM_FAKE_STATUS environment variable (JSON):
@@ -7,6 +9,8 @@ What it answers comes from the BWM_FAKE_STATUS environment variable (JSON):
 import json
 import os
 import sys
+
+__author__ = "definitelynotironman"
 
 CLAUDE_HELP = ("-p, --print --output-format --verbose --include-partial-messages --mcp-config --strict-mcp-config "
                "--tools --allowedTools, --allowed-tools --permission-mode --append-system-prompt --session-id "

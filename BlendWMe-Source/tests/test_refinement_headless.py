@@ -1,7 +1,11 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Fault injection and formatting regressions. No subscription clients."""
 import os
 import sys
 import threading
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from blendwme import bridge, executor, helpers, lesson, richtext, scene_info
@@ -12,6 +16,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -22,6 +27,7 @@ effects, errors = [], []
 
 
 def expired():
+    """Queue main-thread work with a tiny timeout and record the TimeoutError."""
     try:
         bridge.call(lambda: effects.append("expired"), timeout=0.01)
     except TimeoutError as error:

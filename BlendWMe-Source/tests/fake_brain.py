@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """A fake brain program for the headless tests: stands in for `claude -p` or `codex exec --json`.
 
 It runs in the BlendWMe workspace folder (like the real programs) and plays
@@ -22,12 +24,15 @@ import socket
 import sys
 import time
 
+__author__ = "definitelynotironman"
+
 FOLDER = os.getcwd()
 ARGS = sys.argv[1:]
 CODEX = bool(ARGS) and ARGS[0] == "exec"
 
 
 def record():
+    """Append this run's argv, stdin, folder and environment facts to fake_runs.json; return stdin."""
     path = os.path.join(FOLDER, "fake_runs.json")
     runs = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
     stdin = sys.stdin.read() if not sys.stdin.isatty() else ""
@@ -39,6 +44,7 @@ def record():
 
 
 def next_turn():
+    """Pop the next scripted turn from fake_script.json (a default reply when none is left)."""
     path = os.path.join(FOLDER, "fake_script.json")
     turns = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
     turn = turns.pop(0) if turns else [{"say": "Nothing scripted."}]
@@ -47,11 +53,13 @@ def next_turn():
 
 
 def emit(obj):
+    """Write one JSON event line to stdout, as the real program would."""
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
 
 
 def tool_call(name, args, brain):
+    """Make one real BlendWMe tool call over the add-on's socket, like the MCP server does."""
     conn = json.load(open(os.path.join(FOLDER, "connection.json"), encoding="utf-8"))
     with socket.create_connection(("127.0.0.1", conn["port"]), timeout=10) as s:
         s.settimeout(300)
@@ -61,6 +69,7 @@ def tool_call(name, args, brain):
 
 
 def main():
+    """Play one scripted turn in Claude Code's or Codex's output format."""
     record()
     session = "fake-thread-1"
     if not CODEX:

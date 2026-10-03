@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Scene protection, recovery and bounded helper work in disposable Blender."""
 import os
 import sys
@@ -5,6 +7,8 @@ import time
 import tempfile
 import hashlib
 from itertools import repeat
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bpy
@@ -14,6 +18,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -21,6 +26,7 @@ def check(name, condition):
 
 
 def refused(name, operation):
+    """True when the operation raises ValueError and leaves objects and modifiers unchanged."""
     before = (len(bpy.data.objects), sum(len(o.modifiers) for o in bpy.data.objects))
     try:
         operation()

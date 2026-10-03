@@ -1,9 +1,13 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Malformed process output and controlled Stop races. No live clients."""
 import json
 import os
 from pathlib import Path
 import sys
 import threading
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from blendwme.engines.base import ProcessEngine, TERMINAL
@@ -15,6 +19,7 @@ python = Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -22,14 +27,18 @@ def check(name, condition):
 
 
 class FixtureEngine(ProcessEngine):
+    """A real ProcessEngine whose program prints one payload and whose parser is injected."""
     def __init__(self, payload, parsed=None, failure=None):
+        """The payload to print, the parsed events to return, or an exception to raise."""
         super().__init__()
         self.payload, self.parsed, self.failure = payload, parsed, failure
 
     def build(self, message, config):
+        """argv for a Python one-liner that prints the payload as JSON."""
         return [str(python), "-u", "-c", "print(" + repr(json.dumps(self.payload)) + ")"], None, {}
 
     def parse(self, obj):
+        """Raise the injected failure, or return the injected events."""
         if self.failure:
             raise self.failure("injected parser failure")
         return self.parsed
@@ -52,7 +61,9 @@ check("duplicate terminal events collapse to one", len([event for event in event
 
 entered, release = threading.Event(), threading.Event()
 class StartingEngine(FixtureEngine):
+    """A FixtureEngine that pauses inside build() so Stop can arrive during startup."""
     def build(self, message, config):
+        """Signal entry and wait for the test before building the command."""
         entered.set()
         assert release.wait(5)
         return super().build(message, config)
@@ -72,8 +83,10 @@ check("Stop requested during startup survives process creation", not engine.is_r
       terminals[0].get("stopped") is True)
 
 class StandIn:
+    """An engine stand-in for the relay's hand-over tests."""
     thread = None
     def interrupt(self):
+        """Nothing to interrupt."""
         pass
 
 
@@ -87,6 +100,7 @@ for fail_after_stop in (False, True):
     entered, release = threading.Event(), threading.Event()
     launched = []
     def quiet(*args):
+        """A handoff request that blocks until released and may fail after Stop."""
         entered.set()
         assert release.wait(5)
         if fail_after_stop:

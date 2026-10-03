@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Headless tests of BlendWMe's stability: register twice, file loads and undo while
 working, a failing part at startup, the session log, crash reports.
 
@@ -13,6 +15,8 @@ import tempfile
 import threading
 import time
 import zipfile
+
+__author__ = "definitelynotironman"
 
 # Blender buffers stdout when it is piped, and os._exit() at the end skips the
 # flush, so print each line straight away.
@@ -35,6 +39,7 @@ passed = []
 
 
 def check(name, cond, detail=""):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     assert cond, f"FAILED {name} {detail}"
     passed.append(name)
     print("ok -", name)
@@ -46,6 +51,7 @@ def ours(handlers):
 
 
 def handler_count():
+    """How many of BlendWMe's handlers are registered on file and undo events."""
     return sum(len(ours(getattr(bpy.app.handlers, n))) for n in ("load_pre", "load_post", "save_post",
                                                                "undo_post", "redo_post"))
 
@@ -87,6 +93,7 @@ real_overlay_register = overlay.register
 
 
 def broken():
+    """A register() that fails, to prove the other parts still start."""
     raise RuntimeError("no GPU here")
 
 
@@ -114,6 +121,7 @@ made = []
 
 
 def make_ball():
+    """Add a sphere on the main thread and note which file was open."""
     bpy.ops.mesh.primitive_uv_sphere_add()
     bpy.context.active_object.name = "LateBall"
     made.append(bpy.data.filepath)
@@ -123,6 +131,7 @@ box = {}
 
 
 def worker():
+    """Queue make_ball from a worker thread, like a brain's tool call."""
     try:
         box["result"] = bridge.call(make_ball, timeout=20)
     except Exception as e:
@@ -240,6 +249,7 @@ check("old session logs are cleaned up", len([n for n in os.listdir(LOGDIR) if n
 # 7. The Save Preferences note
 # ----------------------------------------------------------------------
 class FakePrefs:
+    """Preferences where the Save Preferences note was never dismissed."""
     prefs_note_done = False
 
 

@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Two simultaneous Blender processes and pinned discovery. No live brains."""
 import argparse
 import json
@@ -7,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+__author__ = "definitelynotironman"
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -21,6 +25,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1

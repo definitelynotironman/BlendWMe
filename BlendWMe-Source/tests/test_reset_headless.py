@@ -1,9 +1,13 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Fresh-task cancellation and view-only clearing keep the scene intact."""
 import os
 import sys
 import tempfile
 import threading
 import time
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["BLENDWME_LOG_FOLDER"] = tempfile.mkdtemp(prefix="bwm_reset_logs_")
@@ -19,6 +23,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -41,6 +46,7 @@ check("clear view leaves the current lesson and scene untouched", session.card["
 
 effects, errors = [], []
 def old_job():
+    """Queue a scene mutation from the old task; a reset must refuse it."""
     try:
         bridge.call(lambda: effects.append("obsolete mutation"), timeout=5)
     except RuntimeError as error:

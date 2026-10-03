@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Controlled request races in real Blender; no subscription programs."""
 import json
 import os
@@ -5,6 +7,8 @@ import sys
 import tempfile
 import threading
 import time
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bpy
@@ -14,6 +18,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -21,6 +26,7 @@ def check(name, condition):
 
 
 def pump_until(predicate):
+    """Run queued main-thread work until predicate() is true (or fail after a timeout)."""
     end = time.monotonic() + 5
     while not predicate() and time.monotonic() < end:
         bridge._pump()
@@ -29,13 +35,16 @@ def pump_until(predicate):
 
 
 class Host:
+    """A stand-in tool host that blocks inside dispatch until the test releases it."""
     def __init__(self):
+        """A task id, the entered/release gates and the effects applied to the scene."""
         self.task_id = "task-one"
         self.entered = threading.Event()
         self.release = threading.Event()
         self.effects = []
 
     def call(self, name, args, brain):
+        """Signal entry, wait for release, then apply the value on the main thread."""
         self.entered.set()
         assert self.release.wait(5), "fixture failed to release dispatch"
         bridge.call(lambda: self.effects.append(args["value"]))
@@ -50,14 +59,17 @@ server.start()
 
 
 def request(identity, value=1):
+    """A valid run_python request for the current task and scene."""
     return {"op": "call", "id": identity, "client": "fixture", "token": server.token,
             "task": host.task_id, "scene": bpy.context.scene["blendwme_scene_id"],
             "tool": "run_python", "args": {"value": value}, "brain": "claude", "expires": time.time() + 10}
 
 
 def launch(payload):
+    """Handle a request on a worker thread; returns (thread, result holder)."""
     result = {}
     def run():
+        """Handle the request and keep the reply."""
         result["reply"] = server._handle(json.dumps(payload).encode())
     worker = threading.Thread(target=run)
     worker.start()
@@ -111,6 +123,7 @@ try:
     # worker has had a chance to mark the pending job cancelled.
     effects, errors = [], []
     def expired_job():
+        """Submit work whose deadline has already passed (it must be refused)."""
         try:
             with bridge.scope(deadline=time.time() - 1):
                 bridge.call(lambda: effects.append("late"))

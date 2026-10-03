@@ -1,8 +1,12 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """A disposable real Blender endpoint for test_two_instances.py."""
 import os
 import sys
 import time
 from pathlib import Path
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 folder = Path(sys.argv[sys.argv.index("--") + 1])

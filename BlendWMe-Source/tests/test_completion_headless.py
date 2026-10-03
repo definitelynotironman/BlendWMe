@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Completion evidence, image integrity and argument-meaning regressions.
 
 Author: definitelynotironman
@@ -8,6 +10,8 @@ Runs in background Blender with no subscription client:
 import os
 import sys
 import tempfile
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bpy

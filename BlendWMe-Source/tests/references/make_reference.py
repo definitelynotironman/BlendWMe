@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Render tests/references/cottage.png, the reference image for the Stage 0 test 4.
 
     blender -b --factory-startup --python tests/references/make_reference.py
@@ -11,6 +13,8 @@ curves to the right. The roof stays red so it agrees with the text brief.
 
 import os
 import sys
+
+__author__ = "definitelynotironman"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))

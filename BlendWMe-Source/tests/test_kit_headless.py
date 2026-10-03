@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Headless tests of BlendWMe's hands: the executor, repairs, the pre-check, look, the bwm
 modelling kit, the worked example cards and inspect_api.
 
@@ -13,6 +15,8 @@ import json
 import os
 import sys
 import tempfile
+
+__author__ = "definitelynotironman"
 
 # Blender buffers stdout when it is piped, and os._exit() at the end skips the
 # flush, so print each line straight away.
@@ -32,12 +36,14 @@ LOGDIR = os.path.join(tempfile.gettempdir(), "bwm_logs_test")
 
 
 def check(name, cond, detail=""):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     assert cond, f"FAILED {name} {detail}"
     passed.append(name)
     print("ok -", name)
 
 
 def fresh_scene():
+    """An empty factory scene."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
@@ -159,6 +165,7 @@ REPAIRS = [
 
 
 def C_scene():
+    """The current scene (bpy.context.scene)."""
     return bpy.context.scene
 
 

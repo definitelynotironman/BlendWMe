@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Headless tests of the BlendWMe panel's logic: themes, text wrapping, typing, history,
 shortcuts, slash commands, closing cards and the Done card. Drawing needs a window, so
 it is checked with screenshots instead; this file tests everything behind the pixels.
@@ -11,6 +13,8 @@ import os
 import sys
 import tempfile
 import time
+
+__author__ = "definitelynotironman"
 
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -33,6 +37,7 @@ passed = []
 
 
 def check(name, cond, detail=""):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     assert cond, f"FAILED {name} {detail}"
     passed.append(name)
     print("ok -", name)
@@ -42,16 +47,19 @@ class Event:
     """A stand-in for bpy.types.Event."""
 
     def __init__(self, type, value="PRESS", unicode="", shift=False, ctrl=False, alt=False):
+        """A key event with its type, value, character and modifiers."""
         self.type, self.value, self.unicode = type, value, unicode
         self.shift, self.ctrl, self.alt = shift, ctrl, alt
 
 
 def typed(text):
+    """Type text into the panel input one key event at a time."""
     for ch in text:
         panel_ops.type_key(bpy.context, Event(ch.upper() if ch.isalpha() else "SPACE", unicode=ch))
 
 
 def fresh():
+    """An empty conversation and draft on the main screen, with the input focused."""
     session.reset_conversation()
     relay.running = None
     panel.state.text, panel.state.cursor = "", 0
@@ -388,6 +396,7 @@ from mathutils import Vector  # noqa: E402
 
 
 def inside_frame(cam, objects):
+    """True when every bounding-box corner of the objects is inside the camera's view."""
     corners = [o.matrix_world @ Vector(c) for o in objects for c in o.bound_box]
     co = [world_to_camera_view(bpy.context.scene, cam, p) for p in corners]
     return all(-0.001 <= c.x <= 1.001 and -0.001 <= c.y <= 1.001 and c.z > 0 for c in co)
@@ -420,31 +429,42 @@ check("the camera helpers are in the bwm kit list", {"camera_to_view", "frame_ca
 # distance from it, both-axis drag with snapping, the grip, the gizmo, the views
 # ----------------------------------------------------------------------
 class Reg:
+    """A stand-in region with a type, position and size."""
     def __init__(self, type, x, y, width, height):
+        """Store the region's type, position and size."""
         self.type, self.x, self.y, self.width, self.height = type, x, y, width, height
 
 
 class Space:
+    """A stand-in 3D Viewport space with its gizmo switches."""
     def __init__(self, gizmo=False):
+        """Show or hide the navigation gizmo."""
         self.show_gizmo = self.show_gizmo_navigate = gizmo
 
 
 class Spaces:
+    """A stand-in for area.spaces with an active space."""
     def __init__(self, gizmo=False):
+        """One active space."""
         self.active = Space(gizmo)
 
 
 class Area:
+    """A stand-in 3D Viewport area for the placement tests."""
     def __init__(self, regions, gizmo=False):
+        """The regions and the space."""
         self.regions = regions
         self.spaces = Spaces(gizmo)
 
     def as_pointer(self):
+        """A fixed fake pointer."""
         return 4242
 
 
 class MouseEvent(Event):
+    """A mouse event with a position."""
     def __init__(self, type, value="PRESS", x=0, y=0, ctrl=False, shift=False):
+        """A mouse event at (x, y) with modifiers."""
         super().__init__(type, value, ctrl=ctrl, shift=shift)
         self.mouse_x, self.mouse_y = x, y
 
@@ -689,6 +709,7 @@ epoch = getattr(panel.state, "lifecycle_epoch", 0)
 
 
 def arm_settings():
+    """Arm a Settings press on the current window, epoch and button rectangle."""
     panel.state.settings_click = (rect, window_id, 123, epoch)
 
 

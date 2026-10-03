@@ -1,6 +1,10 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Typed lesson facts and distinct learner outcomes, without a live brain."""
 import os
 import sys
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bpy
@@ -13,6 +17,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -74,7 +79,9 @@ cube.select_set(False)
 
 
 def answer(choice):
+    """A wait function that answers a lesson step with this choice."""
     def wait(timeout=None):
+        """Set the user's choice and report the wait as woken."""
         session.teach_choice = choice
         return True
     return wait
@@ -86,6 +93,7 @@ check("Hint keeps the action uncompleted", result["result"] == "hint_requested" 
 choices = iter(("done", "skip"))
 seen = []
 def wrong_then_skip(timeout=None):
+    """Answer 'done' (with the work not done), then 'skip'."""
     session.teach_choice = next(choices)
     seen.append(session.teach_choice)
     return True

@@ -1,6 +1,10 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Representative user edits that preserve names, counts and outer bounds."""
 import os
 import sys
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bpy
@@ -10,6 +14,7 @@ passed = 0
 
 
 def check(name, condition):
+    """Assert one named check, count it and print an ok line (a failure stops the suite)."""
     global passed
     assert condition, name
     passed += 1
@@ -17,6 +22,7 @@ def check(name, condition):
 
 
 def changed(before, obj):
+    """True when the object is reported as modified since the `before` snapshot."""
     after = scene_info.snapshot()
     return obj.name in scene_info.diff(before, after)[1]["modified"]
 
