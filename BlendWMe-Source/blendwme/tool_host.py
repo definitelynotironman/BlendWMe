@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """BlendWMe's tools for the outside brains (Claude Code and Codex).
 
 The brains run as separate programs. They call BlendWMe's tools through the
@@ -6,16 +8,18 @@ MCP server (blendwme_mcp), which forwards each call over the local socket
 
     brain -> MCP server -> socket -> ToolHost.call() -> Blender (main thread)
 
-The tools behave like the 1.0.5 agent's tools, so Auto / Work together
-(Watch) / Teach, pause and take control, the plan checklist, the overlay and
-the red pointers work the same whichever brain is active:
+The tools behave the same whichever brain is active, so Auto / Teach, pause
+and take control, the plan checklist, the overlay and the red pointers work
+identically for Claude and Codex:
 
-- run_python keeps the undo step, repair, pre-check and rollback (executor.py),
-  the Teach gate, the Watch "Next" wait, the stuck guard and the art director
+- run_python keeps the undo step, repair, pre-check, checkpoint and rollback
+  (executor.py), the Teach gate, the stuck guard and the art director
   reviews. Every step is signed with the brain that made it.
-- look returns the picture itself: Claude and Codex can see.
-- teach_step, ask_user and the Watch wait block until the user acts. A wait is
-  capped (WAIT_CAP) so it stays inside the brains' tool-call timeouts.
+- look returns the picture itself (after checking it decodes): the brains can see.
+- teach_step and ask_user block until the user acts. A wait is capped
+  (WAIT_CAP) so it stays inside the brains' tool-call timeouts.
+- finish requires evidence: open plan parts, a missing or undecodable final
+  look and a NEEDS WORK review all refuse completion.
 - Messages typed while a brain works, and edits the user made since the last
   call, are attached to the next tool result.
 """
@@ -34,6 +38,8 @@ import bpy
 from . import bridge, executor, helpers, knowledge, lesson, look, prompts, scene_info, tools
 from .state import ASKING, DONE, PAUSED, THINKING, WAIT_USER, WORKING, normalize_mode, session
 
+__author__ = "definitelynotironman"
+
 WAIT_CAP = 45 * 60        # seconds one tool call may wait for the user (tool timeouts are 60 min)
 REVIEW_FIRST = 3          # successful build steps before the first art director review
 REVIEW_FIRST_WITH_REF = 1
@@ -47,10 +53,12 @@ BRAIN_LABELS = {"claude": "Claude", "codex": "Codex", "api": "API", "user": "You
 
 
 def label(brain):
+    """A readable name for a brain ('codex' -> 'Codex')."""
     return BRAIN_LABELS.get(brain, str(brain).title())
 
 
 class Stopped(Exception):
+    """Raised inside a tool when the user pressed Stop or the task became obsolete."""
     pass
 
 
@@ -62,56 +70,81 @@ class NullJournal:
     """Stands in until a project journal is attached (journal.py)."""
 
     def __getattr__(self, name):
+        """Every journal method is a no-op until a real journal is attached."""
         return lambda *args, **kwargs: None
 
 
-def _image(path):
-    """Encode only a bounded image Blender can actually decode."""
-    try:
-        if not path or not os.path.isfile(path) or os.path.getsize(path) > MAX_IMAGE_BYTES:
-            return None
-        with open(path, "rb") as f:
-            data = f.read(MAX_IMAGE_BYTES + 1)
-        if len(data) > MAX_IMAGE_BYTES:
-            return None
-        if data.startswith(b"\x89PNG\r\n\x1a\n"):
-            mime = "image/png"
-            if len(data) < 33 or data[12:16] != b"IHDR":
+class ImagePayload:
+    """Turns an image file into a bounded payload a brain can see, or refuses it.
+
+    The type is identified by content (PNG / JPEG / WebP signatures), the size
+    is bounded, the image must decode in Blender on the main thread, and the
+    file must not change while it is being decoded. A temporary Image
+    datablock made for the check is always removed again.
+    """
+
+    @staticmethod
+    def encode(path):
+        """{'data': base64, 'mime': ...} for a decodable, bounded image, else None."""
+        try:
+            if not path or not os.path.isfile(path) or os.path.getsize(path) > MAX_IMAGE_BYTES:
                 return None
-            width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            with open(path, "rb") as f:
+                data = f.read(MAX_IMAGE_BYTES + 1)
+            if len(data) > MAX_IMAGE_BYTES:
+                return None
+            if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                mime = "image/png"
+                if len(data) < 33 or data[12:16] != b"IHDR":
+                    return None
+                width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+                if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
+                    return None
+            elif data.startswith(b"\xff\xd8\xff"):
+                mime = "image/jpeg"
+            elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                mime = "image/webp"
+            else:
+                return None
+            # Through the module name, so tests can substitute the decoder.
+            if not bridge.call(_decodable_image, path):
+                return None
+            with open(path, "rb") as f:
+                if f.read(MAX_IMAGE_BYTES + 1) != data:
+                    return None     # a reference changed while being decoded
+            return {"data": base64.b64encode(data).decode("ascii"), "mime": mime}
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+    @staticmethod
+    def decodable(path):
+        """True when Blender decodes the file into a bounded image with pixels. Main thread."""
+        image = None
+        try:
+            image = bpy.data.images.load(path, check_existing=False)
+            width, height = image.size
             if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
-                return None
-        elif data.startswith(b"\xff\xd8\xff"):
-            mime = "image/jpeg"
-        elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-            mime = "image/webp"
-        else:
-            return None
-        if not bridge.call(_decodable_image, path):
-            return None
-        with open(path, "rb") as f:
-            if f.read(MAX_IMAGE_BYTES + 1) != data:
-                return None     # a reference changed while being decoded
-        return {"data": base64.b64encode(data).decode("ascii"), "mime": mime}
-    except (OSError, RuntimeError, ValueError):
-        return None
+                return False
+            return bool(image.has_data and len(image.pixels) and image.pixels[0] >= 0)
+        finally:
+            if image is not None:
+                bpy.data.images.remove(image)
 
 
-def _decodable_image(path):
-    image = None
-    try:
-        image = bpy.data.images.load(path, check_existing=False)
-        width, height = image.size
-        if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
-            return False
-        return bool(image.has_data and len(image.pixels) and image.pixels[0] >= 0)
-    finally:
-        if image is not None:
-            bpy.data.images.remove(image)
+_image = ImagePayload.encode
+_decodable_image = ImagePayload.decodable
 
 
 class ToolHost:
+    """Runs BlendWMe's tools for whichever brain calls them.
+
+    `call` is the single entry point. Under one lock it checks Stop and the task
+    epoch, waits while paused, coerces arguments, dispatches to `_tool_<name>`
+    and attaches the user's messages and scene edits to the result. Each tool
+    returns (result dict, images).
+    """
     def __init__(self):
+        """No journal yet (NullJournal), Claude active, and a fresh task."""
         self.journal = NullJournal()
         self.lock = threading.Lock()     # one tool at a time, whichever brain calls
         self.active_brain = "claude"
@@ -220,10 +253,12 @@ class ToolHost:
     # Waiting for the user (always capped, always stoppable)
     # ------------------------------------------------------------------
     def _check_stop(self):
+        """Raise Stopped when the user pressed Stop or this request's task epoch is obsolete."""
         if session.stop_flag.is_set() or not bridge.current_valid():
             raise Stopped()
 
     def _wait_if_paused(self, card=None):
+        """While the user has control, show the pause card and wait (stoppable, capped by WAIT_CAP)."""
         if not session.pause_flag.is_set():
             return
         previous_card = session.card
@@ -242,7 +277,7 @@ class ToolHost:
         session.set_status(THINKING)
 
     def _wait_signal(self, timeout=None):
-        """Wait for Next / Done / an answer. Returns False when `timeout` passed first."""
+        """Wait for Done / Hint / an answer. Returns False when `timeout` passed first."""
         end = time.time() + min(timeout or WAIT_CAP, WAIT_CAP)
         while True:
             self._check_stop()
@@ -259,6 +294,7 @@ class ToolHost:
                                    "for their next message.")
 
     def _read_inbox(self):
+        """Messages the user typed while the brain worked (also recorded in the journal)."""
         texts = []
         while not session.inbox.empty():
             texts.append(session.inbox.get_nowait())
@@ -270,20 +306,25 @@ class ToolHost:
     # Tools
     # ------------------------------------------------------------------
     def _tool_get_scene_info(self, args, brain):
+        """get_scene_info: the scene overview."""
         return bridge.call(scene_info.get_scene_info), []
 
     def _tool_get_object_info(self, args, brain):
+        """get_object_info: details of one object."""
         return bridge.call(scene_info.get_object_info, str(args.get("name", ""))), []
 
     def _tool_inspect_api(self, args, brain):
+        """inspect_api: the real Blender API for a path."""
         return bridge.call(knowledge.inspect_api, str(args.get("path", ""))), []
 
     def _tool_load_skill(self, args, brain):
+        """load_skill: one technique card."""
         name = str(args.get("name", ""))
         session.add("info", f"Reading skill card: {name}")
         return {"skill": name, "card": knowledge.load_skill(name)}, []
 
     def _tool_plan(self, args, brain):
+        """plan: set the checklist, or mark parts done (after a look) or skipped (with a reason)."""
         marks = args.get("done") or args.get("skip")
         parts = _plan_parts(args)
         if not parts and not marks:
@@ -335,12 +376,19 @@ class ToolHost:
         return out
 
     def _plan_progress(self):
+        """A short 'N of M parts built' line, or '' without a plan."""
         if not session.plan:
             return {}
         done = sum(1 for p in session.plan if p["done"])
         return {"progress": f"PART {min(done + 1, len(session.plan))} OF {len(session.plan)}"}
 
     def _tool_run_python(self, args, brain):
+        """run_python: one step on the live scene.
+
+        Applies the Teach gate and probe refusal, runs the executor, tags new objects
+        with the brain, records the step and any struggle, ticks the plan part only
+        when the scene really changed, and applies the stuck guard.
+        """
         mode = session.mode
         if mode == "TEACH" and not self.show_me_allowed:
             return {"error": "In Teach mode the user does the work. Use teach_step. "
@@ -453,6 +501,7 @@ class ToolHost:
                               "or scene change they made follows. Try a clearly different approach.")
 
     def _capture_images(self, mode="angles", targets=None, views=None, shading=None, compare_reference=False):
+        """(info, images) of a capture, plus the reference images when asked."""
         info = bridge.call(look.capture, mode, targets, views, shading)
         if info.get("error"):
             return info, []
@@ -466,6 +515,7 @@ class ToolHost:
         return info, images
 
     def _tool_look(self, args, brain):
+        """look: pictures of the scene. An undecodable picture is an error and never counts as a look."""
         mode = args.get("mode") or "angles"
         session.add("look", f"Looking at the scene ({mode})", brain=brain)
         info, images = self._capture_images(mode, args.get("targets"), args.get("views"), args.get("shading"),
@@ -490,6 +540,7 @@ class ToolHost:
 
     # -- the art director (harness-driven reviews) ----------------------
     def _maybe_review(self, brain):
+        """Ask for an art director review at the planned build steps (multi-angle look and rubric)."""
         first = REVIEW_FIRST_WITH_REF if self.references else REVIEW_FIRST
         if self.reviews >= REVIEW_MAX:
             return None
@@ -540,6 +591,7 @@ class ToolHost:
 
     # -- teaching and talking -------------------------------------------
     def _tool_point_at(self, args, brain):
+        """point_at: red rings around objects or a UI region."""
         pointer = {k: args[k] for k in ("object", "location", "editor", "region", "tab", "label") if args.get(k)}
         if pointer.get("tab") and not pointer.get("editor"):
             pointer["editor"] = "PROPERTIES"
@@ -551,6 +603,11 @@ class ToolHost:
                 "note": "Region highlights do not identify an exact button or cover popups."}, []
 
     def _tool_teach_step(self, args, brain):
+        """teach_step: show an instruction, then wait for the user's Done, Hint, Show me or Skip.
+
+        A typed check is evaluated against the same facts as Check my work; a state
+        that already held before the instruction is reported as already satisfied.
+        """
         try:
             check = bridge.call(lesson.prepare, args.get("check")) if args.get("check") else None
         except ValueError as error:
@@ -632,6 +689,7 @@ class ToolHost:
         return result, []
 
     def _tool_ask_user(self, args, brain):
+        """ask_user: show a question and wait for the answer."""
         question = str(args.get("question") or "")
         session.add("ai", question, brain=brain)
         session.set_card({"kind": "ask", "title": "Question", "text": question})
@@ -652,6 +710,7 @@ class ToolHost:
         return {"answer": "\n".join(answers)}, []
 
     def _tool_finish(self, args, brain):
+        """finish: refuse while evidence is missing (open parts, failed look, NEEDS WORK), else wrap up."""
         summary = str(args.get("summary") or "Done.")
         if self.inspection_snapshot is not None and bridge.call(scene_info.snapshot) != self.inspection_snapshot:
             self.final_reviewed = False
@@ -700,6 +759,7 @@ class ToolHost:
 
     # -- the baton --------------------------------------------------------
     def _tool_handoff_note(self, args, brain):
+        """handoff_note: a note for the next brain, stored in the journal."""
         steps = args.get("next_steps") or []
         struggles = args.get("struggles") or []
         steps = [steps] if isinstance(steps, str) else [str(s) for s in steps]
@@ -709,6 +769,7 @@ class ToolHost:
         return {"ok": True, "saved": "The note is in the project journal."}, []
 
     def _tool_read_journal(self, args, brain):
+        """read_journal: one section of the project journal."""
         section = str(args.get("section") or "brief")
         data = self.journal.section(section, brain, bridge.call(scene_info.makers))
         return (data if data is not None else {"journal": "No journal yet: this is a fresh project."}), []
@@ -741,6 +802,7 @@ def _numpad_note(instruction, why):
 
 
 def _claims_render(summary):
+    """True when a finish summary claims a render was made."""
     return bool(_RENDER_CLAIM.search(summary or ""))
 
 

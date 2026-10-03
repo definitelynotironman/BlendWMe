@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The project journal: "the baton".
 
 BlendWMe, not the AI, holds the memory of a project. The journal records,
@@ -21,12 +23,14 @@ Saved with each .blend project: a sidecar folder next to the file
 .blend, so it travels with the file. When both exist, the newer one wins.
 """
 
+import hashlib
 import json
 import os
 import threading
 import time
 import uuid
-import hashlib
+
+__author__ = "definitelynotironman"
 
 TEXT_NAME = "BlendWMe Journal"
 SIDECAR_SUFFIX = "_blendwme"
@@ -38,17 +42,26 @@ LABELS = {"claude": "Claude", "codex": "Codex", "user": "the user", "ai": "Blend
 
 
 def _label(who):
+    """A readable name for a brain or author ('claude' -> 'Claude')."""
     return LABELS.get(who, str(who))
 
 
 def _empty():
+    """A fresh journal: no brief, no events, Claude active."""
     return {"version": 1, "seq": 0, "brief": "", "decisions": [], "plan": [], "events": [], "struggles": [],
             "review": None, "handoffs": [], "sessions": {}, "last_seen": {}, "active": "claude", "tasks": [],
             "references": [], "task_start": 0}
 
 
 class Journal:
+    """The project's memory, held by BlendWMe rather than by any brain.
+
+    Every change bumps `seq` (shown to brains as event numbers) and `revision`
+    (an in-memory identity used to decide when a save is still current). All
+    methods are safe to call from any thread.
+    """
     def __init__(self):
+        """An empty journal that is not yet dirty."""
         self.lock = threading.RLock()
         self.data = _empty()
         self.dirty = False
@@ -58,6 +71,7 @@ class Journal:
     # Recording (any thread)
     # ------------------------------------------------------------------
     def _add(self, kind, by, **fields):
+        """Append one event (numbered, timestamped, signed by `by`) and mark the journal dirty."""
         with self.lock:
             self.data["seq"] += 1
             self.revision += 1
@@ -68,6 +82,11 @@ class Journal:
             return event
 
     def record_task(self, brief):
+        """Start a new task: archive the old brief and clear the active plan, sessions and references.
+
+        Archived events stay; open struggles are closed because they belonged to the
+        previous brief.
+        """
         with self.lock:
             if self.data["brief"]:
                 self.data["tasks"].append({"brief": self.data["brief"][:300], "ended": round(time.time())})
@@ -86,11 +105,13 @@ class Journal:
             self._add("task", "user", text=brief)
 
     def record_user_message(self, text, decision=False):
+        """Record a message from the user as a decision the brains must respect."""
         with self.lock:
             self.data["decisions"].append(text)
             self._add("user_message", "user", text=text)
 
     def record_references(self, paths, blend_path=""):
+        """Record reference images with portable relative paths, hashes and missing flags."""
         references = []
         for path in paths:
             entry = {"path": path, "name": os.path.basename(path), "missing": not os.path.isfile(path)}
@@ -130,9 +151,11 @@ class Journal:
         return entries
 
     def record_user_edits(self, lines):
+        """Record the user's own scene changes (at most 20 lines)."""
         self._add("user_edit", "user", lines=[str(x)[:200] for x in lines[:20]])
 
     def record_plan(self, brain, parts):
+        """Set the plan; parts that keep their name keep their state and builder."""
         with self.lock:
             old = {p["name"]: p for p in self.data["plan"]}
             self.data["plan"] = [{"name": p, "done": old.get(p, {}).get("done", False),
@@ -165,6 +188,7 @@ class Journal:
                   part=part)
 
     def record_struggle(self, brain, key, text):
+        """Record a failed attempt; repeats of the same key count up instead of duplicating."""
         with self.lock:
             for s in self.data["struggles"]:
                 if s["open"] and s["key"] == key:
@@ -178,6 +202,7 @@ class Journal:
             return s
 
     def solve_struggle(self, brain, key):
+        """Close the open struggle with this key and note which brain solved it."""
         with self.lock:
             for s in self.data["struggles"]:
                 if s["open"] and s["key"] == key:
@@ -186,12 +211,14 @@ class Journal:
                     self._add("solved", brain, text=s["text"][:200])
 
     def record_review(self, brain, when, objects=()):
+        """Start an art director review (its verdict follows from the brain's next words)."""
         with self.lock:
             self.data["review"] = {"by": brain, "when": when, "n": self.data["seq"] + 1,
                                    "objects": list(objects)[:30], "verdict": ""}
             self._add("review", brain, text=when)
 
     def set_review_verdict(self, brain, text):
+        """Store the verdict of the latest review."""
         with self.lock:
             if self.data["review"] is not None:
                 self.data["review"]["verdict"] = text[:800]
@@ -203,6 +230,7 @@ class Journal:
             self._add("said", brain, text=text.strip())
 
     def record_handoff(self, brain, summary, next_steps=(), struggles=()):
+        """Record a brain's handoff note; its struggles become open struggles."""
         with self.lock:
             note = {"by": brain, "t": round(time.time()), "summary": summary,
                     "next_steps": list(next_steps), "struggles": list(struggles)}
@@ -213,17 +241,21 @@ class Journal:
             self._add("handoff_note", brain, text=summary, next_steps=list(next_steps), struggles=list(struggles))
 
     def record_finish(self, brain, summary):
+        """Record that a brain finished the task, with its summary."""
         self._add("finish", brain, text=summary)
 
     def record_switch(self, source, target, reason):
+        """Record a switch between brains and make the target active."""
         with self.lock:
             self.data["active"] = target
             self._add("switch", source, to=target, text=reason)
 
     def record_error(self, brain, text):
+        """Record an error a brain hit."""
         self._add("error", brain, text=text[:300])
 
     def set_session(self, brain, session_id):
+        """Remember a brain's own session id so its conversation can resume."""
         with self.lock:
             if session_id and self.data["sessions"].get(brain) != session_id:
                 self.data["sessions"][brain] = session_id
@@ -236,6 +268,7 @@ class Journal:
             self._add("seen", brain)
 
     def has_history(self):
+        """True when anything has been recorded."""
         return bool(self.data["events"])
 
     # ------------------------------------------------------------------
@@ -249,6 +282,7 @@ class Journal:
 
     @staticmethod
     def describe(event):
+        """One readable line for an event (used by the brief and read_journal)."""
         who = _label(event["by"])
         kind = event["kind"]
         if kind == "step":
@@ -355,6 +389,7 @@ class Journal:
     # read_journal
     # ------------------------------------------------------------------
     def section(self, name, brain, makers=None):
+        """One part of the journal for the read_journal tool (brief, steps, struggles ...)."""
         with self.lock:
             d = self.data
             if not d["events"]:
@@ -378,10 +413,12 @@ class Journal:
     # Saving and loading
     # ------------------------------------------------------------------
     def to_text(self):
+        """The whole journal as JSON text (for the Text block and the sidecar)."""
         with self.lock:
             return json.dumps(self.data, ensure_ascii=False, indent=1, default=str)
 
     def load_text(self, text):
+        """Replace the journal with JSON text. False, and nothing changed, when it is invalid."""
         try:
             data = json.loads(text)
         except (ValueError, TypeError):
@@ -401,6 +438,7 @@ class Journal:
         return True
 
     def reset(self):
+        """Forget everything (a fresh project)."""
         with self.lock:
             self.data = _empty()
             self.dirty = True
@@ -455,6 +493,7 @@ def _valid_schema(data):
 def _fit(head, sections, rules, limit):
     """Join the sections, shortening the long lists (oldest lines first) until the brief fits."""
     def render():
+        """The brief text from the current (possibly shortened) sections."""
         out = list(head)
         for title, lines, _ in sections:
             out.append("")
@@ -486,83 +525,120 @@ def _fit(head, sections, rules, limit):
 journal = Journal()
 
 
-def sidecar_path(blend_path):
-    folder = os.path.splitext(blend_path)[0] + SIDECAR_SUFFIX
-    return os.path.join(folder, FILE_NAME)
+class JournalStore:
+    """Saves and loads the open file's journal: a Text block in the .blend plus a sidecar file.
 
+    The Text block travels inside the .blend; the sidecar
+    (<name>_blendwme/journal.json) survives even when Blender closes before a
+    save. On load the saved .blend is authoritative, so a newer sidecar that
+    describes work the user deliberately discarded never resurrects it.
+    Writes are atomic (unique temporary file, then os.replace), and the dirty
+    flag is cleared only when the journal's in-memory revision did not change
+    while it was being written.
+    """
 
-def save():
-    """Write the Text block (and the sidecar when the file is saved). Main thread."""
-    import bpy
-    with journal.lock:
-        if not journal.dirty:
-            return
-        revision = journal.revision
-        text = journal.to_text()
-    block = bpy.data.texts.get(TEXT_NAME) or bpy.data.texts.new(TEXT_NAME)
-    block.from_string(text)
-    if bpy.data.filepath:
-        if not write_sidecar(bpy.data.filepath, text):
-            return
-    with journal.lock:
-        if journal.revision == revision:
-            journal.dirty = False
+    def __init__(self, journal_):
+        """Store the journal of the open file."""
+        self.journal = journal_
 
+    @staticmethod
+    def sidecar_path(blend_path):
+        """<folder>/<name>_blendwme/journal.json for a .blend path."""
+        folder = os.path.splitext(blend_path)[0] + SIDECAR_SUFFIX
+        return os.path.join(folder, FILE_NAME)
 
-def write_sidecar(blend_path, text=None):
-    path = sidecar_path(blend_path)
-    temporary = path + "." + uuid.uuid4().hex + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(temporary, "w", encoding="utf-8") as f:
-            f.write(text or journal.to_text())
-        os.replace(temporary, path)
-        return True
-    except OSError as e:
-        print("BlendWMe: could not write the journal sidecar:", e)
-        return False
-    finally:
+    def save(self):
+        """Write the Text block (and the sidecar when the file is saved). Main thread."""
+        import bpy
+        with self.journal.lock:
+            if not self.journal.dirty:
+                return
+            revision = self.journal.revision
+            text = self.journal.to_text()
+        block = bpy.data.texts.get(TEXT_NAME) or bpy.data.texts.new(TEXT_NAME)
+        block.from_string(text)
+        if bpy.data.filepath:
+            # Through the module name, so tests can substitute the writer.
+            if not write_sidecar(bpy.data.filepath, text):
+                return
+        with self.journal.lock:
+            if self.journal.revision == revision:
+                self.journal.dirty = False
+
+    def write_sidecar(self, blend_path, text=None):
+        """Atomically write the sidecar journal next to blend_path. False when it could not be written."""
+        path = self.sidecar_path(blend_path)
+        temporary = path + "." + uuid.uuid4().hex + ".tmp"
         try:
-            os.remove(temporary)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
-
-
-def load_for_file():
-    """Load the journal of the open .blend: the Text block or the sidecar, whichever is newer."""
-    import bpy
-    candidates = []
-    block = bpy.data.texts.get(TEXT_NAME)
-    if block is not None:
-        # The saved blend is authoritative. A newer sidecar can describe work
-        # the user deliberately discarded and must not resurrect that task.
-        if journal.load_text(block.as_string()):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(temporary, "w", encoding="utf-8") as f:
+                f.write(text or self.journal.to_text())
+            os.replace(temporary, path)
             return True
-        journal.reset()
-        journal.dirty = False
-        print("BlendWMe: the saved journal is invalid; previous project context was cleared.")
-        return False
-    if bpy.data.filepath and os.path.isfile(sidecar_path(bpy.data.filepath)):
+        except OSError as e:
+            print("BlendWMe: could not write the journal sidecar:", e)
+            return False
+        finally:
+            try:
+                os.remove(temporary)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+    def load_for_file(self):
+        """Load the journal of the open .blend: the Text block, else the sidecar."""
+        import bpy
+        block = bpy.data.texts.get(TEXT_NAME)
+        if block is not None:
+            # The saved blend is authoritative. A newer sidecar can describe work
+            # the user deliberately discarded and must not resurrect that task.
+            if self.journal.load_text(block.as_string()):
+                return True
+            self.journal.reset()
+            self.journal.dirty = False
+            print("BlendWMe: the saved journal is invalid; previous project context was cleared.")
+            return False
+        candidates = []
+        if bpy.data.filepath and os.path.isfile(self.sidecar_path(bpy.data.filepath)):
+            try:
+                with open(self.sidecar_path(bpy.data.filepath), encoding="utf-8") as f:
+                    candidates.append(f.read())
+            except OSError:
+                pass
+        best, best_seq = None, -1
+        for text in candidates:
+            probe = Journal()
+            if probe.load_text(text) and probe.data["seq"] > best_seq:
+                best, best_seq = text, probe.data["seq"]
+        if best is None:
+            self.journal.reset()
+            self.journal.dirty = False
+            return False
+        return self.journal.load_text(best)
+
+    def on_file_loaded(self):
+        """Called by lifecycle.py after a file is loaded: pick up that file's journal."""
         try:
-            with open(sidecar_path(bpy.data.filepath), encoding="utf-8") as f:
-                candidates.append(f.read())
-        except OSError:
-            pass
-    best, best_seq = None, -1
-    for text in candidates:
-        probe = Journal()
-        if probe.load_text(text) and probe.data["seq"] > best_seq:
-            best, best_seq = text, probe.data["seq"]
-    if best is None:
-        journal.reset()
-        journal.dirty = False
-        return False
-    return journal.load_text(best)
+            self.load_for_file()
+            from .relay import relay
+            relay.project_loaded()
+        except Exception as e:
+            print("BlendWMe: journal load failed:", e)
 
 
+store = JournalStore(journal)
+sidecar_path = JournalStore.sidecar_path
+save = store.save
+write_sidecar = store.write_sidecar
+load_for_file = store.load_for_file
+on_file_loaded = store.on_file_loaded
+
+
+# Blender keeps handlers and timers by identity, so these stay plain module
+# functions that Blender can register once and remove again.
 def _flush_timer():
+    """Every 2 seconds: save the journal if it changed. Never raises into Blender."""
     try:
         save()
     except Exception as e:      # never break Blender over the journal
@@ -571,10 +647,12 @@ def _flush_timer():
 
 
 def _on_save_pre(*_args):
+    """Before the .blend is written: put the latest journal into its Text block."""
     save()
 
 
 def _on_save_post(*_args):
+    """After the .blend is written: refresh the sidecar next to it."""
     import bpy
     try:
         save()
@@ -584,17 +662,8 @@ def _on_save_post(*_args):
         print("BlendWMe: journal save failed:", e)
 
 
-def on_file_loaded():
-    """Called by lifecycle.py after a file is loaded: pick up that file's journal."""
-    try:
-        load_for_file()
-        from .relay import relay
-        relay.project_loaded()
-    except Exception as e:
-        print("BlendWMe: journal load failed:", e)
-
-
 def _handlers():
+    """((handler list, function), ...) for save_pre and save_post, marked persistent."""
     import bpy
     from bpy.app.handlers import persistent
     # persistent: the handler stays registered when a file is loaded.
@@ -604,6 +673,7 @@ def _handlers():
 
 
 def register():
+    """Add the save handlers and the flush timer (once)."""
     import bpy
     for handlers, fn in _handlers():
         if fn not in handlers:
@@ -613,6 +683,7 @@ def register():
 
 
 def unregister():
+    """Remove the save handlers and the flush timer."""
     import bpy
     for handlers, fn in _handlers():
         while fn in handlers:

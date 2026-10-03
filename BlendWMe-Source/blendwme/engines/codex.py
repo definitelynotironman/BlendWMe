@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Codex CLI as BlendWMe's second brain (signed in with the user's ChatGPT account).
 
 One turn = one run of the official `codex` program in non-interactive mode:
@@ -34,11 +36,14 @@ from .. import workspace
 from . import limits
 from .base import ProcessEngine, clean_env, no_window
 
+__author__ = "definitelynotironman"
+
 REQUIRED_EXEC_FLAGS = ["--json", "--skip-git-repo-check", "--cd", "--sandbox", "--config", "--model"]
 MAX_ARGUMENT = 7000       # codex is a .cmd script on Windows: cmd.exe limits a command line to 8191 characters
 
 
 def find_program(configured=""):
+    """Path of the codex program: the configured path or PATH; '' if missing."""
     if configured and os.path.isfile(configured):
         return configured
     return shutil.which("codex") or ""
@@ -53,19 +58,27 @@ def toml_string(text):
 
 
 def toml_list(items):
+    """A TOML list of literal strings (for -c overrides)."""
     return "[" + ", ".join(toml_string(i) for i in items) + "]"
 
 
 class CodexEngine(ProcessEngine):
+    """Codex CLI (`codex exec --json`) as a brain: argv with -c MCP overrides, stdin prompt, resume.
+
+    The MCP server is added for one run only through -c overrides; the user's
+    ~/.codex/config.toml is never edited.
+    """
     name = "codex"
     label = "Codex"
 
     def __init__(self):
+        """No thread yet; whether `exec resume` reads stdin is learned on first use."""
         super().__init__()
         self.resume_reads_stdin = None    # learned from `codex exec resume --help`
         self.last_error = ""
 
     def _resume_reads_stdin(self, program):
+        """True when `codex exec resume --help` mentions stdin (checked once)."""
         if self.resume_reads_stdin is None:
             try:
                 out = subprocess.run([program, "exec", "resume", "--help"], capture_output=True, text=True,
@@ -76,6 +89,12 @@ class CodexEngine(ProcessEngine):
         return self.resume_reads_stdin
 
     def build(self, message, config):
+        """(argv, stdin, extra environment) for one turn; raises FileNotFoundError without codex.
+
+        The message goes on stdin when possible, because cmd.exe limits a command
+        line to 8191 characters. A message too long for an argument starts a fresh
+        thread; nothing is lost because it carries the journal's handoff brief.
+        """
         program = find_program(config.get("codex_path", "")) or ("codex" if self.command_override else "")
         if not program:
             raise FileNotFoundError("Codex is not installed. Install the Codex CLI, then open a terminal and run "
@@ -110,6 +129,7 @@ class CodexEngine(ProcessEngine):
 
     # -- events -----------------------------------------------------------
     def parse(self, obj):
+        """Standard events for one JSON line from `codex exec --json`."""
         kind = obj.get("type")
         if kind == "thread.started":
             self.session_id = obj.get("thread_id") or self.session_id
@@ -153,12 +173,14 @@ class CodexEngine(ProcessEngine):
         return []
 
     def parse_text_line(self, line):
+        """A limit notice printed as plain text becomes limit_reached."""
         if limits.is_limit(line, max_length=600):
             return [{"type": "limit_reached", "text": line, "resets": limits.reset_hint(line)}]
         return []
 
 
 def _result_text(item):
+    """The text of a finished Codex tool item (MCP content, shell output or error)."""
     result = item.get("result")
     if isinstance(result, dict):
         parts = [c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict)]

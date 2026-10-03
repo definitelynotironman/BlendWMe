@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The one small interface every brain implements.
 
     engine.start(message, on_event, config)   one turn in the background
@@ -26,6 +28,8 @@ import threading
 
 from . import limits
 
+__author__ = "definitelynotironman"
+
 TERMINAL = ("done", "error", "limit_reached")
 
 # Never forwarded to a brain program: it must use the user's subscription sign-in,
@@ -35,34 +39,46 @@ _DROP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "COD
 
 
 def clean_env(extra=None):
+    """The current environment without pay-per-token keys or Blender's Python settings, plus extra."""
     env = {k: v for k, v in os.environ.items() if k.upper() not in _DROP_ENV}
     env.update(extra or {})
     return env
 
 
 def no_window():
+    """Popen creation flags that stop a console window flashing up on Windows (0 elsewhere)."""
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 class Engine:
+    """A brain BlendWMe can talk to: start a turn, stream standard events, interrupt, reset.
+
+    Events are dicts with a `type`: text, tool_call, tool_result and exactly one
+    terminal event per turn (done, error or limit_reached).
+    """
     name = "brain"
     label = "Brain"
 
     def __init__(self):
+        """No session yet, no running turn."""
         self.session_id = None
         self.thread = None
         self._stop = threading.Event()
 
     def is_running(self):
+        """True while a turn's thread is alive."""
         return self.thread is not None and self.thread.is_alive()
 
     def reset(self):
+        """Forget the brain's own conversation (the next turn starts fresh)."""
         self.session_id = None
 
     def interrupt(self):
+        """Ask the running turn to stop."""
         self._stop.set()
 
     def start(self, message, on_event, config):
+        """Begin one turn with message; on_event receives the standard events."""
         raise NotImplementedError
 
 
@@ -70,6 +86,7 @@ class ProcessEngine(Engine):
     """A brain that runs as a program printing one JSON event per line (Claude Code, Codex)."""
 
     def __init__(self):
+        """No program started yet; tests may set command_override."""
         super().__init__()
         self.proc = None
         self.command_override = None   # tests replace the program with a fake one
@@ -90,8 +107,11 @@ class ProcessEngine(Engine):
 
     # -- the turn ---------------------------------------------------------
     def start(self, message, on_event, config):
-        # The last turn sends "done" from inside its thread just before that thread ends.
-        # A message sent in that moment waits briefly instead of being refused.
+        """Start the program for one turn in a background thread.
+
+        The last turn sends "done" from inside its thread just before that thread ends;
+        a message sent in that moment waits briefly instead of being refused.
+        """
         if self.is_running() and self.thread is not threading.current_thread():
             self.thread.join(timeout=5)
         if self.is_running():
@@ -107,9 +127,15 @@ class ProcessEngine(Engine):
         self.thread.start()
 
     def _run(self, argv, stdin_text, extra_env, on_event, config):
+        """Run the program, translate its output into events and end with exactly one terminal event.
+
+        Malformed JSON events or parser failures end the turn with one error and stop
+        the program, instead of being shown as text.
+        """
         ended = []
 
         def emit(event):
+            """Forward one event (tagged with the brain); drop anything after the terminal event."""
             if ended:
                 return              # one terminal event per turn
             event = dict(event, brain=self.name)
@@ -182,6 +208,7 @@ class ProcessEngine(Engine):
             emit({"type": "done", "text": ""})
 
     def _read_stderr(self, errors):
+        """Collect the last 60 stderr lines (for limit detection and error reports)."""
         for raw in iter(self.proc.stderr.readline, b""):
             errors.append(raw.decode("utf-8", "replace").rstrip())
             del errors[:-60]

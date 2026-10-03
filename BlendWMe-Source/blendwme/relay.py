@@ -1,9 +1,11 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The relay: one collaborator, more than one brain.
 
 The panel talks only to this module. It starts the active brain for each
 message, turns the brain's standard events (engines/base.py) into the
 conversation log, and keeps everything else the same whichever brain works:
-the plan checklist, Auto / Watch / Teach, pause and take control, the overlay.
+the plan checklist, Auto / Teach, pause and take control, the overlay.
 
     you type in the panel -> relay.send()
         -> message = [BlendWMe] mode header + (first turn: scene summary)
@@ -36,14 +38,16 @@ from .journal import journal
 from .state import DONE, ERROR, IDLE, THINKING, session
 from .tool_host import host, label
 
+__author__ = "definitelynotironman"
+
 MAX_SCENE_CHARS = 5000
 NOTE_TIMEOUT = 180          # seconds the old brain gets to write its handoff note
 
 
 def _current_filepath():
+    """The open .blend's path ('' when unsaved). Main thread."""
     import bpy
     return bpy.data.filepath
-
 
 
 def addon_version():
@@ -58,8 +62,17 @@ def addon_version():
         pass
     return "unknown"
 
+
 class Relay:
+    """The panel's single entry point to the brains.
+
+    It owns one engine per brain and the conversation state of the current task.
+    `generation` advances on Stop and on each hand-over: callbacks and delayed
+    starts from an older generation are ignored, so a stopped brain can never
+    restart or write into the new task.
+    """
     def __init__(self):
+        """One engine per brain, Claude active, no task yet."""
         self.engines = {"claude": ClaudeCodeEngine(), "codex": CodexEngine()}
         self.active = "claude"
         self.running = None          # the brain working right now, or None
@@ -86,19 +99,28 @@ class Relay:
     # Called from the panel (main thread)
     # ------------------------------------------------------------------
     def is_running(self):
+        """True while a brain works or a hand-over is in progress."""
         return self.running is not None or self.handing_over
 
     def has_conversation(self):
+        """True once a task has started."""
         return self.task_started
 
     def engine(self, brain=None):
+        """The engine of `brain` (default: the active brain)."""
         return self.engines[brain or self.active]
 
     @staticmethod
     def other(brain):
+        """The other brain ('claude' <-> 'codex')."""
         return "codex" if brain == "claude" else "claude"
 
     def send(self, text, config, new_task=False):
+        """Handle a message typed in the panel.
+
+        While a brain works the text goes to the inbox (delivered with its next tool
+        result); otherwise it starts a new task or a follow-up turn.
+        """
         text = (text or "").strip()
         if not text:
             return
@@ -122,6 +144,7 @@ class Relay:
         self._start(brain, text)
 
     def stop(self):
+        """Stop the running brain now and cancel pending scene work."""
         self.generation += 1
         bridge.cancel_all("This task was stopped before its pending job ran.")
         session.stop_flag.set()
@@ -202,6 +225,7 @@ class Relay:
                          daemon=True).start()
 
     def _hand_over(self, source, target, reason, generation):
+        """Background part of hand_over: ask for a note, record the switch, start the target."""
         try:
             if self.running:
                 self._interrupt_and_wait(self.running)
@@ -238,6 +262,7 @@ class Relay:
         self._start(target, text, handoff=brief, generation=generation)
 
     def _interrupt_and_wait(self, brain):
+        """Interrupt a brain and wait (up to 30 s) for its turn thread to end."""
         generation = self.generation
         engine = self.engine(brain)
         session.stop_flag.set()
@@ -263,6 +288,7 @@ class Relay:
     # Starting a turn
     # ------------------------------------------------------------------
     def _new_task(self, text):
+        """Reset engines, conversation and journal task state for a new brief."""
         for e in self.engines.values():
             e.reset()
         self.told = set()
@@ -278,6 +304,7 @@ class Relay:
         journal.record_references(self.config.get("references", []), bridge.call(_current_filepath))
 
     def _engine_config(self, brain):
+        """The engine configuration for a turn; starts the bridge and writes the workspace files. Main thread."""
         if not socket_bridge.get().is_running():
             session.add("info", socket_bridge.start())
         else:
@@ -287,6 +314,7 @@ class Relay:
         return config
 
     def _brief(self, brain):
+        """The journal's handoff brief for `brain`, with who made each object."""
         return journal.handoff_brief(brain, bridge.call(scene_info.makers),
                                      review_first=self.config.get("returning_reviews", True))
 
@@ -313,6 +341,7 @@ class Relay:
         return "\n\n".join(parts)
 
     def _start(self, brain, text, handoff="", generation=None):
+        """Start one turn of `brain` with the composed message, unless the generation is obsolete."""
         generation = self.generation if generation is None else generation
         if generation != self.generation:
             return
@@ -360,6 +389,7 @@ class Relay:
         generation = self.generation
 
         def wait_then_run():
+            """Wait for the old turn thread, then run fn if the task is still current."""
             if worker is not None and worker is not threading.current_thread():
                 worker.join(timeout=30)
             if generation == self.generation:
@@ -370,6 +400,7 @@ class Relay:
     # Events from the brain (its own thread)
     # ------------------------------------------------------------------
     def _on_event(self, event):
+        """Route one standard event from a brain (called on the engine's thread)."""
         kind = event.get("type")
         brain = event.get("brain") or self.running or self.active
         try:
@@ -402,6 +433,7 @@ class Relay:
         return last
 
     def _text(self, brain, event):
+        """Add streamed or whole reply text to the conversation and the transcript."""
         text = event.get("text") or ""
         if not text:
             return
@@ -436,6 +468,7 @@ class Relay:
         self.text_since_tool = ""
 
     def _end_turn(self, brain, event):
+        """Finish a turn: record it, then deliver queued messages, retry a lost session or offer a hand-over."""
         kind = event["type"]
         self.running = None
         self.entry = None
@@ -496,15 +529,18 @@ class Relay:
             self.save_log()
 
     def _signal_end(self, kind):
+        """Wake anyone waiting for this turn to end (used by the handoff-note turn)."""
         self.turn_end = kind
         self.turn_done.set()
 
     def _fail(self, text):
+        """Show an error and set the error status."""
         session.last_error = text
         session.add("error", text)
         session.set_status(ERROR)
 
     def _trace(self, kind, **data):
+        """Append a timestamped entry to the turn trace (saved with the log)."""
         self.trace.append(dict({"t": round(time.time(), 2), "type": kind}, **data))
 
     # ------------------------------------------------------------------

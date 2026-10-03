@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Claude Code as BlendWMe's main brain (signed in with the user's Claude subscription).
 
 One turn = one run of the official `claude` program in print mode:
@@ -26,6 +28,8 @@ import uuid
 from . import limits
 from .base import ProcessEngine
 
+__author__ = "definitelynotironman"
+
 TOOL_PREFIX = "mcp__blendwme__"
 ROLE = ("You are BlendWMe's main brain, working inside the user's live Blender scene through the blendwme "
         "MCP tools only. Follow CLAUDE.md in this folder.")
@@ -37,6 +41,7 @@ REQUIRED_FLAGS = ["--print", "--output-format", "--verbose", "--include-partial-
 
 
 def find_program(configured=""):
+    """Path of the claude program: the configured path, PATH, or ~/.local/bin; '' if missing."""
     if configured and os.path.isfile(configured):
         return configured
     found = shutil.which("claude")
@@ -50,20 +55,24 @@ def find_program(configured=""):
 
 
 class ClaudeCodeEngine(ProcessEngine):
+    """Claude Code (`claude -p`) as a brain: argv, session id or resume, stream-json events."""
     name = "claude"
     label = "Claude"
 
     def __init__(self):
+        """No session started; track which messages already streamed as deltas."""
         super().__init__()
         self.started_session = False      # True once a turn ran with --session-id
         self._streamed = set()            # message ids whose text already arrived as deltas
         self._current_message = None
 
     def reset(self):
+        """Start a new Claude session on the next turn."""
         super().reset()
         self.started_session = False
 
     def build(self, message, config):
+        """(argv, stdin, extra environment) for one turn; raises FileNotFoundError without claude."""
         program = find_program(config.get("claude_path", "")) or ("claude" if self.command_override else "")
         if not program:
             raise FileNotFoundError("Claude Code is not installed. Install it from claude.com/code, "
@@ -90,6 +99,11 @@ class ClaudeCodeEngine(ProcessEngine):
 
     # -- events -----------------------------------------------------------
     def parse(self, obj):
+        """Standard events for one stream-json line from Claude Code.
+
+        Text deltas are tracked per message id so the complete assistant message
+        that follows is not shown twice.
+        """
         kind = obj.get("type")
         if obj.get("session_id"):
             self.session_id = obj["session_id"]
@@ -141,16 +155,19 @@ class ClaudeCodeEngine(ProcessEngine):
         return []
 
     def parse_text_line(self, line):
+        """A limit notice printed as plain text becomes limit_reached."""
         if limits.is_limit(line, max_length=400):
             return [{"type": "limit_reached", "text": line, "resets": limits.reset_hint(line)}]
         return []
 
 
 def short_tool_name(name):
+    """'mcp__blendwme__look' -> 'look'."""
     return name[len(TOOL_PREFIX):] if name.startswith(TOOL_PREFIX) else name
 
 
 def _result_text(content):
+    """The text of a tool result (string or content blocks; images become '[image]')."""
     if isinstance(content, str):
         return content
     parts = []
@@ -163,6 +180,7 @@ def _result_text(content):
 
 
 def _reset_from_epoch(value):
+    """'resets HH:MM' from a Unix time, or '' when it cannot be read."""
     import time
     try:
         return "resets " + time.strftime("%H:%M", time.localtime(int(value)))

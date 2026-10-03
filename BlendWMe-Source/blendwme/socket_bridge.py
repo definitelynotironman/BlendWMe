@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The add-on's end of the MCP bridge: a local socket the MCP server talks to.
 
     Claude Code / Codex  --stdio-->  blendwme_mcp (MCP server)  --socket-->  this module  ->  tool_host
@@ -32,11 +34,22 @@ import time
 
 from . import bridge, tools, workspace
 
+__author__ = "definitelynotironman"
+
 MAX_LINE = 16 * 1024 * 1024
 
 
 class SocketBridge:
+    """The 127.0.0.1 socket that carries tool calls from the MCP server to the ToolHost.
+
+    A request is only executed when its token, task, scene and deadline still
+    match. Retries of the same (client, id, task) are answered from a receipt
+    instead of running twice, and a receipt reused with different arguments is
+    refused. At most 16 clients are served at once.
+    """
+
     def __init__(self, host):
+        """Remember the ToolHost; nothing listens until start()."""
         self.host = host            # the ToolHost that runs the tools
         self.server = None
         self.token = ""
@@ -51,6 +64,7 @@ class SocketBridge:
         self.receipt_lock = threading.Lock()
 
     def is_running(self):
+        """True while the socket is listening."""
         return self.running
 
     def start(self, port=0):
@@ -72,6 +86,7 @@ class SocketBridge:
         return self.port
 
     def stop(self):
+        """Stop listening, cancel pending scene work, close clients and remove the connection file."""
         if not self.running:
             return
         self.running = False
@@ -90,8 +105,9 @@ class SocketBridge:
         workspace.remove_connection(self.token)
         self.server = None
 
-    # ------------------------------------------------------------------
+    # -- connections -----------------------------------------------------------
     def _accept(self, server):
+        """Accept clients on the socket this loop was started with, one thread each."""
         while self.running and self.server is server:
             try:
                 conn, _addr = server.accept()
@@ -107,6 +123,7 @@ class SocketBridge:
                              daemon=True).start()
 
     def _serve(self, conn):
+        """Serve one client, then free its slot."""
         try:
             self._serve_client(conn)
         finally:
@@ -115,6 +132,7 @@ class SocketBridge:
             self.slots.release()
 
     def _serve_client(self, conn):
+        """Answer one JSON line at a time until the client closes or sends an oversized line."""
         with conn:
             reader = conn.makefile("rb")
             while self.running:
@@ -132,7 +150,9 @@ class SocketBridge:
                 except OSError:
                     return
 
+    # -- requests ----------------------------------------------------------------
     def _handle(self, line):
+        """The reply for one request line (ping, list_tools or call)."""
         try:
             request = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -149,67 +169,90 @@ class SocketBridge:
         if op == "list_tools":
             return {"id": rid, "ok": True, "result": tools.mcp_tools()}
         if op == "call":
-            request_epoch = bridge.epoch()
-            if isinstance(rid, bool) or not isinstance(rid, (int, str)) or not isinstance(request.get("client", ""), str):
-                return {"id": None, "ok": False, "error": "Invalid request identity."}
-            expires = request.get("expires")
-            if expires is not None and (isinstance(expires, bool) or
-                                       not isinstance(expires, (int, float)) or not math.isfinite(expires)):
-                return {"id": rid, "ok": False, "error": "Invalid deadline."}
-            expected_task = request.get("task")
-            if expected_task != self.host.task_id:
-                return {"id": rid, "ok": False, "error": "This client belongs to an obsolete task. Start a new turn."}
-            if expires is not None and expires <= time.time():
-                return {"id": rid, "ok": False, "error": "The request expired before execution."}
-            def context_matches():
-                import bpy
-                return (self.running and token == self.token and expected_task == self.host.task_id and
-                        request.get("scene") == bpy.context.scene.get("blendwme_scene_id"))
-            try:
-                with bridge.scope(request_epoch, deadline=expires):
-                    matches = bridge.call(context_matches)
-            except (RuntimeError, TimeoutError) as error:
-                return {"id": rid, "ok": False, "error": str(error)}
-            if not matches:
-                return {"id": rid, "ok": False, "error": "The request belongs to a different scene."}
-            key = (request.get("client"), rid, expected_task)
-            signature = json.dumps({name: request.get(name) for name in ("tool", "args", "brain", "scene")},
-                                   sort_keys=True, ensure_ascii=False)
-            if key[0]:
-                with self.receipt_lock:
-                    if key in self.receipts:
-                        receipt = self.receipts[key]
-                        if receipt["signature"] != signature:
-                            return {"id": rid, "ok": False, "error": "This request identity was already used with different arguments."}
-                        owner = False
-                    else:
-                        if len(self.receipts) >= 1024:
-                            return {"id": rid, "ok": False, "error": "Request history is full; start a fresh task/client."}
-                        receipt = {"done": threading.Event(), "signature": signature}
-                        self.receipts[key] = receipt
-                        owner = True
-                if not owner:
-                    end = time.monotonic() + min(45 * 60, max(0, expires - time.time()) if expires is not None else 45 * 60)
-                    while self.running and time.monotonic() < end:
-                        if receipt["done"].wait(0.1):
-                            return receipt["reply"]
-                    return {"id": rid, "ok": False, "error": "The original request is still running. It was not repeated."}
-            self.calls += 1
-            try:
-                with bridge.scope(request_epoch, deadline=request.get("expires"), validate=context_matches):
-                    out = self.host.call(str(request.get("tool") or ""), request.get("args") or {},
-                                         _brain(request.get("brain")))
-                reply = {"id": rid, "ok": True, "result": out["result"], "images": out["images"]}
-            except Exception as error:
-                reply = {"id": rid, "ok": False, "error": str(error)}
-            if key[0]:
-                receipt["reply"] = reply
-                receipt["done"].set()
-            return reply
+            return self._call(request, rid, token)
         return {"id": rid, "ok": False, "error": f"Unknown op {op!r}."}
+
+    def _call(self, request, rid, token):
+        """Validate a tool call, de-duplicate retries, then run it under the request's scope.
+
+        The context is checked twice: once on the main thread before anything
+        else, and again (as the scope's validator) immediately before the tool
+        touches the scene, because the task or scene can change in between.
+        """
+        request_epoch = bridge.epoch()
+        if isinstance(rid, bool) or not isinstance(rid, (int, str)) or not isinstance(request.get("client", ""), str):
+            return {"id": None, "ok": False, "error": "Invalid request identity."}
+        expires = request.get("expires")
+        if expires is not None and (isinstance(expires, bool) or
+                                    not isinstance(expires, (int, float)) or not math.isfinite(expires)):
+            return {"id": rid, "ok": False, "error": "Invalid deadline."}
+        expected_task = request.get("task")
+        if expected_task != self.host.task_id:
+            return {"id": rid, "ok": False, "error": "This client belongs to an obsolete task. Start a new turn."}
+        if expires is not None and expires <= time.time():
+            return {"id": rid, "ok": False, "error": "The request expired before execution."}
+
+        def context_matches():
+            """True while the bridge, token, task and scene are still the ones the request was made for."""
+            import bpy
+            return (self.running and token == self.token and expected_task == self.host.task_id and
+                    request.get("scene") == bpy.context.scene.get("blendwme_scene_id"))
+        try:
+            with bridge.scope(request_epoch, deadline=expires):
+                matches = bridge.call(context_matches)
+        except (RuntimeError, TimeoutError) as error:
+            return {"id": rid, "ok": False, "error": str(error)}
+        if not matches:
+            return {"id": rid, "ok": False, "error": "The request belongs to a different scene."}
+        key = (request.get("client"), rid, expected_task)
+        receipt = None
+        if key[0]:
+            receipt, answer = self._receipt(key, request, rid, expires)
+            if answer is not None:
+                return answer
+        self.calls += 1
+        try:
+            with bridge.scope(request_epoch, deadline=request.get("expires"), validate=context_matches):
+                out = self.host.call(str(request.get("tool") or ""), request.get("args") or {},
+                                     _brain(request.get("brain")))
+            reply = {"id": rid, "ok": True, "result": out["result"], "images": out["images"]}
+        except Exception as error:
+            reply = {"id": rid, "ok": False, "error": str(error)}
+        if receipt is not None:
+            receipt["reply"] = reply
+            receipt["done"].set()
+        return reply
+
+    def _receipt(self, key, request, rid, expires):
+        """(receipt this call owns, None) for a new request, or (None, reply) for a retry.
+
+        A retry waits for the original call's reply (bounded by its deadline and
+        45 minutes) and never runs the tool a second time.
+        """
+        signature = json.dumps({name: request.get(name) for name in ("tool", "args", "brain", "scene")},
+                               sort_keys=True, ensure_ascii=False)
+        with self.receipt_lock:
+            if key not in self.receipts:
+                if len(self.receipts) >= 1024:
+                    return None, {"id": rid, "ok": False,
+                                  "error": "Request history is full; start a fresh task/client."}
+                receipt = {"done": threading.Event(), "signature": signature}
+                self.receipts[key] = receipt
+                return receipt, None
+            receipt = self.receipts[key]
+        if receipt["signature"] != signature:
+            return None, {"id": rid, "ok": False,
+                          "error": "This request identity was already used with different arguments."}
+        limit = max(0, expires - time.time()) if expires is not None else 45 * 60
+        end = time.monotonic() + min(45 * 60, limit)
+        while self.running and time.monotonic() < end:
+            if receipt["done"].wait(0.1):
+                return None, receipt["reply"]
+        return None, {"id": rid, "ok": False, "error": "The original request is still running. It was not repeated."}
 
 
 def _brain(value):
+    """A known brain name from a request, defaulting to claude."""
     value = str(value or "").lower()
     return value if value in ("claude", "codex", "api") else "claude"
 
@@ -221,6 +264,7 @@ _bridge = None
 
 
 def get():
+    """The session's SocketBridge (created on first use, bound to the shared ToolHost)."""
     global _bridge
     if _bridge is None:
         from .tool_host import host
@@ -254,5 +298,6 @@ def start():
 
 
 def stop():
+    """Stop the bridge if it was ever started."""
     if _bridge is not None:
         _bridge.stop()
