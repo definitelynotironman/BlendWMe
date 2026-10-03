@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Build dist/blendwme-<version>.zip for Blender's "Install from Disk".
 
     python tools/package.py
@@ -11,12 +13,15 @@ import os
 import re
 import zipfile
 
+__author__ = "definitelynotironman"
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADDON = os.path.join(ROOT, "blendwme")
 SERVER = os.path.join(ROOT, "blendwme_mcp")
 
 
 def main():
+    """Zip the add-on and the MCP server into dist/blendwme-<version>.zip and print the file count."""
     with open(os.path.join(ADDON, "blender_manifest.toml"), encoding="utf-8") as f:
         version = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M).group(1)
     os.makedirs(os.path.join(ROOT, "dist"), exist_ok=True)

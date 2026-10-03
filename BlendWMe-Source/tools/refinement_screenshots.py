@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Disposable windowed Blender fixture. No subscription clients are started.
 
 Run with --factory-startup --python tools/refinement_screenshots.py -- OUTPUT.
@@ -11,6 +13,8 @@ import traceback
 
 import bpy
 import addon_utils
+
+__author__ = "definitelynotironman"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["BLENDWME_LOG_FOLDER"] = tempfile.mkdtemp(prefix="bwm_gui_logs_")
@@ -43,6 +47,7 @@ def trace(stage):
 
 
 def failed():
+    """Print the error, record it, take a failure screenshot and quit Blender."""
     traceback.print_exc()
     trace("failed")
     bpy.ops.screen.screenshot(filepath=os.path.join(output, "failed.png"))
@@ -64,6 +69,7 @@ session.add("ai", "**What happens**\n\n- Select the cube.\n- Use `G` to move it.
 
 
 def prepare():
+    """Switch to the 2000s theme, open the panel and schedule the chosen scenario."""
     prefs.addon_prefs().theme = "Y2K"
     area = next(a for a in bpy.context.screen.areas if a.type == "VIEW_3D")
     panel_ops.open_panel(bpy.context, area)
@@ -74,6 +80,7 @@ def prepare():
 
 
 def new_file():
+    """Remember the draft, then load the startup file (File > New)."""
     global load_count, draft_before_load
     load_count += 1
     draft_before_load = panel.state.text
@@ -83,6 +90,7 @@ def new_file():
 
 
 def validate_new_file():
+    """After a load: the panel must be open with hit targets, and typing must still work."""
     trace("after_new_file")
     try:
         assert panel.state.open and panel.state.hits, "New File did not restore the panel"
@@ -94,6 +102,7 @@ def validate_new_file():
     for char in "fresh draft":
         window.event_simulate(type="SPACE" if char == " " else char.upper(), value="PRESS", unicode=char)
     def check_input():
+        """The typed text must reach the draft; repeat the load once, then test a second window."""
         try:
             assert panel.state.text == draft_before_load + "fresh draft", "New File lost typing/modal input"
         except AssertionError:
@@ -123,6 +132,7 @@ def check_second_window():
 
 
 def settings_press():
+    """Press the drawn Settings button with simulated mouse events."""
     hit = next(h for h in panel.state.hits if h[-1] == "settings")
     area = next(a for a in bpy.context.screen.areas if a.as_pointer() == panel.state.area_ptr)
     region = next(r for r in area.regions if r.type == "WINDOW")
@@ -132,6 +142,7 @@ def settings_press():
     window.event_simulate(type="MOUSEMOVE", value="NOTHING", x=x, y=y)
     window.event_simulate(type="LEFTMOUSE", value="PRESS", x=x, y=y)
     def release():
+        """Screenshot the pressed state, then release over the button."""
         bpy.ops.screen.screenshot(filepath=os.path.join(output, "settings-pressed.png"))
         print("SETTINGS REQUESTED", panel_ops.settings_asked[0], "CLICK", x, y, flush=True)
         window.event_simulate(type="LEFTMOUSE", value="RELEASE", x=x, y=y)
@@ -140,6 +151,7 @@ def settings_press():
 
 
 def capture():
+    """Check Settings was invoked (when expected), screenshot the panel and quit."""
     if os.environ.get("BWM_GUI_ACTION") in ("new_file", "settings"):
         assert panel_ops.settings_asked[0] > 0, "Settings click was not invoked on release"
     print("CAPTURE STATE", panel.state.open, panel.state.area_ptr, len(panel.state.hits),
