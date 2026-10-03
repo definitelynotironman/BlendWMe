@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Start the BlendWMe MCP server:  python run.py --brain claude --workspace <folder>
 
 This launcher lets the server run straight from its folder (inside the
@@ -6,6 +8,8 @@ installed add-on or next to the source) without installing it as a package.
 
 import os
 import sys
+
+__author__ = "definitelynotironman"
 
 # Put the folder ABOVE blendwme_mcp at the END of the search path: only the
 # blendwme_mcp package itself is found there, never in place of an installed module.

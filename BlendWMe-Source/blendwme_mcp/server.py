@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """BlendWMe MCP server: gives Claude Code and Codex the same BlendWMe tools.
 
 It is a small, separate Python program (it does not run inside Blender). The
@@ -22,6 +24,8 @@ from mcp.server.stdio import stdio_server
 
 from .link import BlenderLink, LinkError
 
+__author__ = "definitelynotironman"
+
 SERVER_NAME = "blendwme"
 VERSION = "2.0.0"
 
@@ -36,6 +40,7 @@ STATUS_TOOL = {"name": "blendwme_status",
 
 
 def _log(text):
+    """Print a line for people on stderr (stdout carries the MCP protocol)."""
     # stdout carries the MCP protocol; anything for people goes to stderr.
     print("[blendwme_mcp] " + text, file=sys.stderr, flush=True)
 
@@ -44,10 +49,12 @@ class Bridge:
     """MCP-side behaviour, independent of the SDK version."""
 
     def __init__(self, brain, workspace, instance=None):
+        """Which brain this server serves, and its link to Blender."""
         self.brain = brain
         self.link = BlenderLink(workspace, instance)
 
     def tool_specs(self):
+        """The add-on's tool specs, or only blendwme_status when Blender is unreachable."""
         try:
             return self.link.list_tools()
         except LinkError as e:
@@ -55,6 +62,7 @@ class Bridge:
             return [STATUS_TOOL]
 
     def tools(self):
+        """The tool specs as MCP Tool objects, with read-only hints."""
         out = []
         for spec in self.tool_specs():
             out.append(types.Tool(name=spec["name"], description=spec.get("description", ""),
@@ -88,10 +96,12 @@ def build_server(bridge):
     """An MCP Server for the installed SDK. SDK 2.x takes handlers in the constructor; 1.x uses decorators."""
     if "on_call_tool" in inspect.signature(Server.__init__).parameters:
         async def list_tools(ctx, params):
+            """SDK 2.x handler: list the tools (in a worker thread)."""
             specs = await anyio.to_thread.run_sync(bridge.tools)
             return types.ListToolsResult(tools=specs)
 
         async def call_tool(ctx, params):
+            """SDK 2.x handler: forward one call (in a worker thread; it may wait for the user)."""
             content, is_error = await anyio.to_thread.run_sync(bridge.call, params.name, params.arguments)
             return types.CallToolResult(content=content, isError=is_error)
 
@@ -102,10 +112,12 @@ def build_server(bridge):
 
     @server.list_tools()
     async def list_tools_v1():
+        """SDK 1.x handler: list the tools."""
         return await anyio.to_thread.run_sync(bridge.tools)
 
     @server.call_tool()
     async def call_tool_v1(name, arguments):
+        """SDK 1.x handler: forward one call; an error becomes an exception."""
         content, is_error = await anyio.to_thread.run_sync(bridge.call, name, arguments)
         if is_error:
             raise RuntimeError(content[0].text)
@@ -115,6 +127,7 @@ def build_server(bridge):
 
 
 async def serve(brain, workspace, instance=None):
+    """Run the MCP server over stdio until the brain closes it."""
     bridge = Bridge(brain, workspace, instance)
     server = build_server(bridge)
     async with stdio_server() as (read_stream, write_stream):
@@ -122,6 +135,7 @@ async def serve(brain, workspace, instance=None):
 
 
 def main(argv=None):
+    """Parse --brain, --workspace and --instance, then serve."""
     parser = argparse.ArgumentParser(description="BlendWMe MCP server")
     parser.add_argument("--brain", default="claude", choices=["claude", "codex", "api"],
                         help="Which brain uses this server (signs every step it makes)")

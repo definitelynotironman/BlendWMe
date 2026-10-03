@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The MCP server's link to the BlendWMe add-on (standard library only).
 
 Reads <workspace>/connection.json (port and token, written by the add-on) and
@@ -11,6 +13,8 @@ import socket
 import uuid
 import time
 
+__author__ = "definitelynotironman"
+
 CONNECTION_FILE = "connection.json"
 CONNECT_TIMEOUT = 5
 CALL_TIMEOUT = 60 * 60        # a tool may wait for the user (teach_step); the add-on caps waits at 45 min
@@ -21,11 +25,20 @@ NOT_RUNNING = ("BlendWMe is not reachable. Open Blender with the BlendWMe add-on
 
 
 class LinkError(Exception):
+    """BlendWMe could not be reached, or refused the request; the message says what to do."""
     pass
 
 
 class BlenderLink:
+    """One MCP client's link to one Blender instance.
+
+    The first successful read of connection.json pins that port and token (and
+    the task and scene it was started for). If Blender restarts or another
+    instance writes the file, later requests are refused instead of being
+    silently redirected to a different scene.
+    """
     def __init__(self, workspace, instance=None):
+        """Remember the workspace and the expected instance; nothing is pinned yet."""
         self.workspace = workspace
         self.next_id = 0
         self.instance = instance
@@ -35,6 +48,7 @@ class BlenderLink:
         self.client = str(uuid.uuid4())
 
     def _connection(self):
+        """(host, port, token) from connection.json, pinning the identity on first use."""
         path = os.path.join(self.workspace, CONNECTION_FILE)
         try:
             with open(path, encoding="utf-8") as f:
@@ -53,6 +67,11 @@ class BlenderLink:
             raise LinkError(NOT_RUNNING) from None
 
     def request(self, op, timeout=CALL_TIMEOUT, **fields):
+        """Send one request and return the add-on's reply dict.
+
+        Every request carries the token, the pinned task and scene, this client's id
+        and an absolute deadline, so the add-on can refuse stale or redirected work.
+        """
         host, port, token = self._connection()
         if host not in ("127.0.0.1", "localhost"):
             raise LinkError("The connection file points away from this computer. Refusing to connect.")
@@ -76,9 +95,11 @@ class BlenderLink:
         return data
 
     def ping(self):
+        """The add-on's ping result (a quick reachability check)."""
         return self.request("ping", timeout=CONNECT_TIMEOUT)["result"]
 
     def list_tools(self):
+        """The add-on's tool specs."""
         return self.request("list_tools", timeout=30)["result"]
 
     def call(self, tool, args, brain):
