@@ -13,6 +13,7 @@ import os
 import bpy
 
 SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
+VALIDATED_CARDS = {"example-cottage", "example-room", "example-ice-cream-cone", "camera-help"}
 
 
 def _read(name):
@@ -30,6 +31,8 @@ def skill_index():
         if not fn.endswith(".md"):
             continue
         name = fn[:-3]
+        if name not in VALIDATED_CARDS:
+            continue
         with open(os.path.join(SKILLS_DIR, fn), encoding="utf-8") as f:
             first = f.readline().strip().lstrip("# ").strip()
         out.append((name, first))
@@ -38,8 +41,12 @@ def skill_index():
 
 def load_skill(name):
     name = os.path.basename(str(name)).replace(".md", "")
+    if name not in VALIDATED_CARDS:
+        return ("This card is not enabled: its executable workflow needs current-version validation. "
+                "Use inspect_api or a validated demo card. Broader artistic cards remain planned.")
     try:
-        return _read(name)
+        return ("Validation: executable fixtures on Blender 5.2.2; new changes on Blender 4.2 remain unverified.\n\n"
+                + _read(name))
     except OSError:
         names = ", ".join(n for n, _ in skill_index())
         return f"No skill called {name!r}. Available: {names}"
