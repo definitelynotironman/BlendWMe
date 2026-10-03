@@ -1,13 +1,19 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """run_python: the AI's hands.
 
 Like MCP for Blender, the AI writes normal Blender Python and we run it on
 the live scene. No custom recipe language, no copy of the scene in a second
-process. Safety comes from three simple things instead:
+process. Safety comes from layers instead:
 
 1. An undo step before every run, so Ctrl+Z (or the Undo AI Step button)
-   takes it back.
+   takes it back, and a recovery checkpoint (recovery.py) for a failed step.
 2. A short blocklist for things that touch your files or close Blender.
-3. Pause/Stop between every step.
+3. A cooperative work limit on generated Python (lines and seconds).
+4. Pause/Stop between every step.
+
+This is not a sandbox: native Blender operations cannot be interrupted
+mid-call, and the blocklist is a guard against accidents, not an attacker.
 """
 
 import contextlib
@@ -16,8 +22,8 @@ import math
 import random
 import re
 import sys
-import traceback
 import time
+import traceback
 
 import bmesh
 import bpy
@@ -26,9 +32,13 @@ from mathutils import Euler, Matrix, Quaternion, Vector
 
 from . import helpers, precheck, recovery, repair, scene_info
 
+__author__ = "definitelynotironman"
+
 _BLOCKED = [
-    (r"\bimport\s+(os|sys|subprocess|shutil|socket|ctypes|requests|urllib|http|importlib|builtins|pathlib|io)\b", "system/network modules"),
-    (r"\bfrom\s+(os|sys|subprocess|shutil|socket|ctypes|requests|urllib|http|importlib|builtins|pathlib|io)\b", "system/network modules"),
+    (r"\bimport\s+(os|sys|subprocess|shutil|socket|ctypes|requests|urllib|http|importlib|builtins|pathlib|io)\b",
+     "system/network modules"),
+    (r"\bfrom\s+(os|sys|subprocess|shutil|socket|ctypes|requests|urllib|http|importlib|builtins|pathlib|io)\b",
+     "system/network modules"),
     (r"__import__|\beval\(|\bexec\(", "dynamic code"),
     (r"\bopen\(", "file access"),
     (r"wm\.(quit_blender|read_homefile|read_factory_settings|open_mainfile|save_mainfile|save_as_mainfile)",
@@ -42,124 +52,11 @@ MAX_OUTPUT = 4000
 MAX_STEP_LINES = 100_000
 MAX_STEP_SECONDS = 15.0
 
-
-@contextlib.contextmanager
-def _bounded_python():
-    """Bound generated Python loops; native Blender work yields only on return."""
-    previous = sys.gettrace()
-    deadline = time.monotonic() + MAX_STEP_SECONDS
-    remaining = MAX_STEP_LINES
-    def trace(frame, event, arg):
-        nonlocal remaining
-        if frame.f_code.co_filename != "<blendwme>":
-            return None
-        if event == "line":
-            remaining -= 1
-            if remaining < 0 or time.monotonic() > deadline:
-                raise RuntimeError("This Python step exceeded its work limit. Split it into smaller steps; native operations cannot be interrupted mid-call.")
-        return trace
-    sys.settrace(trace)
-    try:
-        yield
-    finally:
-        sys.settrace(previous)
-
-
-def check_code(code):
-    for pattern, why in _BLOCKED:
-        if re.search(pattern, code):
-            return f"Blocked: this code uses {why}, which BlendWMe does not allow."
-    return None
-
-
-def _undo_push(message):
-    window, area, region = helpers.find_view3d()
-    try:
-        if window:
-            with bpy.context.temp_override(window=window, area=area, region=region):
-                bpy.ops.ed.undo_push(message=message)
-        else:
-            bpy.ops.ed.undo_push(message=message)
-    except Exception:
-        pass
-
-
-@contextlib.contextmanager
-def _bwm_importable():
-    """Let `import bwm` and `from bwm import box` work during a step.
-
-    bwm is already a ready-made name in every step, but models often import
-    it first, out of habit. That used to fail with ModuleNotFoundError and the
-    model then wasted turns "testing" whether bwm exists. We register the
-    helpers module under the name bwm for the duration of the step only, so
-    nothing outside BlendWMe ever sees it.
-    """
-    previous = sys.modules.get("bwm")
-    sys.modules["bwm"] = helpers
-    try:
-        yield
-    finally:
-        if previous is None:
-            sys.modules.pop("bwm", None)
-        else:
-            sys.modules["bwm"] = previous
-
-
-def _namespace():
-    return {
-        "__name__": "blendwme_step",
-        "bpy": bpy, "bmesh": bmesh, "math": math, "random": random,
-        "mathutils": mathutils, "Vector": Vector, "Matrix": Matrix,
-        "Euler": Euler, "Quaternion": Quaternion,
-        "C": bpy.context, "D": bpy.data,
-        "bwm": helpers,
-        repair.SET_NAME: repair.fit_set,   # forgiving `owner.name = value` (see repair.py)
-    }
-
-
 # Data types a step can create. On failure, new ones are removed again so a
 # retry starts clean (no "Roof.001" duplicates from half-finished steps).
 _ID_TYPES = ("objects", "collections", "meshes", "curves", "materials", "lights", "cameras",
              "armatures", "node_groups", "actions", "textures", "lattices", "metaballs",
              "grease_pencils", "fonts", "shape_keys")
-
-
-def _id_pointers():
-    out = {}
-    for attr in _ID_TYPES:
-        data = getattr(bpy.data, attr, None)
-        if data is not None:
-            out[attr] = {i.as_pointer() for i in data}
-    return out
-
-
-def _object_mode():
-    obj = bpy.context.view_layer.objects.active
-    if obj is not None and obj.mode != "OBJECT":
-        try:
-            with helpers.view3d():
-                bpy.ops.object.mode_set(mode="OBJECT")
-        except Exception:
-            pass
-
-
-def _roll_back(before_ids):
-    """Remove everything the failed step created. Returns how many were removed."""
-    _object_mode()
-    removed = 0
-    for attr in _ID_TYPES:          # objects first, then their data
-        data = getattr(bpy.data, attr, None)
-        if data is None or attr == "shape_keys":
-            continue
-        new = [i for i in data if i.as_pointer() not in before_ids.get(attr, set())]
-        for item in new:
-            try:
-                data.remove(item)
-                removed += 1
-            except Exception:
-                pass
-    return removed
-
 
 # Plain-language hints for the mistakes open models make most in Blender.
 _HINTS = [
@@ -188,129 +85,306 @@ _HINTS = [
     ("Mesh does not exist in edit mode", "Switch to Object Mode before reading or changing mesh data."),
 ]
 
-
-def _hint(error):
-    for needle, hint in _HINTS:
-        if needle in error:
-            return hint
-    return ""
+_RECOVERY_SCOPE = ("Transforms, data assignments, material slots and existing material socket values "
+                   "were restored where their datablocks survived. Other edits require opening "
+                   "the checkpoint .blend. Stop is only effective between native operations.")
 
 
-def _readable_error(code):
-    """Traceback lines that point into the AI's own code, plus the line text."""
-    tb = traceback.format_exc()
-    lines = code.splitlines()
-    out = []
-    for frame in traceback.extract_tb(sys.exc_info()[2]):
-        if frame.filename == "<blendwme>" and 0 < frame.lineno <= len(lines):
-            out.append(f"line {frame.lineno}: {lines[frame.lineno - 1].strip()}")
-    last = tb.strip().splitlines()[-1]
-    return (" | ".join(out[-3:]) + "\n" if out else "") + last
+class StepGuards:
+    """The guards around one step: blocklist, work limit, undo pushes and `import bwm`."""
 
+    @staticmethod
+    def check_code(code):
+        """A refusal message when code matches the blocklist, else None."""
+        for pattern, why in _BLOCKED:
+            if re.search(pattern, code):
+                return f"Blocked: this code uses {why}, which BlendWMe does not allow."
+        return None
 
-def run(code, title="AI step", author="ai"):
-    """Run code on the live scene. Returns a dict for the AI."""
-    blocked = check_code(code)
-    if blocked:
-        return {"ok": False, "error": blocked}
-    try:
-        compiled = compile(code, "<blendwme>", "exec")
-    except SyntaxError as e:
-        return {"ok": False, "error": f"SyntaxError line {e.lineno}: {e.msg}. {(e.text or '').strip()}",
-                "rolled_back": "Nothing ran."}
-    # Repair mechanical API slips first; the pre-check only sees what is left.
-    original = code
-    code, repairs = repair.repair(code)
-    compiled = compile(code, "<blendwme>", "exec")
-    problems = precheck.check(code)
-    if problems:
-        result = {"ok": False, "error": "Pre-check found names that do not exist in Blender "
-                                        + bpy.app.version_string + ":\n" + "\n".join(problems),
-                  "rolled_back": "Nothing ran. Fix these names and send the whole step again."}
-        if repairs:
-            result["auto_repaired"] = repairs
-        return result
-    del repair.NOTES[:]
-    helpers.begin_step()
+    @staticmethod
+    @contextlib.contextmanager
+    def bounded_python():
+        """Bound generated Python loops; native Blender work yields only on return.
 
-    before = scene_info.snapshot()
-    before_ids = _id_pointers()
-    try:
-        checkpoint = recovery.capture()
-    except Exception as error:
-        helpers.end_step(False)
-        return {"ok": False, "error": str(error), "rolled_back": "Nothing ran; checkpoint creation failed."}
-    _undo_push(f"Before BlendWMe: {title}")
-    stdout = io.StringIO()
-    window, area, region = helpers.find_view3d()
-    ok, error = True, None
-    try:
-        with contextlib.redirect_stdout(stdout), _bwm_importable(), _bounded_python():
+        A trace function counts line events in the step's own code
+        ("<blendwme>") and raises once MAX_STEP_LINES or MAX_STEP_SECONDS is
+        exceeded. Helper and Blender code is not traced, so it runs at full speed.
+        """
+        previous = sys.gettrace()
+        deadline = time.monotonic() + MAX_STEP_SECONDS
+        remaining = MAX_STEP_LINES
+
+        def trace(frame, event, arg):
+            """Count lines of generated code and stop it past the limit."""
+            nonlocal remaining
+            if frame.f_code.co_filename != "<blendwme>":
+                return None
+            if event == "line":
+                remaining -= 1
+                if remaining < 0 or time.monotonic() > deadline:
+                    raise RuntimeError("This Python step exceeded its work limit. Split it into smaller steps; "
+                                       "native operations cannot be interrupted mid-call.")
+            return trace
+        sys.settrace(trace)
+        try:
+            yield
+        finally:
+            sys.settrace(previous)
+
+    @staticmethod
+    def undo_push(message):
+        """Push an undo step (inside a 3D Viewport when there is one); never raises."""
+        window, area, region = helpers.find_view3d()
+        try:
             if window:
-                with bpy.context.temp_override(window=window, area=area, region=region,
-                                               screen=window.screen):
-                    exec(compiled, _namespace())
+                with bpy.context.temp_override(window=window, area=area, region=region):
+                    bpy.ops.ed.undo_push(message=message)
             else:
-                exec(compiled, _namespace())
-    except Exception:
-        ok = False
-        error = _readable_error(original)   # same line numbers, the model's own text
-    repairs = repairs + [n for n in repair.NOTES if n not in repairs]
-    removed = 0
-    if not ok:
-        removed = _roll_back(before_ids)
-        recovery.restore(checkpoint)
-    else:
-        recovery.discard(checkpoint)
-    # Earlier AI objects this step replaced: deleted on success, restored on failure.
-    helpers.end_step(ok)
-    try:
-        bpy.context.view_layer.update()
-    except Exception:
-        pass
-    after = scene_info.snapshot()
-    lines, changed = scene_info.diff(before, after)
-    # Tag every object this step created, by identity: a replaced object keeps its old name,
-    # so a name-based diff would see it as "modified" and leave it untagged.
-    new_names = [o.name for o in bpy.data.objects if o.as_pointer() not in before_ids["objects"]]
-    scene_info.tag_author(new_names, author)
-    _undo_push(f"BlendWMe: {title}")
+                bpy.ops.ed.undo_push(message=message)
+        except Exception:
+            pass
 
-    result = {"ok": ok}
-    if ok:
-        in_scene = {o.as_pointer() for o in bpy.context.scene.objects}
-        lost = [o.name for o in bpy.data.objects
-                if o.as_pointer() not in before_ids["objects"] and o.as_pointer() not in in_scene]
-        if lost:
-            result["warning"] = (f"{len(lost)} new object(s) are NOT in the scene, so nobody can see them: "
-                                 f"{lost[:8]}. Link them with bwm.collection(name).objects.link(obj) or "
-                                 "C.scene.collection.objects.link(obj).")
-    if repairs:
-        result["auto_repaired"] = repairs[:12]
-        result["repair_note"] = ("BlendWMe fixed these small API slips and ran the step"
-                                 + (" successfully" if ok else "")
-                                 + ". Write it the fixed way next time.")
-    if helpers.NOTES:
-        result["helper_notes"] = list(helpers.NOTES)[:8]
-    printed = stdout.getvalue()
-    if printed:
-        result["printed"] = printed[:MAX_OUTPUT] + ("..." if len(printed) > MAX_OUTPUT else "")
-    if error:
-        result["recovery_checkpoint"] = checkpoint[0]
-        result["recovery_scope"] = ("Transforms, data assignments, material slots and existing material socket values "
-                                    "were restored where their datablocks survived. Other edits require opening "
-                                    "the checkpoint .blend. Stop is only effective between native operations.")
-        result["error"] = error
-        hint = _hint(error)
-        if hint:
-            result["hint"] = hint
-        result["rolled_back"] = (f"Removed {removed} new item(s) this step created. "
-                                 "Fix the code and run the WHOLE step again."
-                                 if removed else "Nothing new was kept. Fix the code and run the whole step again.")
-        if lines:
-            result["note"] = "These EXISTING objects were changed before the error and keep that change: " \
-                             + "; ".join(lines[:10])
-    result["changes"] = lines[:60] if lines else ["(no object-level changes)"]
-    result["mode"] = bpy.context.mode
-    result["_changed"] = changed  # used by the UI, removed before sending
-    return result
+    @staticmethod
+    @contextlib.contextmanager
+    def bwm_importable():
+        """Let `import bwm` and `from bwm import box` work during a step.
+
+        bwm is already a ready-made name in every step, but models often import
+        it first, out of habit. That used to fail with ModuleNotFoundError and the
+        model then wasted turns "testing" whether bwm exists. We register the
+        helpers module under the name bwm for the duration of the step only, so
+        nothing outside BlendWMe ever sees it.
+        """
+        previous = sys.modules.get("bwm")
+        sys.modules["bwm"] = helpers
+        try:
+            yield
+        finally:
+            if previous is None:
+                sys.modules.pop("bwm", None)
+            else:
+                sys.modules["bwm"] = previous
+
+    @staticmethod
+    def namespace():
+        """The globals a step runs with: bpy, bmesh, math helpers, C, D, bwm and the repair setter."""
+        return {
+            "__name__": "blendwme_step",
+            "bpy": bpy, "bmesh": bmesh, "math": math, "random": random,
+            "mathutils": mathutils, "Vector": Vector, "Matrix": Matrix,
+            "Euler": Euler, "Quaternion": Quaternion,
+            "C": bpy.context, "D": bpy.data,
+            "bwm": helpers,
+            repair.SET_NAME: repair.fit_set,   # forgiving `owner.name = value` (see repair.py)
+        }
+
+
+class Rollback:
+    """Removes the datablocks a failed step created."""
+
+    @staticmethod
+    def id_pointers():
+        """{data type: set of pointers} of every datablock that exists now."""
+        out = {}
+        for attr in _ID_TYPES:
+            data = getattr(bpy.data, attr, None)
+            if data is not None:
+                out[attr] = {i.as_pointer() for i in data}
+        return out
+
+    @staticmethod
+    def object_mode():
+        """Leave Edit/Sculpt/... mode so datablocks can be removed."""
+        obj = bpy.context.view_layer.objects.active
+        if obj is not None and obj.mode != "OBJECT":
+            try:
+                with helpers.view3d():
+                    bpy.ops.object.mode_set(mode="OBJECT")
+            except Exception:
+                pass
+
+    def roll_back(self, before_ids):
+        """Remove everything the failed step created. Returns how many were removed."""
+        self.object_mode()
+        removed = 0
+        for attr in _ID_TYPES:          # objects first, then their data
+            data = getattr(bpy.data, attr, None)
+            if data is None or attr == "shape_keys":
+                continue
+            new = [i for i in data if i.as_pointer() not in before_ids.get(attr, set())]
+            for item in new:
+                try:
+                    data.remove(item)
+                    removed += 1
+                except Exception:
+                    pass
+        return removed
+
+
+class ErrorReport:
+    """Turns an exception in a step into short text that points at the model's own lines."""
+
+    @staticmethod
+    def hint(error):
+        """A plain-language hint for a common mistake, or ''."""
+        for needle, hint in _HINTS:
+            if needle in error:
+                return hint
+        return ""
+
+    @staticmethod
+    def readable(code):
+        """Traceback lines that point into the AI's own code, plus the line text."""
+        tb = traceback.format_exc()
+        lines = code.splitlines()
+        out = []
+        for frame in traceback.extract_tb(sys.exc_info()[2]):
+            if frame.filename == "<blendwme>" and 0 < frame.lineno <= len(lines):
+                out.append(f"line {frame.lineno}: {lines[frame.lineno - 1].strip()}")
+        last = tb.strip().splitlines()[-1]
+        return (" | ".join(out[-3:]) + "\n" if out else "") + last
+
+
+class StepExecutor:
+    """Runs one AI step on the live scene and describes what happened.
+
+    Order: blocklist -> compile -> repair -> pre-check -> snapshot + checkpoint
+    + undo push -> run with bounds -> on failure roll back and restore -> commit
+    or undo the helper ledger -> diff, tag authors, report.
+    """
+
+    def __init__(self, guards, rollback, errors):
+        """Compose the executor from its guard, rollback and error-report parts."""
+        self.guards = guards
+        self.rollback = rollback
+        self.errors = errors
+
+    def _prepare(self, code):
+        """(original, compiled, repairs, None) ready to run, or (..., refusal dict)."""
+        blocked = self.guards.check_code(code)
+        if blocked:
+            return None, None, None, {"ok": False, "error": blocked}
+        try:
+            compile(code, "<blendwme>", "exec")
+        except SyntaxError as e:
+            return None, None, None, {"ok": False, "error": f"SyntaxError line {e.lineno}: {e.msg}. "
+                                                         f"{(e.text or '').strip()}",
+                                      "rolled_back": "Nothing ran."}
+        # Repair mechanical API slips first; the pre-check only sees what is left.
+        fixed, repairs = repair.repair(code)
+        compiled = compile(fixed, "<blendwme>", "exec")
+        problems = precheck.check(fixed)
+        if problems:
+            result = {"ok": False, "error": "Pre-check found names that do not exist in Blender "
+                                            + bpy.app.version_string + ":\n" + "\n".join(problems),
+                      "rolled_back": "Nothing ran. Fix these names and send the whole step again."}
+            if repairs:
+                result["auto_repaired"] = repairs
+            return None, None, None, result
+        return code, compiled, repairs, None
+
+    def _execute(self, compiled, original):
+        """Run compiled step code with its guards. Returns (ok, error text, printed output)."""
+        stdout = io.StringIO()
+        window, area, region = helpers.find_view3d()
+        try:
+            with contextlib.redirect_stdout(stdout), self.guards.bwm_importable(), self.guards.bounded_python():
+                if window:
+                    with bpy.context.temp_override(window=window, area=area, region=region,
+                                                   screen=window.screen):
+                        exec(compiled, self.guards.namespace())
+                else:
+                    exec(compiled, self.guards.namespace())
+        except Exception:
+            return False, self.errors.readable(original), stdout.getvalue()   # the model's own line numbers
+        return True, None, stdout.getvalue()
+
+    def run(self, code, title="AI step", author="ai"):
+        """Run code on the live scene. Returns a dict for the AI."""
+        original, compiled, repairs, refusal = self._prepare(code)
+        if refusal is not None:
+            return refusal
+        del repair.NOTES[:]
+        helpers.begin_step()
+
+        before = scene_info.snapshot()
+        before_ids = self.rollback.id_pointers()
+        try:
+            checkpoint = recovery.capture()
+        except Exception as error:
+            helpers.end_step(False)
+            return {"ok": False, "error": str(error), "rolled_back": "Nothing ran; checkpoint creation failed."}
+        self.guards.undo_push(f"Before BlendWMe: {title}")
+        ok, error, printed = self._execute(compiled, original)
+        repairs = repairs + [n for n in repair.NOTES if n not in repairs]
+        removed = 0
+        if not ok:
+            removed = self.rollback.roll_back(before_ids)
+            recovery.restore(checkpoint)
+        else:
+            recovery.discard(checkpoint)
+        # Earlier AI objects this step replaced: deleted on success, restored on failure.
+        helpers.end_step(ok)
+        try:
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
+        after = scene_info.snapshot()
+        lines, changed = scene_info.diff(before, after)
+        # Tag every object this step created, by identity: a replaced object keeps its old name,
+        # so a name-based diff would see it as "modified" and leave it untagged.
+        new_names = [o.name for o in bpy.data.objects if o.as_pointer() not in before_ids["objects"]]
+        scene_info.tag_author(new_names, author)
+        self.guards.undo_push(f"BlendWMe: {title}")
+        return self._report(ok, error, printed, repairs, removed, checkpoint, before_ids, lines, changed)
+
+    def _report(self, ok, error, printed, repairs, removed, checkpoint, before_ids, lines, changed):
+        """The result dict for the AI (and `_changed` for the UI)."""
+        result = {"ok": ok}
+        if ok:
+            in_scene = {o.as_pointer() for o in bpy.context.scene.objects}
+            lost = [o.name for o in bpy.data.objects
+                    if o.as_pointer() not in before_ids["objects"] and o.as_pointer() not in in_scene]
+            if lost:
+                result["warning"] = (f"{len(lost)} new object(s) are NOT in the scene, so nobody can see them: "
+                                     f"{lost[:8]}. Link them with bwm.collection(name).objects.link(obj) or "
+                                     "C.scene.collection.objects.link(obj).")
+        if repairs:
+            result["auto_repaired"] = repairs[:12]
+            result["repair_note"] = ("BlendWMe fixed these small API slips and ran the step"
+                                     + (" successfully" if ok else "")
+                                     + ". Write it the fixed way next time.")
+        if helpers.NOTES:
+            result["helper_notes"] = list(helpers.NOTES)[:8]
+        if printed:
+            result["printed"] = printed[:MAX_OUTPUT] + ("..." if len(printed) > MAX_OUTPUT else "")
+        if error:
+            result["recovery_checkpoint"] = checkpoint[0]
+            result["recovery_scope"] = _RECOVERY_SCOPE
+            result["error"] = error
+            hint = self.errors.hint(error)
+            if hint:
+                result["hint"] = hint
+            result["rolled_back"] = (f"Removed {removed} new item(s) this step created. "
+                                     "Fix the code and run the WHOLE step again."
+                                     if removed else "Nothing new was kept. Fix the code and run the whole step again.")
+            if lines:
+                result["note"] = ("These EXISTING objects were changed before the error and keep that change: "
+                                  + "; ".join(lines[:10]))
+        result["changes"] = lines[:60] if lines else ["(no object-level changes)"]
+        result["mode"] = bpy.context.mode
+        result["_changed"] = changed  # used by the UI, removed before sending
+        return result
+
+
+executor = StepExecutor(StepGuards(), Rollback(), ErrorReport())
+run = executor.run
+check_code = StepGuards.check_code
+_bounded_python = StepGuards.bounded_python
+_undo_push = StepGuards.undo_push
+_bwm_importable = StepGuards.bwm_importable
+_namespace = StepGuards.namespace
+_id_pointers = Rollback.id_pointers
+_roll_back = executor.rollback.roll_back
+_hint = ErrorReport.hint
+_readable_error = ErrorReport.readable
