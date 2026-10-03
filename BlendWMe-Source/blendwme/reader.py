@@ -1,10 +1,15 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """A selectable formatted reader inside Blender, independent of panel theme."""
 import bpy
 
 from . import draw2d as d, richtext, theme
 
+__author__ = "definitelynotironman"
+
 
 def content(context, kind="all"):
+    """The text to read: the current draft, or the card, conversation and plan together."""
     from . import panel
     from .state import session
     if kind == "draft":
@@ -22,6 +27,12 @@ def content(context, kind="all"):
 
 
 class BWM_OT_reader(bpy.types.Operator):
+    """A full-screen reader in the 3D Viewport with formatted text, selection and copy.
+
+    It keeps the glyph positions it drew, so mouse selection uses exactly the
+    font, size and scroll of the drawing. Ctrl+C copies the rendered text and
+    Shift+Ctrl+C the original Markdown.
+    """
     bl_idname = "blendwme.reader"
     bl_label = "Read Full Text"
     bl_description = "Read complete text; Ctrl+A selects all, Ctrl+C copies rendered text, Shift+Ctrl+C copies original"
@@ -29,6 +40,7 @@ class BWM_OT_reader(bpy.types.Operator):
                                         ("draft", "Current draft", "")], default="all")
 
     def invoke(self, context, event):
+        """Collect the text and start the modal reader (not available in background Blender)."""
         if bpy.app.background:
             return {"CANCELLED"}
         self.source = content(context, self.kind)
@@ -46,10 +58,12 @@ class BWM_OT_reader(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def close(self):
+        """Remove the draw handler and redraw the area."""
         bpy.types.SpaceView3D.draw_handler_remove(self.handler, "WINDOW")
         self.area.tag_redraw()
 
     def modal(self, context, event):
+        """Selection, copy, scrolling and closing; events in other areas pass through."""
         if context.window != self.window or context.area != self.area:
             return {"PASS_THROUGH"}
         if event.type in {"ESC", "RIGHTMOUSE"}:
@@ -81,6 +95,7 @@ class BWM_OT_reader(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def index_at(self, event):
+        """The character index nearest the mouse, from the glyphs drawn last."""
         if not self.glyphs:
             return 0
         # Cached drawing coordinates keep mouse selection in the same font and
@@ -90,6 +105,7 @@ class BWM_OT_reader(bpy.types.Operator):
         return index
 
     def draw_reader(self):
+        """Draw the reader box, the visible formatted lines and the selection."""
         if bpy.context.area != self.area or bpy.context.region.type != "WINDOW":
             return
         import gpu

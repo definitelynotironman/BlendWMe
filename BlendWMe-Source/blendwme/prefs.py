@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Settings (saved in Blender's preferences) and per-session options (mode, prompt, references).
 
 The settings are drawn with Blender's own widgets everywhere (rule R7): in the
@@ -20,6 +22,8 @@ import bpy
 
 from .state import session
 
+__author__ = "definitelynotironman"
+
 THEMES = [("GRAPHITE", "Graphite", "Graphite Paper: pencil on paper. Red only when you need to look", 0),
           ("RED", "Red", "Red on Paper: bold and warm", 1),
           ("BLENDER", "Blender Grey", "Sits quietly in Blender's dark interface, orange indicators", 2),
@@ -30,6 +34,7 @@ CORNERS = [("TR", "Top right", ""), ("TL", "Top left", ""), ("BR", "Bottom right
 
 
 def addon_prefs(context=None):
+    """BlendWMe's AddonPreferences, or None when the add-on is loaded as a plain module (tests)."""
     context = context or bpy.context
     addon = context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
@@ -54,6 +59,7 @@ def log_folder(context=None):
 
 
 def _redraw(self, context):
+    """Property update callback: redraw the panel."""
     session.changed_flag = True
 
 
@@ -68,6 +74,11 @@ def _theme_changed(self, context):
 
 
 class BWM_Preferences(bpy.types.AddonPreferences):
+    """BlendWMe's saved settings (Preferences > Add-ons > BlendWMe).
+
+    Hidden properties store the panel's placement (corner and offset in design
+    units) and its size, so it reopens where the user left it.
+    """
     bl_idname = __package__
 
     # -- the settings screen -------------------------------------------------
@@ -170,141 +181,168 @@ class BWM_Preferences(bpy.types.AddonPreferences):
     prefs_note_done: bpy.props.BoolProperty(default=False, options={"HIDDEN"})
 
     def draw(self, context):
+        """Draw every setting with the shared SettingsForm."""
         draw_settings(self.layout, self, context)
 
 
-def _heading(layout, words, icon="NONE"):
-    row = layout.row()
-    row.label(text=words, icon=icon)
-    return row
+class SettingsForm:
+    """Every setting drawn with Blender's own widgets, in one order for every place it appears.
+
+    The Settings popover, the Blender UI sidebar and Preferences > Add-ons all
+    call draw_settings, so a setting added here shows up everywhere at once."""
+
+    @staticmethod
+    def _heading(layout, words, icon="NONE"):
+        """A section heading row with an icon."""
+        row = layout.row()
+        row.label(text=words, icon=icon)
+        return row
+
+    @staticmethod
+    def draw_brains(layout, context):
+        """Who works with you: Claude or Codex, and whether each is installed and signed in."""
+        from . import setup_checks
+        s = getattr(context.window_manager, "blendwme", None)
+        col = layout.column()
+        _heading(col, "Who works with you", "COMMUNITY")
+        if s is not None:
+            col.row(align=True).prop(s, "brain", expand=True)
+        for brain, words in (("claude", "Claude Code"), ("codex", "Codex CLI")):
+            level, message = setup_checks.results.get(brain, (None, ""))
+            if level == setup_checks.OK:
+                text, icon = f"{words}: installed and signed in", "CHECKMARK"
+            elif level == setup_checks.RUNNING:
+                text, icon = f"{words}: checking...", "SORTTIME"
+            elif level is None:
+                text, icon = f"{words}: not checked yet", "DOT"
+            else:
+                text, icon = message, "ERROR"
+            wrapped(col, text, icon=icon, width=46)
+        row = col.row(align=True)
+        row.operator("blendwme.setup_check", text="Check again", icon="FILE_REFRESH").which = "ALL"
+        level = setup_checks.results.get("mcp", (None, ""))[0]
+        if level in (setup_checks.ERROR, setup_checks.WARN):
+            row.operator("blendwme.setup_check", text="Install the tools server", icon="IMPORT").which = "install"
+
+    @staticmethod
+    def draw_references(layout, context):
+        """The two reference image fields for the current task."""
+        s = getattr(context.window_manager, "blendwme", None)
+        if s is None:
+            return
+        col = layout.column(align=True)
+        _heading(col, "References for this task", "IMAGE_REFERENCE")
+        col.prop(s, "reference_1", text="")
+        col.prop(s, "reference_2", text="")
+
+    @staticmethod
+    def draw_theme(layout, p):
+        """The five theme buttons."""
+        col = layout.column()
+        _heading(col, "Theme", "COLOR")
+        grid = col.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
+        for key, name, _, _ in THEMES:
+            grid.prop_enum(p, "theme", key, text=name)
+
+    @staticmethod
+    def draw_panel_options(layout, p):
+        """Panel size, text and icon size and placement (only for drawn themes)."""
+        col = layout.column()
+        _heading(col, "Panel", "WINDOW")
+        if p.theme == "NATIVE":
+            wrapped(col, "Blender UI: BlendWMe is here in the sidebar. Pick a drawn theme for the floating panel.",
+                    width=46)
+            return
+        sub = col.column(align=True)
+        sub.prop(p, "panel_size")
+        sub.prop(p, "text_size")
+        sub.prop(p, "icon_size")
+        col.prop(p, "minimize_on_take_control")
+        col.prop(p, "avoid_gizmo")
+        col.operator("blendwme.panel_reset", text="Put the panel back on the right", icon="LOOP_BACK")
+
+    @staticmethod
+    def draw_relay(layout, p):
+        """Hand-over, auto relay, returning reviews, Auto pace and pointers."""
+        col = layout.column()
+        _heading(col, "Relay, pace and pointers", "UV_SYNC_SELECT")
+        col.prop(p, "offer_handover")
+        col.prop(p, "auto_relay")
+        col.prop(p, "returning_reviews")
+        col.prop(p, "pace", text="Auto pace (s a step)")
+        col.prop(p, "show_pointers")
+
+    @staticmethod
+    def wrapped(layout, text, icon="NONE", width=46):
+        """A few labels that wrap long text (Blender's labels do not wrap by themselves)."""
+        import textwrap
+        col = layout.column(align=True)
+        for i, line in enumerate(textwrap.wrap(text, width) or [""]):
+            col.label(text=line, icon=icon if i == 0 else "BLANK1" if icon != "NONE" else "NONE")
+        return col
+
+    @staticmethod
+    def draw_settings(layout, p, context=None):
+        """Every setting, in Blender's own widgets: the Settings popover, the sidebar and the
+        add-on preferences all draw this (rule R7: native where Blender is best)."""
+        context = context or bpy.context
+        col = layout.column()
+        draw_brains(col.box(), context)
+        draw_references(col.box(), context)
+        draw_theme(col.box(), p)
+        draw_panel_options(col.box(), p)
+        draw_relay(col.box(), p)
+        box = col.box()
+        box.prop(p, "show_advanced", icon="TRIA_DOWN" if p.show_advanced else "TRIA_RIGHT", emboss=False)
+        if p.show_advanced:
+            draw_advanced(box, p)
+            draw_tools(box)
+
+    @staticmethod
+    def draw_tools(layout):
+        """The tool buttons behind Advanced: notebook, capture, logs, crash report, install."""
+        col = layout.column(align=True)
+        col.label(text="Tools")
+        col.operator("blendwme.notebook", icon="TEXT")
+        col.operator("blendwme.show_capture", icon="IMAGE_DATA")
+        col.operator("blendwme.open_logs", icon="FILE_FOLDER")
+        col.operator("blendwme.save_log", icon="FILE_TICK")
+        col.operator("blendwme.copy_log", icon="COPYDOWN")
+        col.operator("blendwme.crash_report", icon="PACKAGE")
+        col.operator("blendwme.setup_check", text="Install the Tools Server", icon="IMPORT").which = "install"
+        col.operator("blendwme.copy_terminal_command", icon="CONSOLE")
+
+    @staticmethod
+    def draw_advanced(layout, p):
+        """The advanced settings: level, motion, brain paths and models, folders, logs."""
+        col = layout.column()
+        col.prop(p, "level")
+        col.prop(p, "reduce_motion")
+        col.prop(p, "ask_handoff_note")
+        col.separator()
+        col.prop(p, "claude_path")
+        row = col.row(align=True)
+        row.prop(p, "claude_model")
+        row.prop(p, "claude_effort", text="")
+        col.prop(p, "codex_path")
+        col.prop(p, "codex_model")
+        col.separator()
+        col.prop(p, "workspace_folder")
+        col.prop(p, "mcp_python")
+        col.prop(p, "log_folder")
+        col.prop(p, "auto_save_logs")
 
 
-def draw_brains(layout, context):
-    """Who works with you: Claude or Codex, and whether each is installed and signed in."""
-    from . import setup_checks
-    s = getattr(context.window_manager, "blendwme", None)
-    col = layout.column()
-    _heading(col, "Who works with you", "COMMUNITY")
-    if s is not None:
-        col.row(align=True).prop(s, "brain", expand=True)
-    for brain, words in (("claude", "Claude Code"), ("codex", "Codex CLI")):
-        level, message = setup_checks.results.get(brain, (None, ""))
-        if level == setup_checks.OK:
-            text, icon = f"{words}: installed and signed in", "CHECKMARK"
-        elif level == setup_checks.RUNNING:
-            text, icon = f"{words}: checking...", "SORTTIME"
-        elif level is None:
-            text, icon = f"{words}: not checked yet", "DOT"
-        else:
-            text, icon = message, "ERROR"
-        wrapped(col, text, icon=icon, width=46)
-    row = col.row(align=True)
-    row.operator("blendwme.setup_check", text="Check again", icon="FILE_REFRESH").which = "ALL"
-    level = setup_checks.results.get("mcp", (None, ""))[0]
-    if level in (setup_checks.ERROR, setup_checks.WARN):
-        row.operator("blendwme.setup_check", text="Install the tools server", icon="IMPORT").which = "install"
-
-
-def draw_references(layout, context):
-    s = getattr(context.window_manager, "blendwme", None)
-    if s is None:
-        return
-    col = layout.column(align=True)
-    _heading(col, "References for this task", "IMAGE_REFERENCE")
-    col.prop(s, "reference_1", text="")
-    col.prop(s, "reference_2", text="")
-
-
-def draw_theme(layout, p):
-    col = layout.column()
-    _heading(col, "Theme", "COLOR")
-    grid = col.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
-    for key, name, _, _ in THEMES:
-        grid.prop_enum(p, "theme", key, text=name)
-
-
-def draw_panel_options(layout, p):
-    col = layout.column()
-    _heading(col, "Panel", "WINDOW")
-    if p.theme == "NATIVE":
-        wrapped(col, "Blender UI: BlendWMe is here in the sidebar. Pick a drawn theme for the floating panel.",
-                width=46)
-        return
-    sub = col.column(align=True)
-    sub.prop(p, "panel_size")
-    sub.prop(p, "text_size")
-    sub.prop(p, "icon_size")
-    col.prop(p, "minimize_on_take_control")
-    col.prop(p, "avoid_gizmo")
-    col.operator("blendwme.panel_reset", text="Put the panel back on the right", icon="LOOP_BACK")
-
-
-def draw_relay(layout, p):
-    col = layout.column()
-    _heading(col, "Relay, pace and pointers", "UV_SYNC_SELECT")
-    col.prop(p, "offer_handover")
-    col.prop(p, "auto_relay")
-    col.prop(p, "returning_reviews")
-    col.prop(p, "pace", text="Auto pace (s a step)")
-    col.prop(p, "show_pointers")
-
-
-def wrapped(layout, text, icon="NONE", width=46):
-    """A few labels that wrap long text (Blender's labels do not wrap by themselves)."""
-    import textwrap
-    col = layout.column(align=True)
-    for i, line in enumerate(textwrap.wrap(text, width) or [""]):
-        col.label(text=line, icon=icon if i == 0 else "BLANK1" if icon != "NONE" else "NONE")
-    return col
-
-
-def draw_settings(layout, p, context=None):
-    """Every setting, in Blender's own widgets: the Settings popover, the sidebar and the
-    add-on preferences all draw this (rule R7: native where Blender is best)."""
-    context = context or bpy.context
-    col = layout.column()
-    draw_brains(col.box(), context)
-    draw_references(col.box(), context)
-    draw_theme(col.box(), p)
-    draw_panel_options(col.box(), p)
-    draw_relay(col.box(), p)
-    box = col.box()
-    box.prop(p, "show_advanced", icon="TRIA_DOWN" if p.show_advanced else "TRIA_RIGHT", emboss=False)
-    if p.show_advanced:
-        draw_advanced(box, p)
-        draw_tools(box)
-
-
-def draw_tools(layout):
-    col = layout.column(align=True)
-    col.label(text="Tools")
-    col.operator("blendwme.notebook", icon="TEXT")
-    col.operator("blendwme.show_capture", icon="IMAGE_DATA")
-    col.operator("blendwme.open_logs", icon="FILE_FOLDER")
-    col.operator("blendwme.save_log", icon="FILE_TICK")
-    col.operator("blendwme.copy_log", icon="COPYDOWN")
-    col.operator("blendwme.crash_report", icon="PACKAGE")
-    col.operator("blendwme.setup_check", text="Install the Tools Server", icon="IMPORT").which = "install"
-    col.operator("blendwme.copy_terminal_command", icon="CONSOLE")
-
-
-def draw_advanced(layout, p):
-    col = layout.column()
-    col.prop(p, "level")
-    col.prop(p, "reduce_motion")
-    col.prop(p, "ask_handoff_note")
-    col.separator()
-    col.prop(p, "claude_path")
-    row = col.row(align=True)
-    row.prop(p, "claude_model")
-    row.prop(p, "claude_effort", text="")
-    col.prop(p, "codex_path")
-    col.prop(p, "codex_model")
-    col.separator()
-    col.prop(p, "workspace_folder")
-    col.prop(p, "mcp_python")
-    col.prop(p, "log_folder")
-    col.prop(p, "auto_save_logs")
+_heading = SettingsForm._heading
+draw_brains = SettingsForm.draw_brains
+draw_references = SettingsForm.draw_references
+draw_theme = SettingsForm.draw_theme
+draw_panel_options = SettingsForm.draw_panel_options
+draw_relay = SettingsForm.draw_relay
+wrapped = SettingsForm.wrapped
+draw_settings = SettingsForm.draw_settings
+draw_tools = SettingsForm.draw_tools
+draw_advanced = SettingsForm.draw_advanced
 
 
 # ----------------------------------------------------------------------
@@ -316,6 +354,7 @@ MODES = [("AUTO", "Auto", "Build together; pause, edit and resume any time", 2),
 
 
 def _sync(self, context):
+    """Mode update callback: mirror the mode into the session and wake an obsolete lesson wait."""
     if session.mode != self.mode:
         # Mode changes take effect between operations. Wake an obsolete lesson
         # wait so it cannot keep polling or authorize a later demonstration.
@@ -327,6 +366,7 @@ def _sync(self, context):
 
 
 class BWM_Session(bpy.types.PropertyGroup):
+    """Per-session options on the window manager (never saved into the .blend)."""
     prompt: bpy.props.StringProperty(name="", description="Tell BlendWMe what to make, or ask it something")
     brain: bpy.props.EnumProperty(
         name="Brain",
@@ -353,6 +393,7 @@ def sync_session(context=None):
 
 
 def gather_config(context=None):
+    """The settings a turn needs, as a plain dict the relay can use from any thread."""
     context = context or bpy.context
     p = addon_prefs(context)
     s = context.window_manager.blendwme
@@ -360,6 +401,7 @@ def gather_config(context=None):
     refs = [bpy.path.abspath(r) for r in (s.reference_1, s.reference_2) if r.strip()]
 
     def path(value):
+        """An absolute path for a non-empty setting, else ''."""
         return bpy.path.abspath(value) if value and value.strip() else ""
 
     if p is None:     # loaded as a plain module (tests): the defaults
@@ -389,12 +431,14 @@ classes = (BWM_Preferences, BWM_Session)
 
 
 def register():
+    """Register the preferences and the session property group."""
     for c in classes:
         bpy.utils.register_class(c)
     bpy.types.WindowManager.blendwme = bpy.props.PointerProperty(type=BWM_Session)
 
 
 def unregister():
+    """Remove the session property group and unregister the classes."""
     if hasattr(bpy.types.WindowManager, "blendwme"):
         del bpy.types.WindowManager.blendwme
     for c in reversed(classes):

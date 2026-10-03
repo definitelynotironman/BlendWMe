@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Shared GPU boxes, smooth curves/diagonals, crisp text and measured layouts.
 
 SDF boundaries use pixel-sized coverage; solid colors retain the theme values.
@@ -12,6 +14,8 @@ import blf
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
+
+__author__ = "definitelynotironman"
 
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 FONT_FILES = {"BLACK": "ArchivoBlack-Regular.ttf", "HAND": "PatrickHand-Regular.ttf", "BODY": "Archivo-Regular.ttf"}
@@ -38,9 +42,11 @@ class scaled:
     """with d.scaled(zoom, font, icon, roles): ... draws the panel at its size settings."""
 
     def __init__(self, zoom=1.0, font=1.0, icon=1.0, roles=None):
+        """Remember the panel's size settings and the theme's font roles."""
         self.zoom, self.font, self.icon, self.roles = zoom, font, icon, roles or {}
 
     def __enter__(self):
+        """Apply the settings to everything drawn inside the block."""
         global FONT_SCALE, ICON_SCALE, ZOOM, ROLES, ROLE_SIZE
         ZOOM, FONT_SCALE, ICON_SCALE = self.zoom, self.font, self.icon
         # A role is "BODY" or ("BODY", 0.84): the font to use and how big to set it.
@@ -49,6 +55,7 @@ class scaled:
         return self
 
     def __exit__(self, *exc):
+        """Put Blender's own scale back (the viewport indicators use it)."""
         global FONT_SCALE, ICON_SCALE, ZOOM, ALPHA, ROLES, ROLE_SIZE
         ZOOM, FONT_SCALE, ICON_SCALE, ALPHA, ROLES, ROLE_SIZE = 1.0, 1.0, 1.0, 1.0, {}, {}
         return False
@@ -58,15 +65,18 @@ class faded:
     """with d.faded(0.5): ... multiplies the opacity of everything drawn inside."""
 
     def __init__(self, alpha):
+        """Opacity factor 0..1 for the block."""
         self.alpha = max(0.0, min(1.0, alpha))
 
     def __enter__(self):
+        """Multiply the current opacity (fades nest)."""
         global ALPHA
         self.prev = ALPHA
         ALPHA = ALPHA * self.alpha
         return self
 
     def __exit__(self, *exc):
+        """Restore the opacity from before the block."""
         global ALPHA
         ALPHA = self.prev
         return False
@@ -88,6 +98,7 @@ def _c(color):
 # Fonts and scale
 # ----------------------------------------------------------------------
 def load_fonts():
+    """Load the bundled fonts with blf (0, Blender's font, when one is missing)."""
     for key, name in FONT_FILES.items():
         path = os.path.join(FONT_DIR, name)
         fid = blf.load(path) if os.path.isfile(path) else -1
@@ -95,6 +106,7 @@ def load_fonts():
 
 
 def unload_fonts():
+    """Unload the bundled fonts and forget their ids (a later draw reloads them)."""
     for key, name in FONT_FILES.items():
         if _font_ids.get(key):
             try:
@@ -105,6 +117,7 @@ def unload_fonts():
 
 
 def font(key):
+    """The blf id for a font role, after the theme's role mapping (CODE uses BODY)."""
     if not _font_ids:
         load_fonts()
     return _font_ids.get(ROLES.get(key, "BODY" if key == "CODE" else key), 0)
@@ -164,6 +177,7 @@ void main(){
 
 
 def _box_shader():
+    """The SDF rounded-box shader, built once; None when the GPU cannot build it."""
     if _BOX["shader"] is None and not _BOX["failed"]:
         try:
             iface = gpu.types.GPUStageInterfaceInfo("bwm_box_iface")
@@ -231,6 +245,7 @@ def sdf_box(x, y, w, h, radius, border, fill, edge):
 
 
 def _plain_box(x, y, w, h, border, fill, edge):
+    """Fallback box from plain rectangles when the shader is unavailable."""
     if fill[3] > 0:
         _rect_px(x + border, y + border, w - 2 * border, h - 2 * border, fill)
     if border:
@@ -241,10 +256,12 @@ def _plain_box(x, y, w, h, border, fill, edge):
 
 
 def _uniform():
+    """Blender's built-in single-colour shader."""
     return gpu.shader.from_builtin("UNIFORM_COLOR")
 
 
 def _rect_px(x, y, w, h, color):
+    """A filled rectangle at exact pixel coordinates."""
     if w <= 0 or h <= 0:
         return
     shader = _uniform()
@@ -290,6 +307,7 @@ def circle(cx, cy, r, color, width=2.0):
 # Lines: POLYLINE with smoothing off, whole-pixel width (hard pixels on curves too)
 # ----------------------------------------------------------------------
 def _poly_shader(color, width):
+    """The built-in polyline shader set up for this colour and whole-pixel width."""
     shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
     vp = gpu.state.viewport_get()
     shader.uniform_float("viewportSize", (vp[2], vp[3]))
@@ -309,6 +327,7 @@ def _snap_points(points, width):
 
 
 def polyline(points, color, width=2.0, closed=False):
+    """A connected line through points (closed joins the end to the start)."""
     if len(points) < 2:
         return
     pts = list(points) + ([points[0]] if closed else [])
@@ -388,6 +407,7 @@ def dashed_path(points, color, width=2.0, dash=7.0, gap=5.0, offset=0.0, closed=
 
 
 def circle_points(cx, cy, r, count=40):
+    """count points evenly around a circle."""
     return [(cx + r * math.cos(2 * math.pi * i / count), cy + r * math.sin(2 * math.pi * i / count))
             for i in range(count)]
 
@@ -396,6 +416,7 @@ def circle_points(cx, cy, r, count=40):
 # Icons (sizes follow the Icon size setting)
 # ----------------------------------------------------------------------
 def diamond(cx, cy, r, color, width=2.0, filled=False):
+    """A diamond icon (outline or filled), sized by the Icon size setting."""
     r *= ICON_SCALE
     pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
     if filled:
@@ -417,6 +438,7 @@ def check_mark(x, y, size, color, width=2.0):
 
 
 def cross(cx, cy, size, color, width=2.0):
+    """An X icon, sized by the Icon size setting."""
     h = size * ICON_SCALE / 2
     segments([((cx - h, cy - h), (cx + h, cy + h)), ((cx - h, cy + h), (cx + h, cy - h))], color, width)
 
@@ -430,6 +452,7 @@ def pencil_icon(x, y, size, color, width=1.6):
 
 
 def eye_icon(cx, cy, size, color, width=2.0):
+    """An eye icon (lid outline and pupil), sized by the Icon size setting."""
     size *= ICON_SCALE
     w, h = size, size * 0.55
     top = [(cx - w / 2 + w * i / 12, cy + h / 2 * math.sin(math.pi * i / 12)) for i in range(13)]
@@ -492,6 +515,7 @@ class clip:
     """`with clip(x, y, w, h):` limits drawing (shapes and text) to a rectangle."""
 
     def __init__(self, x, y, w, h):
+        """The clip rectangle, intersected with the enclosing clip."""
         x0, y0 = math.floor(x), math.floor(y)
         x1, y1 = math.ceil(x + max(0, w)), math.ceil(y + max(0, h))
         if _clips:
@@ -500,11 +524,13 @@ class clip:
         self.r = (x0, y0, max(x0, x1), max(y0, y1))
 
     def __enter__(self):
+        """Push the rectangle and switch the scissor test to it."""
         _clips.append(self.r)
         self._apply(self.r)
         return self
 
     def __exit__(self, *exc):
+        """Pop it and restore the enclosing clip (or switch clipping off)."""
         _clips.pop()
         if _clips:
             self._apply(_clips[-1])
@@ -517,6 +543,7 @@ class clip:
 
     @staticmethod
     def _apply(r):
+        """Set the GPU scissor to (x0, y0, x1, y1); ignored where scissoring is unavailable."""
         try:
             gpu.state.scissor_test_set(True)
             gpu.state.scissor_set(r[0], r[1], r[2] - r[0], r[3] - r[1])
@@ -541,10 +568,12 @@ def keep_together(value):
 
 
 def _shown(value):
+    """Text as drawn: non-breaking spaces become normal spaces."""
     return value.replace(NBSP, " ")
 
 
 def _measure(fid, value):
+    """Width in pixels of a string with the font's current size."""
     return blf.dimensions(fid, _shown(value))[0]
 
 
@@ -558,6 +587,7 @@ def text(key, size, x, y, value, color):
 
 
 def width_of(key, size, value):
+    """Width in pixels of one line of text in a font role and size."""
     fid = font(key)
     blf.size(fid, _fs(size, key))
     return _measure(fid, str(value))
@@ -597,6 +627,7 @@ def tracked(key, size, x, y, value, color, tracking=0.08):
 
 
 def tracked_width(key, size, value, tracking=0.08):
+    """Width of letter-spaced text (see tracked)."""
     size = _fs(size, key)
     fid = font(key)
     blf.size(fid, size)
@@ -634,6 +665,7 @@ def _break_word(fid, word, max_width):
 
 
 def _wrap_paragraph(fid, paragraph, max_width):
+    """Greedy word wrap of one paragraph, with hyphenated long words and no one-word orphan."""
     lines = []
     line = ""
     for word in paragraph.split(" "):
@@ -694,6 +726,7 @@ def wrap(key, size, value, max_width, balance=False):
 
 
 def line_height(key, size):
+    """Line height for a font role and size: round(1.25 x size) (R11)."""
     return max(1, round(_fs(size, key) * LINE))
 
 
@@ -717,6 +750,7 @@ def paragraph(key, size, x, top, value, color, max_width, align="left", max_line
 
 
 def paragraph_height(key, size, value, max_width, max_lines=None, balance=False):
+    """The height paragraph() would use for this text, without drawing it."""
     lines = wrap(key, size, value, max_width, balance)
     if max_lines is not None:
         lines = lines[:max_lines]

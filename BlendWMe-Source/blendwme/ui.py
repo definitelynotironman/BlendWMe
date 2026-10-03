@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The BlendWMe sidebar (3D Viewport > N > BlendWMe) and its buttons."""
 
 import os
@@ -12,12 +14,15 @@ from .tool_host import label as brain_label
 from .state import (ASKING, DONE, ERROR, IDLE, PAUSED, STATUS_TEXT, THINKING,
                     WAIT_NEXT, WAIT_USER, WORKING, session)
 
+__author__ = "definitelynotironman"
+
 
 # ----------------------------------------------------------------------
 # Operators
 # ----------------------------------------------------------------------
 
 class BWM_OT_send(bpy.types.Operator):
+    """Send the prompt; while BlendWMe works it steers the brain or answers its question."""
     bl_idname = "blendwme.send"
     bl_label = "Send"
     bl_description = "Send your message. While BlendWMe works, this steers it or answers its question"
@@ -25,6 +30,7 @@ class BWM_OT_send(bpy.types.Operator):
     new_task: bpy.props.BoolProperty(default=False)
 
     def execute(self, context):
+        """Send the prompt to the relay (resetting it first for a new task) and clear the field."""
         s = context.window_manager.blendwme
         text = s.prompt.strip()
         if not text:
@@ -41,21 +47,25 @@ class BWM_OT_send(bpy.types.Operator):
 
 
 class BWM_OT_paste(bpy.types.Operator):
+    """Paste a long prompt from the clipboard into the prompt field."""
     bl_idname = "blendwme.paste_prompt"
     bl_label = "Paste"
     bl_description = "Paste a long prompt from the clipboard"
 
     def execute(self, context):
+        """Copy the clipboard text into the prompt."""
         context.window_manager.blendwme.prompt = context.window_manager.clipboard[:12000]
         return {"FINISHED"}
 
 
 class BWM_OT_pause(bpy.types.Operator):
+    """Pause after the current action so the user can edit freely."""
     bl_idname = "blendwme.pause"
     bl_label = "Pause and Take Control"
     bl_description = "BlendWMe stops after the current action. Edit freely, then Resume"
 
     def execute(self, context):
+        """Set the pause flag, say so in the conversation and wake any wait."""
         session.pause_flag.set()
         session.add("info", "Pausing after the current action. The scene is yours.")
         session.wake()
@@ -63,11 +73,13 @@ class BWM_OT_pause(bpy.types.Operator):
 
 
 class BWM_OT_resume(bpy.types.Operator):
+    """Hand back to BlendWMe; it reads the user's changes and continues from that version."""
     bl_idname = "blendwme.resume"
     bl_label = "Resume"
     bl_description = "Hand back to BlendWMe. It will look at what you changed and continue from your version"
 
     def execute(self, context):
+        """Back to Object Mode, then clear the pause, or continue the conversation when no brain runs."""
         if context.mode != "OBJECT":
             try:
                 bpy.ops.object.mode_set(mode="OBJECT")
@@ -83,26 +95,35 @@ class BWM_OT_resume(bpy.types.Operator):
 
 
 class BWM_OT_stop(bpy.types.Operator):
+    """Stop the current task, keeping everything already built."""
     bl_idname = "blendwme.stop"
     bl_label = "Stop"
     bl_description = "Stop the current task. Everything already built stays"
 
     def execute(self, context):
+        """Stop the running brain."""
         relay.stop()
         return {"FINISHED"}
 
 
 class BWM_OT_next(bpy.types.Operator):
+    """Continue to the next step (a legacy wait kept for old saved states)."""
     bl_idname = "blendwme.next"
     bl_label = "Next Step"
     bl_description = "Continue to the next step"
 
     def execute(self, context):
+        """Wake a waiting step."""
         session.wake()
         return {"FINISHED"}
 
 
 class BWM_OT_teach(bpy.types.Operator):
+    """Answer a Teach step: I did it, Hint, Do it for me or Skip.
+
+    Each choice has its own outcome: only 'done' asks the lesson check to
+    confirm the work, and 'skip' records the action as still unpractised.
+    """
     bl_idname = "blendwme.teach"
     bl_label = "Teach Answer"
 
@@ -111,21 +132,25 @@ class BWM_OT_teach(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, properties):
+        """The tooltip for the chosen answer."""
         return {"done": "Tell BlendWMe you finished this step",
                 "show_me": "Let BlendWMe demonstrate this step for you",
                 "skip": "Skip this step; its action remains unpractised", "hint": "Request a hint without marking the step done"}[properties.choice]
 
     def execute(self, context):
+        """Wake the lesson wait with the chosen answer."""
         session.wake(self.choice)
         return {"FINISHED"}
 
 
 class BWM_OT_undo_step(bpy.types.Operator):
+    """Undo the last BlendWMe step (Blender's own undo; only while paused or idle)."""
     bl_idname = "blendwme.undo_step"
     bl_label = "Undo AI Step"
     bl_description = "Undo the last BlendWMe step (same as Ctrl+Z). BlendWMe notices the change"
 
     def execute(self, context):
+        """Run ed.undo, refusing while a brain is working unpaused."""
         if relay.is_running() and not session.pause_flag.is_set():
             self.report({"WARNING"}, "Pause first, then undo.")
             return {"CANCELLED"}
@@ -138,11 +163,17 @@ class BWM_OT_undo_step(bpy.types.Operator):
 
 
 class BWM_OT_new(bpy.types.Operator):
+    """New task / New lesson: end the current work and start fresh, keeping the scene.
+
+    The relay is reset, the journal archives the task (its events stay), and
+    cards, pointers, the plan and the drafts are cleared.
+    """
     bl_idname = "blendwme.new_task"
     bl_label = "New Conversation"
     bl_description = "Start fresh with your scene unchanged; previous conversations stay in the project journal"
 
     def execute(self, context):
+        """Reset the relay, archive the journal task and clear drafts and references."""
         relay.reset()
         from .journal import journal
         journal.record_task("")
@@ -157,11 +188,13 @@ class BWM_OT_new(bpy.types.Operator):
 
 
 class BWM_OT_notebook(bpy.types.Operator):
+    """Put every step BlendWMe ran, with its code, into a Text block."""
     bl_idname = "blendwme.notebook"
     bl_label = "Construction Notebook"
     bl_description = "Put every step BlendWMe ran (with its code) into a Text block you can read and learn from"
 
     def execute(self, context):
+        """Write every step (title, explanation, code) into the 'BlendWMe Notebook' Text block."""
         text = bpy.data.texts.get("BlendWMe Notebook") or bpy.data.texts.new("BlendWMe Notebook")
         out = ["# BlendWMe construction notebook", "# Every step the AI ran, in order.", ""]
         for i, step in enumerate(session.steps, 1):
@@ -181,11 +214,13 @@ class BWM_OT_notebook(bpy.types.Operator):
 
 
 class BWM_OT_copy_log(bpy.types.Operator):
+    """Copy the conversation and activity to the clipboard."""
     bl_idname = "blendwme.copy_log"
     bl_label = "Copy Log"
     bl_description = "Copy the conversation and activity for debugging"
 
     def execute(self, context):
+        """Copy the log text."""
         lines = [f"BlendWMe | brain {brain_label(relay.active)} | steps {len(session.steps)}"]
         for e in session.log:
             lines.append(f"[{e['who']}] {e['text']}" + (f" -- {e['detail']}" if e.get("detail") else ""))
@@ -195,11 +230,13 @@ class BWM_OT_copy_log(bpy.types.Operator):
 
 
 class BWM_OT_save_log(bpy.types.Operator):
+    """Save the whole conversation as .md and .json in the logs folder."""
     bl_idname = "blendwme.save_log"
     bl_label = "Save Full Log"
     bl_description = "Save the whole conversation (every message, all code, results and timings) as .md and .json files"
 
     def execute(self, context):
+        """Write the task log files and report where they went."""
         if not relay.has_conversation():
             self.report({"WARNING"}, "Nothing to save yet.")
             return {"CANCELLED"}
@@ -211,11 +248,13 @@ class BWM_OT_save_log(bpy.types.Operator):
 
 
 class BWM_OT_open_logs(bpy.types.Operator):
+    """Open the logs folder in the system file browser."""
     bl_idname = "blendwme.open_logs"
     bl_label = "Open Logs Folder"
     bl_description = "Open the folder with the saved conversation logs"
 
     def execute(self, context):
+        """Open the folder (creating it first)."""
         folder = prefs.log_folder(context)
         os.makedirs(folder, exist_ok=True)
         bpy.ops.wm.path_open(filepath=folder)
@@ -223,12 +262,14 @@ class BWM_OT_open_logs(bpy.types.Operator):
 
 
 class BWM_OT_crash_report(bpy.types.Operator):
+    """Zip the latest logs with Blender's crash file, ready to check and share."""
     bl_idname = "blendwme.crash_report"
     bl_label = "Make Crash Report"
     bl_description = ("Zip the latest BlendWMe logs with Blender's crash file into the logs folder, "
                       "ready to share. Check it first: it can contain file names and folders")
 
     def execute(self, context):
+        """Build the crash report zip and report its path."""
         from . import logs
         temp_dirs = [tempfile.gettempdir(), bpy.path.abspath(context.preferences.filepaths.temporary_directory)]
         try:
@@ -242,11 +283,13 @@ class BWM_OT_crash_report(bpy.types.Operator):
 
 
 class BWM_OT_save_prefs(bpy.types.Operator):
+    """Save Blender's preferences so the add-on stays enabled after a crash."""
     bl_idname = "blendwme.save_prefs"
     bl_label = "Save Preferences"
     bl_description = "Save Blender's preferences now, so BlendWMe and its shortcut stay on after a restart or a crash"
 
     def execute(self, context):
+        """Hide the note and save Blender's user preferences."""
         p = prefs.addon_prefs(context)
         if p:
             p.prefs_note_done = True
@@ -256,73 +299,93 @@ class BWM_OT_save_prefs(bpy.types.Operator):
 
 
 class BWM_OT_dismiss_prefs_note(bpy.types.Operator):
+    """Hide the Save Preferences note."""
     bl_idname = "blendwme.dismiss_prefs_note"
     bl_label = "Not Now"
     bl_description = "Hide this note"
 
     def execute(self, context):
+        """Remember that the note was dismissed."""
         p = prefs.addon_prefs(context)
         if p:
             p.prefs_note_done = True
         return {"FINISHED"}
 
 
-def sidebar_region(area):
-    return next((r for r in area.regions if r.type == "UI"), None)
+class Sidebar:
+    """The 3D Viewport's sidebar (N) with the BlendWMe tab, used by the Blender UI theme.
 
+    Blender only lets Python pick a sidebar tab after that tab has drawn once,
+    so show_sidebar retries the pick from a short timer."""
 
-def sidebar_shows_blendwme(area):
-    """True when this 3D Viewport's sidebar is open on the BlendWMe tab ("Blender UI" theme)."""
-    try:
-        if not area.spaces.active.show_region_ui:
-            return False
-        region = sidebar_region(area)
-        return region is not None and region.width > 1 and region.active_panel_category == "BlendWMe"
-    except Exception:
-        return False
+    @staticmethod
+    def sidebar_region(area):
+        """The area's sidebar (UI) region, or None."""
+        return next((r for r in area.regions if r.type == "UI"), None)
 
-
-def _pick_tab(area):
-    region = sidebar_region(area)
-    if region is None:
-        return False
-    try:
-        region.active_panel_category = "BlendWMe"
-        return region.active_panel_category == "BlendWMe"
-    except Exception:
-        return False
-
-
-def show_sidebar(area, show=True):
-    """Open the sidebar on the BlendWMe tab (or close it). The tab only exists after the
-    sidebar has drawn once with the "Blender UI" theme, so it is picked again just after."""
-    area.spaces.active.show_region_ui = show
-    area.tag_redraw()
-    if not show or _pick_tab(area):
-        return
-    pointer = area.as_pointer()
-    tries = [0]
-
-    def again():
-        tries[0] += 1
+    @staticmethod
+    def sidebar_shows_blendwme(area):
+        """True when this 3D Viewport's sidebar is open on the BlendWMe tab ("Blender UI" theme)."""
         try:
-            for window in bpy.context.window_manager.windows:
-                for a in window.screen.areas:
-                    if a.as_pointer() == pointer and _pick_tab(a):
-                        a.tag_redraw()
-                        return None
+            if not area.spaces.active.show_region_ui:
+                return False
+            region = sidebar_region(area)
+            return region is not None and region.width > 1 and region.active_panel_category == "BlendWMe"
         except Exception:
+            return False
+
+    @staticmethod
+    def _pick_tab(area):
+        """Try to switch the sidebar to the BlendWMe tab; True when it worked."""
+        region = sidebar_region(area)
+        if region is None:
+            return False
+        try:
+            region.active_panel_category = "BlendWMe"
+            return region.active_panel_category == "BlendWMe"
+        except Exception:
+            return False
+
+    @staticmethod
+    def show_sidebar(area, show=True):
+        """Open the sidebar on the BlendWMe tab (or close it). The tab only exists after the
+        sidebar has drawn once with the "Blender UI" theme, so it is picked again just after."""
+        area.spaces.active.show_region_ui = show
+        area.tag_redraw()
+        if not show or _pick_tab(area):
+            return
+        pointer = area.as_pointer()
+        tries = [0]
+
+        def again():
+            """Timer: pick the tab again until it exists (at most 20 tries)."""
+            tries[0] += 1
+            try:
+                for window in bpy.context.window_manager.windows:
+                    for a in window.screen.areas:
+                        if a.as_pointer() == pointer and _pick_tab(a):
+                            a.tag_redraw()
+                            return None
+            except Exception:
+                return None
+            return 0.05 if tries[0] < 20 else None
+        bpy.app.timers.register(again, first_interval=0.05)
+
+    @staticmethod
+    def _view3d(context):
+        """The 3D Viewport to act on: the current area, else the window's first one."""
+        if context.area and context.area.type == "VIEW_3D":
+            return context.area
+        if context.window is None:
             return None
-        return 0.05 if tries[0] < 20 else None
-    bpy.app.timers.register(again, first_interval=0.05)
+        return next((a for a in context.window.screen.areas if a.type == "VIEW_3D"), None)
 
 
-def _view3d(context):
-    if context.area and context.area.type == "VIEW_3D":
-        return context.area
-    if context.window is None:
-        return None
-    return next((a for a in context.window.screen.areas if a.type == "VIEW_3D"), None)
+sidebar_region = Sidebar.sidebar_region
+sidebar_shows_blendwme = Sidebar.sidebar_shows_blendwme
+_pick_tab = Sidebar._pick_tab
+show_sidebar = Sidebar.show_sidebar
+_view3d = Sidebar._view3d
 
 
 _theme_seen = {"last": None}
@@ -353,6 +416,7 @@ def theme_switched(context):
 
 
 class BWM_OT_open(bpy.types.Operator):
+    """Open BlendWMe (Ctrl+Alt+M); again focuses the input, again minimizes."""
     bl_idname = "blendwme.open"
     bl_label = "BlendWMe"
     bl_description = "Open BlendWMe in the 3D Viewport (Ctrl+Alt+M). Again: focus the input; again: minimize"
@@ -360,6 +424,7 @@ class BWM_OT_open(bpy.types.Operator):
     close: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE"})
 
     def execute(self, context):
+        """Open, focus or minimize the panel, or show the sidebar with the Blender UI theme."""
         from . import panel, panel_ops, theme
         if theme.native():
             # "Blender UI": BlendWMe is the sidebar's BlendWMe tab. This shows or hides it.
@@ -388,11 +453,13 @@ class BWM_OT_open(bpy.types.Operator):
 
 
 class BWM_OT_export_journal(bpy.types.Operator):
+    """Save the journal and the handoff brief as a text file in the logs folder."""
     bl_idname = "blendwme.export_journal"
     bl_label = "Export Journal"
     bl_description = "Save the baton journal and the handoff brief as a text file in the logs folder"
 
     def execute(self, context):
+        """Write the brief and the full journal as Markdown in the logs folder and open the folder."""
         import json
         import time
         from . import journal, scene_info
@@ -410,11 +477,13 @@ class BWM_OT_export_journal(bpy.types.Operator):
 
 
 class BWM_OT_show_capture(bpy.types.Operator):
+    """Load the last picture BlendWMe looked at as an image."""
     bl_idname = "blendwme.show_capture"
     bl_label = "What the AI Saw"
     bl_description = "Load the last picture BlendWMe looked at as an image (open it in an Image Editor)"
 
     def execute(self, context):
+        """Load the last capture as the image 'BlendWMe View' and show it in an open Image Editor."""
         path = session.last_capture
         if not path:
             self.report({"WARNING"}, "BlendWMe has not looked yet.")
@@ -434,6 +503,7 @@ class BWM_OT_show_capture(bpy.types.Operator):
 
 
 class BWM_OT_hand_over(bpy.types.Operator):
+    """Hand the work to the other brain, with a handoff note when possible."""
     bl_idname = "blendwme.hand_over"
     bl_label = "Hand Over"
     bl_description = ("Hand the work to the other brain. The current brain writes a handoff note (if it can), "
@@ -442,6 +512,7 @@ class BWM_OT_hand_over(bpy.types.Operator):
     target: bpy.props.StringProperty(default="codex")
 
     def execute(self, context):
+        """Start the hand-over in the background."""
         s = context.window_manager.blendwme
         if not relay.has_conversation():
             s.brain = self.target
@@ -453,11 +524,13 @@ class BWM_OT_hand_over(bpy.types.Operator):
 
 
 class BWM_OT_journal(bpy.types.Operator):
+    """Show the project journal in a Text Editor."""
     bl_idname = "blendwme.open_journal"
     bl_label = "Project Journal"
     bl_description = "Show the project journal (the baton the brains pass to each other) in a Text Editor"
 
     def execute(self, context):
+        """Save the journal Text block, write the handoff brief Text block and show it."""
         from . import journal
         journal.journal.dirty = True
         journal.save()
@@ -475,6 +548,7 @@ class BWM_OT_journal(bpy.types.Operator):
 
 
 class BWM_OT_setup_check(bpy.types.Operator):
+    """Check Claude Code, Codex and the MCP server, or install the tools server."""
     bl_idname = "blendwme.setup_check"
     bl_label = "Setup Check"
     bl_description = ("Check that Claude Code and Codex are installed and signed in, and that the MCP server "
@@ -484,6 +558,7 @@ class BWM_OT_setup_check(bpy.types.Operator):
                                          ("mcp", "MCP server", ""), ("install", "Install MCP server", "")])
 
     def execute(self, context):
+        """Run the chosen check in the background."""
         names = ["claude", "codex", "mcp"] if self.which == "ALL" else [self.which]
         if self.which == "install":
             names = ["install", "mcp"]
@@ -492,6 +567,7 @@ class BWM_OT_setup_check(bpy.types.Operator):
 
 
 class BWM_OT_bridge(bpy.types.Operator):
+    """Start or stop the local socket for the brains (127.0.0.1 only)."""
     bl_idname = "blendwme.bridge"
     bl_label = "MCP Bridge"
     bl_description = "Start or stop BlendWMe's local socket for the brains (127.0.0.1 only)"
@@ -499,6 +575,7 @@ class BWM_OT_bridge(bpy.types.Operator):
     action: bpy.props.EnumProperty(items=[("START", "Start", ""), ("STOP", "Stop", "")])
 
     def execute(self, context):
+        """Start or stop the socket bridge and say so in the conversation."""
         if self.action == "START":
             message = socket_bridge.start()
         else:
@@ -509,12 +586,14 @@ class BWM_OT_bridge(bpy.types.Operator):
 
 
 class BWM_OT_copy_terminal(bpy.types.Operator):
+    """Copy a terminal command that starts Claude Code with BlendWMe's tools."""
     bl_idname = "blendwme.copy_terminal_command"
     bl_label = "Copy Terminal Command"
     bl_description = ("Copy a command that starts Claude Code in a terminal with BlendWMe's tools, "
                       "to try the tools outside the panel")
 
     def execute(self, context):
+        """Start the bridge, write the Claude MCP config and copy the two-line command."""
         socket_bridge.start()
         config = workspace.write_mcp_config("claude")
         folder = workspace.folder()
@@ -526,6 +605,7 @@ class BWM_OT_copy_terminal(bpy.types.Operator):
 
 
 class BWM_OT_example(bpy.types.Operator):
+    """Put an example prompt into the message box."""
     bl_idname = "blendwme.example"
     bl_label = "Example"
     bl_description = "Put this example in the message box"
@@ -534,12 +614,14 @@ class BWM_OT_example(bpy.types.Operator):
     name: bpy.props.StringProperty()
 
     def execute(self, context):
+        """Fill the draft with the example's full prompt."""
         from .panel import EXAMPLE_PROMPTS
         context.window_manager.blendwme.prompt = EXAMPLE_PROMPTS.get(self.name, self.name)
         return {"FINISHED"}
 
 
 class BWM_OT_read_more(bpy.types.Operator):
+    """Show a long message in full, or fold it again."""
     bl_idname = "blendwme.read_more"
     bl_label = "Read More"
     bl_description = "Show the whole message (or fold it again)"
@@ -548,40 +630,47 @@ class BWM_OT_read_more(bpy.types.Operator):
     entry: bpy.props.IntProperty()
 
     def execute(self, context):
+        """Toggle the entry's expanded state."""
         from . import panel
         panel.state.expanded ^= {self.entry}
         return {"FINISHED"}
 
 
 class BWM_OT_earlier(bpy.types.Operator):
+    """Show more of the conversation."""
     bl_idname = "blendwme.earlier"
     bl_label = "Show Earlier Messages"
     bl_description = "Show more of the conversation"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
+        """Show 20 more entries in the sidebar conversation."""
         _native["shown"] += 20
         return {"FINISHED"}
 
 
 class BWM_OT_close_card(bpy.types.Operator):
+    """Close the top card."""
     bl_idname = "blendwme.close_card"
     bl_label = "Close"
     bl_description = "Close this card"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
+        """Close the top card through the panel's close path."""
         from . import panel_ops
         panel_ops.close_top_card()
         return {"FINISHED"}
 
 
 class BWM_OT_take_control(bpy.types.Operator):
+    """Pause after the current action and give the scene to the user."""
     bl_idname = "blendwme.take_control"
     bl_label = "Take Control"
     bl_description = "BlendWMe pauses after the current action and the scene is yours. Resume when you are done"
 
     def execute(self, context):
+        """Take control through the panel (pause and maybe minimize), or just pause with Blender UI."""
         from . import panel_ops, theme
         if theme.native():
             bpy.ops.blendwme.pause()
@@ -591,23 +680,27 @@ class BWM_OT_take_control(bpy.types.Operator):
 
 
 class BWM_OT_pointers_again(bpy.types.Operator):
+    """Play the pointer animation again."""
     bl_idname = "blendwme.pointers_again"
     bl_label = "Move"
     bl_description = "Play the pointer again so your eye finds it"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
+        """Restart the pointer animation."""
         from . import overlay
         overlay.restart_pointers()
         return {"FINISHED"}
 
 
 class BWM_OT_settings(bpy.types.Operator):
+    """Open BlendWMe's settings."""
     bl_idname = "blendwme.settings"
     bl_label = "BlendWMe Settings"
     bl_description = "Brains, references, theme, panel size and relay options"
 
     def execute(self, context):
+        """Run the setup checks once if they never ran, then open the Settings popover."""
         from . import panel_ops
         if not setup_checks.results:
             bpy.ops.blendwme.setup_check(which="ALL")
@@ -621,12 +714,14 @@ class BWM_OT_settings(bpy.types.Operator):
 # ----------------------------------------------------------------------
 
 class _Base:
+    """Shared placement of the sidebar panels: 3D Viewport > Sidebar > BlendWMe."""
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "BlendWMe"
 
     @classmethod
     def poll(cls, context):
+        """Show the sidebar panels only with the Blender UI theme (one BlendWMe at a time)."""
         # One BlendWMe at a time: the sidebar tab exists only with the "Blender UI" theme.
         from . import theme
         return theme.native()
@@ -683,6 +778,7 @@ class _Words:
 
 
 def _status_words():
+    """The status line, worded exactly like the drawn panel."""
     from .panel import Painter
     try:
         return Painter.status_words(_Words())[0]
@@ -691,6 +787,7 @@ def _status_words():
 
 
 def _card_words(card):
+    """The words of a card for a sidebar label."""
     kind = card.get("kind")
     body = card.get("text") or ""
     title = card.get("title") or ""
@@ -766,9 +863,11 @@ class BWM_PT_main(_Base, bpy.types.Panel):
     bl_label = "BlendWMe"
 
     def draw_header(self, context):
+        """BlendWMe's pencil icon in the header."""
         self.layout.label(text="", icon="GREASEPENCIL")
 
     def draw(self, context):
+        """Safety notes, live status and brain, mode, readers, New task, the card, actions, the prompt and examples."""
         import time
         from . import panel
         layout = self.layout
@@ -834,18 +933,22 @@ class BWM_PT_main(_Base, bpy.types.Panel):
 
 
 class BWM_PT_plan(_Base, bpy.types.Panel):
+    """The plan checklist in the sidebar (when a plan exists)."""
     bl_label = "Plan"
     bl_parent_id = "BWM_PT_main"
 
     @classmethod
     def poll(cls, context):
+        """Only with the Blender UI theme and a plan."""
         return _Base.poll(context) and bool(session.plan)
 
     def draw_header(self, context):
+        """The plan's progress in the header."""
         done = sum(1 for item in session.plan if item["done"])
         self.layout.label(text=f"{done} of {len(session.plan)}")
 
     def draw(self, context):
+        """One row per part: done (greyed), skipped, open, or the part being built now (highlighted)."""
         col = self.layout.column(align=True)
         current = next((i for i, item in enumerate(session.plan) if not item["done"]), None)
         for i, item in enumerate(session.plan):
@@ -859,10 +962,12 @@ class BWM_PT_plan(_Base, bpy.types.Panel):
 
 
 class BWM_PT_conversation(_Base, bpy.types.Panel):
+    """The conversation in the sidebar, in plain labels."""
     bl_label = "Conversation"
     bl_parent_id = "BWM_PT_main"
 
     def draw(self, context):
+        """The latest entries since the last view clear: YOU and the brain in boxes, steps as short lines."""
         from . import panel
         layout = self.layout
         log = [e for e in session.log if e.get("t", 0) >= panel.state.cleared_at]
@@ -907,11 +1012,13 @@ class BWM_PT_conversation(_Base, bpy.types.Panel):
 
 
 class BWM_PT_journal(_Base, bpy.types.Panel):
+    """The project journal ('the baton') in the sidebar."""
     bl_label = "The Baton (Journal)"
     bl_parent_id = "BWM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        """The brief, plan progress, signed step count, open struggles and the journal buttons."""
         from .journal import journal
         layout = self.layout
         data = journal.data
@@ -932,11 +1039,13 @@ class BWM_PT_journal(_Base, bpy.types.Panel):
 
 
 class BWM_PT_native_settings(_Base, bpy.types.Panel):
+    """Every setting, in the sidebar."""
     bl_label = "Settings"
     bl_parent_id = "BWM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        """Draw the shared settings form."""
         p = prefs.addon_prefs(context)
         if p:
             prefs.draw_settings(self.layout, p, context)
@@ -950,6 +1059,7 @@ class BWM_PT_settings(bpy.types.Panel):
     bl_ui_units_x = 18
 
     def draw(self, context):
+        """Draw the shared settings form in the popover."""
         layout = self.layout
         p = prefs.addon_prefs(context)
         layout.label(text="BlendWMe Settings", icon="PREFERENCES")
@@ -990,6 +1100,7 @@ classes = (
 
 
 def register():
+    """Register the operators and panels and add the header button."""
     # One class at a time: a class that fails is reported, the rest still work.
     from . import theme
     failed = []
@@ -1012,6 +1123,7 @@ def register():
 
 
 def unregister():
+    """Remove the header button and unregister the classes."""
     try:
         bpy.types.VIEW3D_HT_header.remove(draw_header_button)
     except Exception:

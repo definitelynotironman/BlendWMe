@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """BlendWMe's indicators inside Blender (docs/design/UI_SPEC.md, section 6).
 
 Colour rule: hot (red, orange in Blender Grey) means YOU: look here, do this.
@@ -26,6 +28,8 @@ from mathutils import Vector
 from . import draw2d as d
 from . import theme
 from .state import ASKING, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
+
+__author__ = "definitelynotironman"
 
 _handles = []
 _pointer_start = [time.time()]
@@ -58,10 +62,12 @@ def restart_pointers():
 
 
 def _motion():
+    """True unless reduce motion is on (Blender, the OS or BlendWMe's setting)."""
     return not theme.reduce_motion()
 
 
 def _pointers_on():
+    """The Show pointers setting (on when the preferences are not available)."""
     from . import prefs
     try:
         p = prefs.addon_prefs()
@@ -74,6 +80,7 @@ def _pointers_on():
 # Indicators (whole pixels, hard edges: rules R1 to R5)
 # ----------------------------------------------------------------------
 def _px(v, s):
+    """A design length v at scale s in whole pixels, never below 1."""
     return max(1, round(v * s))
 
 
@@ -115,10 +122,12 @@ def pencil_circle(x, y, w, h, pal, arrow=True):
 
 
 def _overlaps(a, b):
+    """True when two rectangles (x0, y0, x1, y1) overlap."""
     return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
 
 
 def bubble_size(words, hand=False):
+    """(font role, size, padding, width, height) of a label bubble for these words."""
     s = d.ui()
     key, size = ("HAND", round(17 * s)) if hand else ("BODY", round(14 * s))
     pad = round(12 * s)
@@ -350,6 +359,7 @@ def tab_rect(region, space, tab):
 
 
 def _editor_matches(area, editor):
+    """True when the area is the editor a pointer names (Timeline and Dope Sheet by ui_type)."""
     if editor in ("TIMELINE", "DOPESHEET"):
         return area.ui_type == editor
     return area.type == editor
@@ -369,6 +379,7 @@ def _blendwme_shows_in(area):
 
 
 def _panel_rect(area):
+    """The drawn panel's rectangle in this area, or None when it is not open there."""
     from . import panel
     if panel.is_open_in(area):
         return panel.state.rect
@@ -376,6 +387,11 @@ def _panel_rect(area):
 
 
 def _draw_view3d_main():
+    """The 3D Viewport overlay: object rings with labels, the building outline,
+    region pointers and the cue or working card when BlendWMe itself is not showing.
+
+    It never raises: a drawing error is printed instead of breaking Blender's redraw.
+    """
     from . import panel
     from .relay import relay
     region = bpy.context.region
@@ -427,6 +443,11 @@ def _draw_view3d_main():
 
 
 def _draw_region_pointer(region, area, pal):
+    """Pointers to an editor region: a radar on a Properties tab, else a pencil loop.
+
+    An uncalibrated region pointer circles the region honestly; it never claims
+    to mark an exact control.
+    """
     if area is None or not _pointers_on():
         return
     s = d.ui()
@@ -458,6 +479,7 @@ def _draw_region_pointer(region, area, pal):
 
 
 def _draw_other():
+    """Overlay draw callback for every other editor and region (region pointers only)."""
     try:
         import gpu
         gpu.state.blend_set("ALPHA")
@@ -478,10 +500,12 @@ _last_sidebar = [0.0]
 
 
 def _pointed_editors():
+    """The editors the current pointers name."""
     return {p.get("editor") for p in session.pointers if p.get("editor")}
 
 
 def _tag(area, kinds):
+    """Tag the area's regions of the given kinds for redraw."""
     for region in area.regions:
         if region.type in kinds:
             region.tag_redraw()
@@ -503,6 +527,10 @@ def redraw_plan():
 
 
 def _redraw_timer():
+    """The one redraw timer (R6): fold the Done card, read Properties tabs and tag
+    only the regions that change. Returns ~30 fps while something moves, else
+    an idle interval.
+    """
     # The Done card collapses after 6 s into one line in the conversation.
     card = session.card
     if card and card.get("kind") == "done" and time.time() - card.get("t", time.time()) > DONE_SECONDS:
@@ -543,6 +571,7 @@ def _redraw_timer():
 
 
 def register():
+    """Add the draw handlers for every editor and region, and the redraw timer."""
     if _handles:            # registered twice: start clean
         unregister()
     _handles.append((bpy.types.SpaceView3D,
@@ -562,6 +591,7 @@ def register():
 
 
 def unregister():
+    """Remove every draw handler and the timer."""
     for space, handle, region in _handles:
         try:
             space.draw_handler_remove(handle, region)

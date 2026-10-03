@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The panel's operators: open it, and the modal operator that handles clicks, scrolling,
 typing, dragging and the keyboard shortcuts while the mouse is over the panel (or the
 input has focus). Every other event goes on to Blender untouched.
@@ -39,6 +41,8 @@ from . import panel
 from .panel import EXAMPLE_PROMPTS, MIN_HEIGHT, MIN_WIDTH, MODES, WIDTH_GRID, state
 from .state import PAUSED, THINKING, WORKING, session
 
+__author__ = "definitelynotironman"
+
 DOUBLE_ESC = 0.6        # seconds between two Esc presses that stop the work
 UNDO_LIMIT = 100
 
@@ -74,6 +78,7 @@ PANEL_KEYS = (
 )
 
 _last_esc = [0.0]
+settings_asked = [0.0]      # when Settings was last opened (tests read it)
 
 
 def _redraw():
@@ -131,6 +136,7 @@ def user_bindings():
 
 
 def match(event):
+    """The panel action bound to this event in the user's keymap, or None."""
     for action, kind, value, shift, ctrl, alt in user_bindings():
         if (event.type == kind and event.value == value and bool(event.shift) == bool(shift)
                 and bool(event.ctrl) == bool(ctrl) and bool(event.alt) == bool(alt)):
@@ -141,447 +147,507 @@ def match(event):
 # ----------------------------------------------------------------------
 # Actions (clicks and keys end up here)
 # ----------------------------------------------------------------------
-def _config(context):
-    from . import prefs
-    return prefs.gather_config(context)
+class PanelCommands:
+    """What clicks, keys and slash commands do: send, run a command, open Settings, close cards."""
 
+    @staticmethod
+    def _config(context):
+        """The settings for a turn (prefs.gather_config)."""
+        from . import prefs
+        return prefs.gather_config(context)
 
-def send_text(context, text):
-    from .relay import relay
-    text = text.strip()
-    if not text:
-        return
-    if text.startswith("/") and text.split()[0] in COMMANDS:
-        run_command(context, text.split()[0])
-        return
-    if not state.history or state.history[-1] != text:
-        state.history.append(text)
-    state.history_at = None
-    props = context.window_manager.blendwme
-    props.prompt = text
-    try:
-        bpy.ops.blendwme.send()
-    except RuntimeError as e:
-        session.add("info", str(e))
-    if not relay.is_running() and props.prompt:
-        props.prompt = ""
-    state.scroll = 0.0
-
-
-settings_asked = [0.0]      # when Settings was last opened (tests read it)
-
-
-def clear_conversation_view():
-    """Hide displayed history without ending work or changing journal retention."""
-    state.cleared_at = time.time()
-    state.scroll = 0.0
-
-
-def open_settings(context):
-    """Settings are Blender's own widgets in a popover (rule R7). Returns True when shown;
-    falls back to Preferences > Add-ons > BlendWMe."""
-    settings_asked[0] = time.time()
-    if bpy.app.background or getattr(context, "window", None) is None:
-        return False            # no window to show a popover in (Blender crashes if asked)
-    attempts = (lambda: bpy.ops.wm.call_panel(name="BWM_PT_settings", keep_open=True),
-                lambda: bpy.ops.preferences.addon_show(module=__package__),
-                lambda: bpy.ops.screen.userpref_show())
-    for attempt in attempts:
+    @staticmethod
+    def send_text(context, text):
+        """Send the typed text: run a slash command, or hand the message to the relay."""
+        from .relay import relay
+        text = text.strip()
+        if not text:
+            return
+        if text.startswith("/") and text.split()[0] in COMMANDS:
+            run_command(context, text.split()[0])
+            return
+        if not state.history or state.history[-1] != text:
+            state.history.append(text)
+        state.history_at = None
+        props = context.window_manager.blendwme
+        props.prompt = text
         try:
-            attempt()
+            bpy.ops.blendwme.send()
+        except RuntimeError as e:
+            session.add("info", str(e))
+        if not relay.is_running() and props.prompt:
+            props.prompt = ""
+        state.scroll = 0.0
+
+    @staticmethod
+    def clear_conversation_view():
+        """Hide displayed history without ending work or changing journal retention."""
+        state.cleared_at = time.time()
+        state.scroll = 0.0
+
+    @staticmethod
+    def open_settings(context):
+        """Settings are Blender's own widgets in a popover (rule R7). Returns True when shown;
+        falls back to Preferences > Add-ons > BlendWMe."""
+        settings_asked[0] = time.time()
+        if bpy.app.background or getattr(context, "window", None) is None:
+            return False            # no window to show a popover in (Blender crashes if asked)
+        attempts = (lambda: bpy.ops.wm.call_panel(name="BWM_PT_settings", keep_open=True),
+                    lambda: bpy.ops.preferences.addon_show(module=__package__),
+                    lambda: bpy.ops.screen.userpref_show())
+        for attempt in attempts:
+            try:
+                attempt()
+                return True
+            except Exception:
+                continue
+        session.add("info", "Settings could not open here. Find them in Edit > Preferences > Add-ons > BlendWMe.")
+        return False
+
+    @staticmethod
+    def run_command(context, name):
+        """Run a slash command: /handover, /look, /new, /clear, /help ..."""
+        from .relay import relay
+        if name == "/handover":
+            target = relay.other(relay.running or relay.active)
+            bpy.ops.blendwme.hand_over(target=target)
+        elif name == "/look":
+            send_text(context, "Look at the scene again from a few angles and tell me briefly what you see.")
+        elif name == "/undo":
+            bpy.ops.blendwme.undo_step()
+        elif name == "/journal":
+            state.screen = "journal"
+        elif name == "/logs":
+            bpy.ops.blendwme.open_logs()
+        elif name == "/settings":
+            open_settings(context)
+        elif name == "/new":
+            bpy.ops.blendwme.new_task()
+        elif name == "/stop":
+            bpy.ops.blendwme.stop()
+        elif name == "/help":
+            session.add("info", HELP)
+
+    @staticmethod
+    def close_top_card():
+        """Esc or ✕: close the card on top. Returns True when something was closed."""
+        card = session.card
+        if card and not card.get("hidden"):
+            kind = card.get("kind")
+            if kind == "done":
+                collapse_done(card)
+            elif kind in ("limit", "stuck", "pause") or not _waiting():
+                session.set_card(None)
+            else:
+                # The AI is still waiting for you: hide the card, the status keeps saying "Your turn".
+                card["hidden"] = True
+                session.changed_flag = True
             return True
-        except Exception:
-            continue
-    session.add("info", "Settings could not open here. Find them in Edit > Preferences > Add-ons > BlendWMe.")
-    return False
+        return False
+
+    @staticmethod
+    def _waiting():
+        """True while BlendWMe waits for the user (a lesson step or a question)."""
+        from .state import ASKING, WAIT_NEXT, WAIT_USER
+        return session.status in (WAIT_USER, WAIT_NEXT, ASKING)
+
+    @staticmethod
+    def collapse_done(card=None):
+        """The Done card becomes one line in the conversation: "✓ Done: <summary>"."""
+        card = card or session.card
+        if not card or card.get("kind") != "done":
+            return
+        summary = (card.get("text") or card.get("title") or "").strip()
+        session.set_card(None)
+        session.add("done", "Done" + (": " + summary if summary else ""))
 
 
-def run_command(context, name):
-    from .relay import relay
-    if name == "/handover":
-        target = relay.other(relay.running or relay.active)
-        bpy.ops.blendwme.hand_over(target=target)
-    elif name == "/look":
-        send_text(context, "Look at the scene again from a few angles and tell me briefly what you see.")
-    elif name == "/undo":
-        bpy.ops.blendwme.undo_step()
-    elif name == "/journal":
-        state.screen = "journal"
-    elif name == "/logs":
-        bpy.ops.blendwme.open_logs()
-    elif name == "/settings":
-        open_settings(context)
-    elif name == "/new":
-        bpy.ops.blendwme.new_task()
-    elif name == "/stop":
-        bpy.ops.blendwme.stop()
-    elif name == "/help":
-        session.add("info", HELP)
-
-
-def close_top_card():
-    """Esc or ✕: close the card on top. Returns True when something was closed."""
-    card = session.card
-    if card and not card.get("hidden"):
-        kind = card.get("kind")
-        if kind == "done":
-            collapse_done(card)
-        elif kind in ("limit", "stuck", "pause") or not _waiting():
-            session.set_card(None)
-        else:
-            # The AI is still waiting for you: hide the card, the status keeps saying "Your turn".
-            card["hidden"] = True
-            session.changed_flag = True
-        return True
-    return False
-
-
-def _waiting():
-    from .state import ASKING, WAIT_NEXT, WAIT_USER
-    return session.status in (WAIT_USER, WAIT_NEXT, ASKING)
-
-
-def collapse_done(card=None):
-    """The Done card becomes one line in the conversation: "✓ Done: <summary>"."""
-    card = card or session.card
-    if not card or card.get("kind") != "done":
-        return
-    summary = (card.get("text") or card.get("title") or "").strip()
-    session.set_card(None)
-    session.add("done", "Done" + (": " + summary if summary else ""))
+_config = PanelCommands._config
+send_text = PanelCommands.send_text
+clear_conversation_view = PanelCommands.clear_conversation_view
+open_settings = PanelCommands.open_settings
+run_command = PanelCommands.run_command
+close_top_card = PanelCommands.close_top_card
+_waiting = PanelCommands._waiting
+collapse_done = PanelCommands.collapse_done
 
 
 # ----------------------------------------------------------------------
 # Views: Full, Compact, Minimized, with the frame animation (rule R10)
 # ----------------------------------------------------------------------
-def set_view(minimized=None, compact=None):
-    """Change the view. The frame animates from where it was (200 ms out, 150 ms in);
-    with Smooth View at 0 or reduced motion it changes at once."""
-    before = state.view()
-    if minimized is not None:
-        state.minimized = minimized
-    if compact is not None:
-        state.compact = compact
-    after = state.view()
-    if after != before and panel.smooth_view_on() and state.last_rect[2] > state.last_rect[0]:
-        growing = before == "mini" or (before == "compact" and after == "full")
-        state.anim = {"t0": time.time(), "dur": panel.EXPAND_TIME if growing else panel.COLLAPSE_TIME,
-                      "from": state.last_rect, "content": state.last_content}
-        start_anim_timer()
-    else:
-        state.anim = None
-    _redraw()
+class PanelViews:
+    """Full, Compact and minimized views, with the frame animation (rule R10)."""
 
-
-def _anim_tick():
-    """60 fps while the frame moves, then the timer stops (rule R10)."""
-    _redraw()
-    anim = state.anim
-    if not anim:
-        return None
-    if time.time() - anim["t0"] > anim["dur"] + 0.05:
-        state.anim = None
+    @staticmethod
+    def set_view(minimized=None, compact=None):
+        """Change the view. The frame animates from where it was (200 ms out, 150 ms in);
+        with Smooth View at 0 or reduced motion it changes at once."""
+        before = state.view()
+        if minimized is not None:
+            state.minimized = minimized
+        if compact is not None:
+            state.compact = compact
+        after = state.view()
+        if after != before and panel.smooth_view_on() and state.last_rect[2] > state.last_rect[0]:
+            growing = before == "mini" or (before == "compact" and after == "full")
+            state.anim = {"t0": time.time(), "dur": panel.EXPAND_TIME if growing else panel.COLLAPSE_TIME,
+                          "from": state.last_rect, "content": state.last_content}
+            start_anim_timer()
+        else:
+            state.anim = None
         _redraw()
-        return None
-    return 1 / 60
+
+    @staticmethod
+    def _anim_tick():
+        """60 fps while the frame moves, then the timer stops (rule R10)."""
+        _redraw()
+        anim = state.anim
+        if not anim:
+            return None
+        if time.time() - anim["t0"] > anim["dur"] + 0.05:
+            state.anim = None
+            _redraw()
+            return None
+        return 1 / 60
+
+    @staticmethod
+    def start_anim_timer():
+        """Start the 60 fps frame-animation timer if it is not running."""
+        if not bpy.app.timers.is_registered(_anim_tick):
+            bpy.app.timers.register(_anim_tick, first_interval=0.0)
+
+    @staticmethod
+    def minimize():
+        """Fold the panel into the small bar. Nothing stops: the session, the brain and the plan go on."""
+        state.focused = False
+        state.drag = None
+        set_view(minimized=True)
+
+    @staticmethod
+    def restore(focus=True):
+        """Bring the panel back from minimized (focused unless focus is False)."""
+        state.focused = focus
+        set_view(minimized=False)
+
+    @staticmethod
+    def toggle_compact():
+        """Switch Full and Compact (restores first when minimized; nothing when space forces Compact)."""
+        if state.minimized:
+            restore()
+        elif state.auto_compact:
+            state.compact = False           # Compact because of space; nothing to toggle
+        else:
+            set_view(compact=not state.compact)
+
+    @staticmethod
+    def toggle_maximize(context):
+        """The square button: full height, or back to the height before. In Compact: open Full."""
+        from . import prefs
+        p = prefs.addon_prefs(context)
+        if state.view() == "compact":
+            set_view(compact=False)
+            return
+        if p is not None:
+            p.panel_max = not p.panel_max
+            set_view()
+
+    @staticmethod
+    def take_control(context):
+        """Take control: pause after the current action, and get the panel out of the way."""
+        from . import prefs
+        bpy.ops.blendwme.pause()
+        p = prefs.addon_prefs(context)
+        if p is None or p.minimize_on_take_control:
+            minimize()
+
+    @staticmethod
+    def reset_place(p):
+        """Back in the top right corner, tight against the edge, the design size."""
+        p.panel_corner = "TR"
+        p.panel_off_x = p.panel_off_y = 0.0
+        p.panel_width = p.panel_height = 0.0
+        p.panel_max = False
 
 
-def start_anim_timer():
-    if not bpy.app.timers.is_registered(_anim_tick):
-        bpy.app.timers.register(_anim_tick, first_interval=0.0)
-
-
-def minimize():
-    """Fold the panel into the small bar. Nothing stops: the session, the brain and the plan go on."""
-    state.focused = False
-    state.drag = None
-    set_view(minimized=True)
-
-
-def restore(focus=True):
-    state.focused = focus
-    set_view(minimized=False)
-
-
-def toggle_compact():
-    if state.minimized:
-        restore()
-    elif state.auto_compact:
-        state.compact = False           # Compact because of space; nothing to toggle
-    else:
-        set_view(compact=not state.compact)
-
-
-def toggle_maximize(context):
-    """The square button: full height, or back to the height before. In Compact: open Full."""
-    from . import prefs
-    p = prefs.addon_prefs(context)
-    if state.view() == "compact":
-        set_view(compact=False)
-        return
-    if p is not None:
-        p.panel_max = not p.panel_max
-        set_view()
-
-
-def take_control(context):
-    """Take control: pause after the current action, and get the panel out of the way."""
-    from . import prefs
-    bpy.ops.blendwme.pause()
-    p = prefs.addon_prefs(context)
-    if p is None or p.minimize_on_take_control:
-        minimize()
-
-
-def reset_place(p):
-    """Back in the top right corner, tight against the edge, the design size."""
-    p.panel_corner = "TR"
-    p.panel_off_x = p.panel_off_y = 0.0
-    p.panel_width = p.panel_height = 0.0
-    p.panel_max = False
+set_view = PanelViews.set_view
+_anim_tick = PanelViews._anim_tick
+start_anim_timer = PanelViews.start_anim_timer
+minimize = PanelViews.minimize
+restore = PanelViews.restore
+toggle_compact = PanelViews.toggle_compact
+toggle_maximize = PanelViews.toggle_maximize
+take_control = PanelViews.take_control
+reset_place = PanelViews.reset_place
 
 
 # ----------------------------------------------------------------------
 # Dragging and resizing (rules R8, R9)
 # ----------------------------------------------------------------------
-def start_drag(context, kind, event):
-    """Begin dragging: "drag" (the header), "mini" (the minimized bar) or "grip" (the corner)."""
-    from . import prefs
-    area, region = host(context)
-    p = prefs.addon_prefs(context)
-    if region is None or p is None:
-        return
-    rect = state.frame if state.frame[2] > state.frame[0] else panel.placement(area, region)
-    if kind == "mini":
-        rect = state.header if state.header[2] > state.header[0] else rect
-    state.drag = {"kind": kind, "mx": event.mouse_x, "my": event.mouse_y, "moved": False, "rect": rect,
-                  "saved": (p.panel_corner, p.panel_off_x, p.panel_off_y, p.panel_width, p.panel_height,
-                            p.panel_max)}
+class PanelDrag:
+    """Moving and resizing the panel with snapping, Ctrl to free it and Esc to cancel (rules R8, R9)."""
+
+    @staticmethod
+    def start_drag(context, kind, event):
+        """Begin dragging: "drag" (the header), "mini" (the minimized bar) or "grip" (the corner)."""
+        from . import prefs
+        area, region = host(context)
+        p = prefs.addon_prefs(context)
+        if region is None or p is None:
+            return
+        rect = state.frame if state.frame[2] > state.frame[0] else panel.placement(area, region)
+        if kind == "mini":
+            rect = state.header if state.header[2] > state.header[0] else rect
+        state.drag = {"kind": kind, "mx": event.mouse_x, "my": event.mouse_y, "moved": False, "rect": rect,
+                      "saved": (p.panel_corner, p.panel_off_x, p.panel_off_y, p.panel_width, p.panel_height,
+                                p.panel_max)}
+
+    @staticmethod
+    def move_drag(context, event):
+        """Follow the mouse while moving or resizing, snapping to edges, corners and the gizmo unless Ctrl is held."""
+        from . import prefs
+        drag = state.drag
+        area, region = host(context)
+        p = prefs.addon_prefs(context)
+        if not (drag and region and p):
+            return
+        dx, dy = event.mouse_x - drag["mx"], event.mouse_y - drag["my"]
+        if not drag["moved"] and abs(dx) + abs(dy) < 4:
+            return                       # a click, not a drag (yet)
+        drag["moved"] = True
+        s = panel.scale()
+        bounds = panel.usable(area, region)
+        x0, y0, x1, y1 = drag["rect"]
+        corner = drag["saved"][0]
+        if drag["kind"] == "grip":
+            # The panel's own corner stays; the opposite corner follows the mouse.
+            right, top = corner in ("TR", "BR"), corner in ("TR", "TL")
+            w = (x1 - x0) + (-dx if right else dx)
+            h = (y1 - y0) + (-dy if top else dy)
+            ul, ub, ur, ut = bounds
+            w = max(MIN_WIDTH * s, min(w, ur - ul))
+            h = max(MIN_HEIGHT * s, min(h, ut - ub))
+            p.panel_width = round(w / s / WIDTH_GRID) * WIDTH_GRID         # an 8-unit grid
+            p.panel_height = h / s
+            p.panel_max = False
+            return
+        # Both axes, every event (R8).
+        rect = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+        if not event.ctrl:
+            rect = panel.snap_rect(rect, bounds, area, region, s)
+        rect = panel.clamp_rect(rect, bounds)
+        corner, ox, oy = panel.to_corner(rect, bounds)
+        p.panel_corner = corner
+        p.panel_off_x = ox / s
+        p.panel_off_y = oy / s
+
+    @staticmethod
+    def cancel_drag(context):
+        """Esc or right-click while dragging: put the panel back where it started."""
+        from . import prefs
+        drag, state.drag = state.drag, None
+        p = prefs.addon_prefs(context)
+        if drag and p:
+            (p.panel_corner, p.panel_off_x, p.panel_off_y, p.panel_width, p.panel_height,
+             p.panel_max) = drag["saved"]
+        _restore_cursor(context)
+
+    @staticmethod
+    def end_drag(context):
+        """Let go. A click (no movement) on the minimized bar opens the panel."""
+        drag, state.drag = state.drag, None
+        _restore_cursor(context)
+        if not drag:
+            return
+        if not drag["moved"]:
+            if drag["kind"] == "mini":
+                restore()
+            else:
+                state.focused = False
+
+    @staticmethod
+    def _restore_cursor(context):
+        """Put Blender's own cursor back after a drag or hover cursor."""
+        try:
+            context.window.cursor_modal_restore()
+        except Exception:
+            pass
+        state.hover_cursor = False
 
 
-def move_drag(context, event):
-    from . import prefs
-    drag = state.drag
-    area, region = host(context)
-    p = prefs.addon_prefs(context)
-    if not (drag and region and p):
-        return
-    dx, dy = event.mouse_x - drag["mx"], event.mouse_y - drag["my"]
-    if not drag["moved"] and abs(dx) + abs(dy) < 4:
-        return                       # a click, not a drag (yet)
-    drag["moved"] = True
-    s = panel.scale()
-    bounds = panel.usable(area, region)
-    x0, y0, x1, y1 = drag["rect"]
-    corner = drag["saved"][0]
-    if drag["kind"] == "grip":
-        # The panel's own corner stays; the opposite corner follows the mouse.
-        right, top = corner in ("TR", "BR"), corner in ("TR", "TL")
-        w = (x1 - x0) + (-dx if right else dx)
-        h = (y1 - y0) + (-dy if top else dy)
-        ul, ub, ur, ut = bounds
-        w = max(MIN_WIDTH * s, min(w, ur - ul))
-        h = max(MIN_HEIGHT * s, min(h, ut - ub))
-        p.panel_width = round(w / s / WIDTH_GRID) * WIDTH_GRID         # an 8-unit grid
-        p.panel_height = h / s
-        p.panel_max = False
-        return
-    # Both axes, every event (R8).
-    rect = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
-    if not event.ctrl:
-        rect = panel.snap_rect(rect, bounds, area, region, s)
-    rect = panel.clamp_rect(rect, bounds)
-    corner, ox, oy = panel.to_corner(rect, bounds)
-    p.panel_corner = corner
-    p.panel_off_x = ox / s
-    p.panel_off_y = oy / s
+start_drag = PanelDrag.start_drag
+move_drag = PanelDrag.move_drag
+cancel_drag = PanelDrag.cancel_drag
+end_drag = PanelDrag.end_drag
+_restore_cursor = PanelDrag._restore_cursor
 
 
-def cancel_drag(context):
-    """Esc or right-click while dragging: put the panel back where it started."""
-    from . import prefs
-    drag, state.drag = state.drag, None
-    p = prefs.addon_prefs(context)
-    if drag and p:
-        (p.panel_corner, p.panel_off_x, p.panel_off_y, p.panel_width, p.panel_height,
-         p.panel_max) = drag["saved"]
-    _restore_cursor(context)
+class PanelActions:
+    """One entry point for every panel action, whether it came from a click, a double-click or a key."""
 
-
-def end_drag(context):
-    """Let go. A click (no movement) on the minimized bar opens the panel."""
-    drag, state.drag = state.drag, None
-    _restore_cursor(context)
-    if not drag:
-        return
-    if not drag["moved"]:
-        if drag["kind"] == "mini":
+    @staticmethod
+    def double_click(context, action):
+        """Double-click the header: Full or Compact. The grip: the design size. The bar: open."""
+        from . import prefs
+        p = prefs.addon_prefs(context)
+        state.drag = None
+        if action == "grip":
+            if p is not None:
+                p.panel_width = p.panel_height = 0.0
+                p.panel_max = False
+        elif action == "mini":
             restore()
         else:
+            toggle_compact()
+
+    @staticmethod
+    def next_mode(context):
+        """Cycle the collaboration mode (Auto, Teach)."""
+        props = context.window_manager.blendwme
+        keys = [k for k, _ in MODES]
+        props.mode = keys[(keys.index(props.mode) + 1) % len(keys)] if props.mode in keys else keys[0]
+
+    @staticmethod
+    def escape(context):
+        """Esc: pause while working (twice: stop), otherwise close the top card or leave the input."""
+        from .relay import relay
+        now = time.time()
+        working = relay.is_running() and session.status in (THINKING, WORKING, PAUSED)
+        if working and now - _last_esc[0] < DOUBLE_ESC:
+            _last_esc[0] = 0.0
+            bpy.ops.blendwme.stop()
+            return True
+        _last_esc[0] = now
+        if relay.is_running() and session.status in (THINKING, WORKING) and not session.pause_flag.is_set():
+            bpy.ops.blendwme.pause()
+            return True
+        if close_top_card():
+            return True
+        if state.screen != "main":
+            state.screen = "main"
+            return True
+        if state.focused:
             state.focused = False
-
-
-def _restore_cursor(context):
-    try:
-        context.window.cursor_modal_restore()
-    except Exception:
-        pass
-    state.hover_cursor = False
-
-
-def double_click(context, action):
-    """Double-click the header: Full or Compact. The grip: the design size. The bar: open."""
-    from . import prefs
-    p = prefs.addon_prefs(context)
-    state.drag = None
-    if action == "grip":
-        if p is not None:
-            p.panel_width = p.panel_height = 0.0
-            p.panel_max = False
-    elif action == "mini":
-        restore()
-    else:
-        toggle_compact()
-
-
-def next_mode(context):
-    props = context.window_manager.blendwme
-    keys = [k for k, _ in MODES]
-    props.mode = keys[(keys.index(props.mode) + 1) % len(keys)] if props.mode in keys else keys[0]
-
-
-def escape(context):
-    """Esc: pause while working (twice: stop), otherwise close the top card or leave the input."""
-    from .relay import relay
-    now = time.time()
-    working = relay.is_running() and session.status in (THINKING, WORKING, PAUSED)
-    if working and now - _last_esc[0] < DOUBLE_ESC:
-        _last_esc[0] = 0.0
-        bpy.ops.blendwme.stop()
-        return True
-    _last_esc[0] = now
-    if relay.is_running() and session.status in (THINKING, WORKING) and not session.pause_flag.is_set():
-        bpy.ops.blendwme.pause()
-        return True
-    if close_top_card():
-        return True
-    if state.screen != "main":
-        state.screen = "main"
-        return True
-    if state.focused:
-        state.focused = False
-        state.anchor = None
-        return True
-    return False
-
-
-def do_action(context, action, event=None):
-    from . import prefs
-    from .relay import relay
-    props = context.window_manager.blendwme
-    p = prefs.addon_prefs(context)
-    kind, _, arg = action.partition(":")
-    if kind == "panel":
-        state.focused = False
-    elif kind == "focus_input":
-        state.focused = True
-        if event is not None and getattr(event, "mouse_x", None) is not None:
-            place_caret(context, event)
-        else:
-            state.cursor = len(state.text)
             state.anchor = None
-    elif kind == "mode":
-        props.mode = arg
-    elif kind == "screen":
-        state.screen = arg if arg in ("main", "journal") else "main"
-        state.body_scroll = 0.0
-        if arg == "settings":
+            return True
+        return False
+
+    @staticmethod
+    def do_action(context, action, event=None):
+        """Perform one named panel action (a click target or a key binding)."""
+        from . import prefs
+        from .relay import relay
+        props = context.window_manager.blendwme
+        p = prefs.addon_prefs(context)
+        kind, _, arg = action.partition(":")
+        if kind == "panel":
+            state.focused = False
+        elif kind == "focus_input":
+            state.focused = True
+            if event is not None and getattr(event, "mouse_x", None) is not None:
+                place_caret(context, event)
+            else:
+                state.cursor = len(state.text)
+                state.anchor = None
+        elif kind == "mode":
+            props.mode = arg
+        elif kind == "screen":
+            state.screen = arg if arg in ("main", "journal") else "main"
+            state.body_scroll = 0.0
+            if arg == "settings":
+                open_settings(context)
+        elif kind == "settings":
+            from . import setup_checks
+            if not setup_checks.results:
+                bpy.ops.blendwme.setup_check(which="ALL")
             open_settings(context)
-    elif kind == "settings":
-        from . import setup_checks
-        if not setup_checks.results:
+        elif kind == "reader":
+            bpy.ops.blendwme.reader("INVOKE_DEFAULT", kind=arg or "all")
+        elif kind == "example":
+            set_text(EXAMPLE_PROMPTS.get(arg, arg))
+            state.focused = True
+        elif kind == "chip":
+            if arg.startswith("/"):
+                run_command(context, arg)
+            elif arg.startswith("teach:"):
+                bpy.ops.blendwme.teach(choice=arg.split(":", 1)[1])
+            else:
+                send_text(context, arg)
+        elif kind == "teach":
+            bpy.ops.blendwme.teach(choice=arg)
+        elif kind == "op":
+            getattr(getattr(bpy.ops, arg.split(".")[0]), arg.split(".")[1])()
+        elif kind == "handover":
+            target = arg or relay.other(relay.running or relay.active)
+            bpy.ops.blendwme.hand_over(target=target)
+            if session.card and session.card.get("kind") == "limit":
+                session.set_card(None)
+        elif kind == "close_card":
+            close_top_card()
+        elif kind == "minimize":
+            minimize()
+        elif kind == "maximize":
+            toggle_maximize(context)
+        elif kind == "expand":
+            set_view(compact=False)
+            if state.auto_compact:
+                session.add("info", "The viewport is too small for the whole panel. Make the window bigger or "
+                                    "lower the Panel size in Settings.")
+        elif kind == "take_control":
+            take_control(context)
+        elif kind == "panel_reset" and p:
+            reset_place(p)
+        elif kind == "size" and p:
+            prop, step = arg.split(":")
+            rna = p.bl_rna.properties[prop]
+            setattr(p, prop, max(rna.hard_min, min(rna.hard_max, getattr(p, prop) + int(step))))
+        elif kind == "read_more":
+            state.expanded.add(int(arg))
+        elif kind == "pointers_again":
+            from . import overlay
+            overlay.restart_pointers()
+        elif kind == "brain":
+            props.brain = arg
+        elif kind == "theme" and p:
+            p.theme = arg
+        elif kind == "toggle" and p:
+            setattr(p, arg, not getattr(p, arg))
+            prefs.sync_session(context)
+        elif kind == "checks":
             bpy.ops.blendwme.setup_check(which="ALL")
-        open_settings(context)
-    elif kind == "reader":
-        bpy.ops.blendwme.reader("INVOKE_DEFAULT", kind=arg or "all")
-    elif kind == "example":
-        set_text(EXAMPLE_PROMPTS.get(arg, arg))
-        state.focused = True
-    elif kind == "chip":
-        if arg.startswith("/"):
-            run_command(context, arg)
-        elif arg.startswith("teach:"):
-            bpy.ops.blendwme.teach(choice=arg.split(":", 1)[1])
-        else:
-            send_text(context, arg)
-    elif kind == "teach":
-        bpy.ops.blendwme.teach(choice=arg)
-    elif kind == "op":
-        getattr(getattr(bpy.ops, arg.split(".")[0]), arg.split(".")[1])()
-    elif kind == "handover":
-        target = arg or relay.other(relay.running or relay.active)
-        bpy.ops.blendwme.hand_over(target=target)
-        if session.card and session.card.get("kind") == "limit":
-            session.set_card(None)
-    elif kind == "close_card":
-        close_top_card()
-    elif kind == "minimize":
-        minimize()
-    elif kind == "maximize":
-        toggle_maximize(context)
-    elif kind == "expand":
-        set_view(compact=False)
-        if state.auto_compact:
-            session.add("info", "The viewport is too small for the whole panel. Make the window bigger or "
-                                "lower the Panel size in Settings.")
-    elif kind == "take_control":
-        take_control(context)
-    elif kind == "panel_reset" and p:
-        reset_place(p)
-    elif kind == "size" and p:
-        prop, step = arg.split(":")
-        rna = p.bl_rna.properties[prop]
-        setattr(p, prop, max(rna.hard_min, min(rna.hard_max, getattr(p, prop) + int(step))))
-    elif kind == "read_more":
-        state.expanded.add(int(arg))
-    elif kind == "pointers_again":
-        from . import overlay
-        overlay.restart_pointers()
-    elif kind == "brain":
-        props.brain = arg
-    elif kind == "theme" and p:
-        p.theme = arg
-    elif kind == "toggle" and p:
-        setattr(p, arg, not getattr(p, arg))
+        elif kind == "install":
+            from . import setup_checks
+            setup_checks.run_in_background(["install", "mcp"], _config(context))
+        elif kind == "advanced":
+            try:
+                bpy.ops.preferences.addon_show(module=__package__)
+            except Exception:
+                bpy.ops.screen.userpref_show()
+        elif kind == "slider" and p and event is not None:
+            x0, x1 = float(arg.split(":")[0]), float(arg.split(":")[1])
+            state.slider = (x0, x1)
+            set_slider(context, event)
+        _redraw()
+
+    @staticmethod
+    def set_slider(context, event):
+        """Set the slider under the mouse (such as Auto pace) from its position."""
+        from . import prefs
+        p = prefs.addon_prefs(context)
+        area, region = host(context)
+        if not (p and region and state.slider):
+            return
+        x = event.mouse_x - region.x
+        x0, x1 = state.slider
+        t = max(0.0, min(1.0, (x - x0) / max(1.0, x1 - x0)))
+        p.pace = round(t * 10.0 * 2) / 2          # half-second steps
         prefs.sync_session(context)
-    elif kind == "checks":
-        bpy.ops.blendwme.setup_check(which="ALL")
-    elif kind == "install":
-        from . import setup_checks
-        setup_checks.run_in_background(["install", "mcp"], _config(context))
-    elif kind == "advanced":
-        try:
-            bpy.ops.preferences.addon_show(module=__package__)
-        except Exception:
-            bpy.ops.screen.userpref_show()
-    elif kind == "slider" and p and event is not None:
-        x0, x1 = float(arg.split(":")[0]), float(arg.split(":")[1])
-        state.slider = (x0, x1)
-        set_slider(context, event)
-    _redraw()
 
 
-def set_slider(context, event):
-    from . import prefs
-    p = prefs.addon_prefs(context)
-    area, region = host(context)
-    if not (p and region and state.slider):
-        return
-    x = event.mouse_x - region.x
-    x0, x1 = state.slider
-    t = max(0.0, min(1.0, (x - x0) / max(1.0, x1 - x0)))
-    p.pace = round(t * 10.0 * 2) / 2          # half-second steps
-    prefs.sync_session(context)
+double_click = PanelActions.double_click
+next_mode = PanelActions.next_mode
+escape = PanelActions.escape
+do_action = PanelActions.do_action
+set_slider = PanelActions.set_slider
 
 
 # ----------------------------------------------------------------------
@@ -590,202 +656,226 @@ def set_slider(context, event):
 _typing = [False]          # in the middle of typing a word (one undo step per word)
 
 
-def _snapshot():
-    state.undo.append((state.text, state.cursor))
-    del state.undo[:-UNDO_LIMIT]
-    state.redo.clear()
+class TextField:
+    """The drawn input field: Blender-like editing, selection, clipboard and undo per word (rule R7)."""
 
+    @staticmethod
+    def _snapshot():
+        """Push the current text and caret for undo (and clear redo)."""
+        state.undo.append((state.text, state.cursor))
+        del state.undo[:-UNDO_LIMIT]
+        state.redo.clear()
 
-def set_text(text, cursor=None, undoable=True):
-    if undoable and text != state.text:
-        _snapshot()
-    state.text = text
-    state.cursor = len(text) if cursor is None else max(0, min(len(text), cursor))
-    state.anchor = None
-
-
-def _replace_selection(insert):
-    """Replace the selection (or insert at the caret)."""
-    t, c = state.text, state.cursor
-    sel = panel.selection()
-    a, b = sel if sel else (c, c)
-    state.text = t[:a] + insert + t[b:]
-    state.cursor = a + len(insert)
-    state.anchor = None
-
-
-def _word_left(t, c):
-    i = c
-    while i > 0 and t[i - 1] in " \n":
-        i -= 1
-    while i > 0 and t[i - 1] not in " \n":
-        i -= 1
-    return i
-
-
-def _word_right(t, c):
-    i = c
-    while i < len(t) and t[i] in " \n":
-        i += 1
-    while i < len(t) and t[i] not in " \n":
-        i += 1
-    return i
-
-
-def _move(to, extend):
-    if extend:
-        if state.anchor is None:
-            state.anchor = state.cursor
-    else:
+    @staticmethod
+    def set_text(text, cursor=None, undoable=True):
+        """Replace the draft text and caret (as one undo step unless undoable is False)."""
+        if undoable and text != state.text:
+            _snapshot()
+        state.text = text
+        state.cursor = len(text) if cursor is None else max(0, min(len(text), cursor))
         state.anchor = None
-    state.cursor = max(0, min(len(state.text), to))
 
+    @staticmethod
+    def _replace_selection(insert):
+        """Replace the selection (or insert at the caret)."""
+        t, c = state.text, state.cursor
+        sel = panel.selection()
+        a, b = sel if sel else (c, c)
+        state.text = t[:a] + insert + t[b:]
+        state.cursor = a + len(insert)
+        state.anchor = None
 
-def type_key(context, event):
-    """Edit the input. Returns True when the key was used."""
-    t, c = state.text, state.cursor
-    sel = panel.selection()
-    shift = bool(event.shift)
-    if not (event.unicode and not event.ctrl and not event.alt and event.unicode.isprintable()):
-        _typing[0] = False
-    if event.ctrl and event.type == "Z":
-        if shift:
+    @staticmethod
+    def _word_left(t, c):
+        """Index of the start of the word left of c."""
+        i = c
+        while i > 0 and t[i - 1] in " \n":
+            i -= 1
+        while i > 0 and t[i - 1] not in " \n":
+            i -= 1
+        return i
+
+    @staticmethod
+    def _word_right(t, c):
+        """Index of the end of the word right of c."""
+        i = c
+        while i < len(t) and t[i] in " \n":
+            i += 1
+        while i < len(t) and t[i] not in " \n":
+            i += 1
+        return i
+
+    @staticmethod
+    def _move(to, extend):
+        """Move the caret to `to`, extending the selection when `extend` is True."""
+        if extend:
+            if state.anchor is None:
+                state.anchor = state.cursor
+        else:
+            state.anchor = None
+        state.cursor = max(0, min(len(state.text), to))
+
+    @staticmethod
+    def type_key(context, event):
+        """Edit the input. Returns True when the key was used."""
+        t, c = state.text, state.cursor
+        sel = panel.selection()
+        shift = bool(event.shift)
+        if not (event.unicode and not event.ctrl and not event.alt and event.unicode.isprintable()):
+            _typing[0] = False
+        if event.ctrl and event.type == "Z":
+            if shift:
+                if state.redo:
+                    state.undo.append((state.text, state.cursor))
+                    state.text, state.cursor = state.redo.pop()
+                    state.anchor = None
+            elif state.undo:
+                state.redo.append((state.text, state.cursor))
+                state.text, state.cursor = state.undo.pop()
+                state.anchor = None
+            return True
+        if event.ctrl and event.type == "Y":
             if state.redo:
                 state.undo.append((state.text, state.cursor))
                 state.text, state.cursor = state.redo.pop()
                 state.anchor = None
-        elif state.undo:
-            state.redo.append((state.text, state.cursor))
-            state.text, state.cursor = state.undo.pop()
-            state.anchor = None
-        return True
-    if event.ctrl and event.type == "Y":
-        if state.redo:
-            state.undo.append((state.text, state.cursor))
-            state.text, state.cursor = state.redo.pop()
-            state.anchor = None
-        return True
-    if event.type == "BACK_SPACE":
-        _snapshot()
-        if sel:
-            _replace_selection("")
-        elif event.ctrl:
-            start = _word_left(t, c)
-            state.text, state.cursor = t[:start] + t[c:], start
-        elif c:
-            state.text, state.cursor = t[:c - 1] + t[c:], c - 1
-        return True
-    if event.type == "DEL":
-        _snapshot()
-        if sel:
-            _replace_selection("")
-        elif event.ctrl:
-            end = _word_right(t, c)
-            state.text = t[:c] + t[end:]
-        else:
-            state.text = t[:c] + t[c + 1:]
-        return True
-    if event.type == "LEFT_ARROW":
-        if sel and not shift:
-            _move(sel[0], False)
-        else:
-            _move(_word_left(t, c) if event.ctrl else c - 1, shift)
-        return True
-    if event.type == "RIGHT_ARROW":
-        if sel and not shift:
-            _move(sel[1], False)
-        else:
-            _move(_word_right(t, c) if event.ctrl else c + 1, shift)
-        return True
-    if event.type == "HOME":
-        _move(0 if event.ctrl else t.rfind("\n", 0, c) + 1, shift)
-        return True
-    if event.type == "END":
-        nl = t.find("\n", c)
-        _move(len(t) if (event.ctrl or nl == -1) else nl, shift)
-        return True
-    if event.ctrl and event.type == "A":
-        state.anchor, state.cursor = 0, len(t)
-        return True
-    if event.ctrl and event.type in ("C", "X"):
-        context.window_manager.clipboard = t[sel[0]:sel[1]] if sel else t
-        if event.type == "X":
+            return True
+        if event.type == "BACK_SPACE":
             _snapshot()
             if sel:
                 _replace_selection("")
-            else:
-                state.text, state.cursor = "", 0
-        return True
-    if event.ctrl and event.type == "V":
-        paste = context.window_manager.clipboard.replace("\r\n", "\n")
-        _snapshot()
-        _replace_selection(paste)
-        return True
-    if event.unicode and not event.ctrl and not event.alt and event.unicode.isprintable():
-        if not t and event.unicode == "?":
-            session.add("info", HELP)
+            elif event.ctrl:
+                start = _word_left(t, c)
+                state.text, state.cursor = t[:start] + t[c:], start
+            elif c:
+                state.text, state.cursor = t[:c - 1] + t[c:], c - 1
             return True
-        # Typing is one undo step per word.
-        if sel or event.unicode == " " or not _typing[0]:
+        if event.type == "DEL":
             _snapshot()
-        _typing[0] = event.unicode != " "
-        _replace_selection(event.unicode)
-        return True
-    return False
+            if sel:
+                _replace_selection("")
+            elif event.ctrl:
+                end = _word_right(t, c)
+                state.text = t[:c] + t[end:]
+            else:
+                state.text = t[:c] + t[c + 1:]
+            return True
+        if event.type == "LEFT_ARROW":
+            if sel and not shift:
+                _move(sel[0], False)
+            else:
+                _move(_word_left(t, c) if event.ctrl else c - 1, shift)
+            return True
+        if event.type == "RIGHT_ARROW":
+            if sel and not shift:
+                _move(sel[1], False)
+            else:
+                _move(_word_right(t, c) if event.ctrl else c + 1, shift)
+            return True
+        if event.type == "HOME":
+            _move(0 if event.ctrl else t.rfind("\n", 0, c) + 1, shift)
+            return True
+        if event.type == "END":
+            nl = t.find("\n", c)
+            _move(len(t) if (event.ctrl or nl == -1) else nl, shift)
+            return True
+        if event.ctrl and event.type == "A":
+            state.anchor, state.cursor = 0, len(t)
+            return True
+        if event.ctrl and event.type in ("C", "X"):
+            context.window_manager.clipboard = t[sel[0]:sel[1]] if sel else t
+            if event.type == "X":
+                _snapshot()
+                if sel:
+                    _replace_selection("")
+                else:
+                    state.text, state.cursor = "", 0
+            return True
+        if event.ctrl and event.type == "V":
+            paste = context.window_manager.clipboard.replace("\r\n", "\n")
+            _snapshot()
+            _replace_selection(paste)
+            return True
+        if event.unicode and not event.ctrl and not event.alt and event.unicode.isprintable():
+            if not t and event.unicode == "?":
+                session.add("info", HELP)
+                return True
+            # Typing is one undo step per word.
+            if sel or event.unicode == " " or not _typing[0]:
+                _snapshot()
+            _typing[0] = event.unicode != " "
+            _replace_selection(event.unicode)
+            return True
+        return False
+
+    @staticmethod
+    def caret_at(context, event):
+        """The text index under the mouse in the input, or None."""
+        layout = state.input_layout
+        area, region = host(context)
+        if not layout or region is None:
+            return None
+        tx, top, lh, size, first, lines, advances = layout
+        x = event.mouse_x - region.x
+        y = event.mouse_y - region.y
+        row = int((top - y) // lh) + first if lh else 0
+        row = max(0, min(len(lines) - 1, row))
+        a, b = lines[row]
+        best, best_d = a, abs(x - tx)
+        for i in range(a, b + 1):
+            cx = tx + advances[row][i - a]
+            if abs(cx - x) < best_d:
+                best, best_d = i, abs(cx - x)
+        return best
+
+    @staticmethod
+    def place_caret(context, event):
+        """Put the caret where the mouse clicked; a double-click selects the word."""
+        i = caret_at(context, event)
+        if i is None:
+            state.cursor = len(state.text)
+            state.anchor = None
+            return
+        if event.value == "DOUBLE_CLICK":
+            t = state.text
+            start, end = _word_left(t, min(len(t), i + 1)), _word_right(t, i)
+            state.anchor, state.cursor = start, end
+        elif event.shift:
+            if state.anchor is None:
+                state.anchor = state.cursor
+            state.cursor = i
+        else:
+            state.anchor = None
+            state.cursor = i
+
+    @staticmethod
+    def history(step):
+        """Step through earlier sent messages (step -1 earlier, +1 later)."""
+        if not state.history:
+            return
+        if state.history_at is None:
+            state.history_at = len(state.history)
+        state.history_at = max(0, min(len(state.history), state.history_at + step))
+        set_text(state.history[state.history_at] if state.history_at < len(state.history) else "", undoable=False)
 
 
-def caret_at(context, event):
-    """The text index under the mouse in the input, or None."""
-    layout = state.input_layout
-    area, region = host(context)
-    if not layout or region is None:
-        return None
-    tx, top, lh, size, first, lines, advances = layout
-    x = event.mouse_x - region.x
-    y = event.mouse_y - region.y
-    row = int((top - y) // lh) + first if lh else 0
-    row = max(0, min(len(lines) - 1, row))
-    a, b = lines[row]
-    best, best_d = a, abs(x - tx)
-    for i in range(a, b + 1):
-        cx = tx + advances[row][i - a]
-        if abs(cx - x) < best_d:
-            best, best_d = i, abs(cx - x)
-    return best
-
-
-def place_caret(context, event):
-    i = caret_at(context, event)
-    if i is None:
-        state.cursor = len(state.text)
-        state.anchor = None
-        return
-    if event.value == "DOUBLE_CLICK":
-        t = state.text
-        start, end = _word_left(t, min(len(t), i + 1)), _word_right(t, i)
-        state.anchor, state.cursor = start, end
-    elif event.shift:
-        if state.anchor is None:
-            state.anchor = state.cursor
-        state.cursor = i
-    else:
-        state.anchor = None
-        state.cursor = i
-
-
-def history(step):
-    if not state.history:
-        return
-    if state.history_at is None:
-        state.history_at = len(state.history)
-    state.history_at = max(0, min(len(state.history), state.history_at + step))
-    set_text(state.history[state.history_at] if state.history_at < len(state.history) else "", undoable=False)
+_snapshot = TextField._snapshot
+set_text = TextField.set_text
+_replace_selection = TextField._replace_selection
+_word_left = TextField._word_left
+_word_right = TextField._word_right
+_move = TextField._move
+type_key = TextField.type_key
+caret_at = TextField.caret_at
+place_caret = TextField.place_caret
+history = TextField.history
 
 
 # ----------------------------------------------------------------------
 # Operators
 # ----------------------------------------------------------------------
 def _in(rect, x, y):
+    """True when (x, y) lies in rect (x0, y0, x1, y1)."""
     return rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]
 
 
@@ -803,6 +893,12 @@ def release_settings(context, x, y):
 
 
 class BWM_OT_panel(bpy.types.Operator):
+    """The panel's modal operator: one per window, owning clicks, typing, drags and keys.
+
+    Its `epoch` ties it to one panel lifecycle. After a file load a newer epoch
+    exists, and an older modal that is still running finishes without closing
+    the panel that replaced it.
+    """
     bl_idname = "blendwme.panel"
     bl_label = "BlendWMe Panel"
     bl_description = "The BlendWMe panel in the 3D Viewport"
@@ -810,6 +906,7 @@ class BWM_OT_panel(bpy.types.Operator):
     epoch: bpy.props.IntProperty(default=0, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):
+        """Start the modal unless a current panel modal already runs."""
         if panel_alive():
             return {"CANCELLED"}
         self.epoch = getattr(state, "lifecycle_epoch", 0)
@@ -817,6 +914,7 @@ class BWM_OT_panel(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
+        """Route one event: lifecycle and ownership checks, then drags, clicks, wheel, typing and shortcuts."""
         if self.epoch != getattr(state, "lifecycle_epoch", 0):
             return {"FINISHED"}
         from . import theme
@@ -976,6 +1074,7 @@ class BWM_OT_panel(bpy.types.Operator):
         return {"PASS_THROUGH"}
 
     def cancel(self, context):
+        """Blender cancelled the modal: restore the cursor."""
         _restore_cursor(context)
 
 
@@ -987,12 +1086,14 @@ def relay_running_escape(context, event):
 
 
 class BWM_OT_panel_reset(bpy.types.Operator):
+    """Put the panel back in the top right corner at its normal size."""
     bl_idname = "blendwme.panel_reset"
     bl_label = "Put the Panel Back on the Right"
     bl_description = "Put the BlendWMe panel back in the top right corner at its normal size"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
+        """Reset the stored placement and redraw."""
         from . import prefs
         p = prefs.addon_prefs(context)
         if p:
@@ -1020,10 +1121,12 @@ class BWM_OT_panel_key(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        """Never runs: the panel's modal handles the key, this item only stores the binding."""
         # The panel's modal operator handles the key; the keymap item only holds the binding.
         return False
 
     def execute(self, context):
+        """Not used (see poll)."""
         return {"CANCELLED"}
 
 
@@ -1052,6 +1155,7 @@ def open_panel(context, area=None):
 
 
 def close_panel():
+    """Close the panel and forget its transient view state."""
     state.open = False
     state.settings_click = None
     state.focused = False

@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """Keeping Blender safe while BlendWMe works: file loads, undo, crash traces, startup.
 
 - A different file is opened while a brain works: before the load, the brain is
@@ -26,8 +28,9 @@ from bpy.app.handlers import persistent
 from . import bridge, logs
 from .state import session
 
+__author__ = "definitelynotironman"
+
 problems = []            # [(part, message)] parts that failed to start
-_trace_file = None       # the open python-crash-trace.txt
 _load_note = ""          # said after a file load that stopped the brain
 _panel_was_open = False
 
@@ -48,6 +51,7 @@ def safe_register(part, fn):
 
 
 def safe_unregister(part, fn):
+    """Run one part's unregister(); a failure is printed, never raised."""
     try:
         fn()
     except Exception:
@@ -60,6 +64,7 @@ def safe_unregister(part, fn):
 # ----------------------------------------------------------------------
 @persistent
 def on_load_pre(*_args):
+    """Before a file loads: remember the panel, hold and cancel scene work, stop a working brain."""
     global _panel_was_open
     from . import panel
     _panel_was_open = panel.state.open
@@ -83,6 +88,11 @@ def on_load_pre(*_args):
 
 @persistent
 def on_load_post(*_args):
+    """After a file loads: release the bridge, load the file's journal and reopen the panel later.
+
+    The panel is reopened from a delayed timer (panel_ops.reopen_after_load),
+    because Blender discards draw handlers rebound during load_post itself.
+    """
     global _load_note
     bridge.hold(False)
     logs.session_log.write("file", "loaded: " + (bpy.data.filepath or "new file"))
@@ -107,6 +117,7 @@ def on_load_post(*_args):
 
 @persistent
 def on_undo_post(*_args):
+    """After undo or redo: drop pointers to objects that no longer exist and redraw."""
     try:
         names = set(bpy.data.objects.keys())
         kept = [p for p in session.pointers if "object" not in p or p["object"] in names]
@@ -124,27 +135,42 @@ _HANDLERS = (("load_pre", on_load_pre), ("load_post", on_load_post),
 # ----------------------------------------------------------------------
 # Crash trace
 # ----------------------------------------------------------------------
-def enable_crash_trace(folder=""):
-    """Write the Python stack of a hard crash into the log folder."""
-    global _trace_file
-    disable_crash_trace()
-    try:
-        _trace_file = open(logs.crash_trace_path(folder), "a", encoding="utf-8")
-        faulthandler.enable(file=_trace_file, all_threads=True)
-    except (OSError, RuntimeError, ValueError) as e:
-        print("BlendWMe: crash trace is off:", e)
-        _trace_file = None
+class CrashTrace:
+    """Python's faulthandler pointed at python-crash-trace.txt in the log folder.
 
+    The file must stay open for as long as the trace is enabled: faulthandler
+    writes to its descriptor from inside a crash, when Python can no longer
+    open files.
+    """
 
-def disable_crash_trace():
-    global _trace_file
-    if _trace_file is not None:
+    def __init__(self):
+        """Not enabled yet."""
+        self.file = None
+
+    def enable(self, folder=""):
+        """Write the Python stack of a hard crash into the log folder."""
+        self.disable()
         try:
-            faulthandler.disable()
-            _trace_file.close()
-        except (OSError, ValueError):
-            pass
-    _trace_file = None
+            self.file = open(logs.crash_trace_path(folder), "a", encoding="utf-8")
+            faulthandler.enable(file=self.file, all_threads=True)
+        except (OSError, RuntimeError, ValueError) as e:
+            print("BlendWMe: crash trace is off:", e)
+            self.file = None
+
+    def disable(self):
+        """Stop tracing and close the file."""
+        if self.file is not None:
+            try:
+                faulthandler.disable()
+                self.file.close()
+            except (OSError, ValueError):
+                pass
+        self.file = None
+
+
+crash_trace = CrashTrace()
+enable_crash_trace = crash_trace.enable
+disable_crash_trace = crash_trace.disable
 
 
 # ----------------------------------------------------------------------
@@ -169,6 +195,7 @@ def needs_prefs_note(prefs):
 # Register
 # ----------------------------------------------------------------------
 def register():
+    """Open the session log, enable the crash trace and add the file and undo handlers."""
     from . import prefs
     folder = prefs.log_folder()
     logs.session_log.open(folder)
@@ -182,6 +209,7 @@ def register():
 
 
 def unregister():
+    """Remove the handlers, stop the crash trace and close the session log."""
     for name, fn in _HANDLERS:
         handlers = getattr(bpy.app.handlers, name)
         while fn in handlers:

@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The BlendWMe panel, drawn inside the 3D Viewport (the four drawn themes).
 
 Blender's own panels cannot take custom fonts, colours or shapes, so BlendWMe draws
@@ -31,6 +33,8 @@ from . import draw2d as d
 from . import theme
 from .state import ASKING, DONE, ERROR, IDLE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
 
+__author__ = "definitelynotironman"
+
 PANEL_WIDTH = 372          # design px
 PAD = 16
 GAP = 12
@@ -53,13 +57,14 @@ EXAMPLE_PROMPTS = {
     "A simple ice cream cone": "Model me a simple ice cream cone.",
 }
 CHIPS = {
-    "WATCH": (("Look again", "/look"), ("Undo step", "/undo"), ("Explain", "Explain what you just did and why.")),
+    "AUTO": (("Look again", "/look"), ("Undo step", "/undo"), ("Explain", "Explain what you just did and why.")),
     "TEACH": (("Hint", "teach:hint"), ("Skip this step", "teach:skip"), ("Do it for me", "teach:show_me")),
 }
 MODES = (("AUTO", "Auto"), ("TEACH", "Teach"))
 
 
 def label(brain):
+    """The brain's display name (BlendWMe when unknown)."""
     return {"claude": "Claude", "codex": "Codex"}.get(brain, "BlendWMe")
 
 
@@ -67,7 +72,13 @@ def label(brain):
 # Panel state (one per Blender session; plain Python values only)
 # ----------------------------------------------------------------------
 class PanelState:
+    """Everything the drawn panel remembers between redraws (plain Python values only).
+
+    It never holds Blender data: areas and windows are kept as as_pointer()
+    values, so a file load or undo cannot leave it with a freed reference.
+    """
     def __init__(self):
+        """A closed panel with an empty draft, no drag and no animation."""
         self.open = False
         self.area_ptr = 0              # as_pointer() of the 3D Viewport that hosts the panel
         self.screen = "main"           # main | journal
@@ -110,6 +121,7 @@ class PanelState:
         self.settings_click = None    # armed settings button; opens on matching release
 
     def view(self):
+        """'mini', 'compact' or 'full'."""
         if self.minimized:
             return "mini"
         return "compact" if (self.compact or self.auto_compact) else "full"
@@ -119,6 +131,7 @@ state = PanelState()
 
 
 def register():
+    """Load the fonts, register the panel operators and add the draw callback."""
     from . import panel_ops
     if _handles:
         unregister()
@@ -130,6 +143,7 @@ def register():
 
 
 def unregister():
+    """Remove the draw callback, unregister the operators and unload the fonts."""
     from . import panel_ops
     for cls in reversed(panel_ops.classes):
         if getattr(cls, "is_registered", False):
@@ -164,6 +178,7 @@ def refresh_drawing():
 
 
 def is_open_in(area):
+    """True when the drawn panel is open in this 3D Viewport."""
     return state.open and area is not None and area.as_pointer() == state.area_ptr and not theme.native()
 
 
@@ -173,6 +188,7 @@ def is_expanded_in(area):
 
 
 def _prefs():
+    """The add-on preferences, or None."""
     from . import prefs
     try:
         return prefs.addon_prefs()
@@ -181,6 +197,7 @@ def _prefs():
 
 
 def _wm_props():
+    """The session properties (window_manager.blendwme), or None."""
     try:
         return bpy.context.window_manager.blendwme
     except AttributeError:
@@ -219,203 +236,237 @@ def scale():
 # ----------------------------------------------------------------------
 # Where the panel goes (rule R9)
 # ----------------------------------------------------------------------
-def free_area(area, region):
-    """(left, bottom, right, top) of the viewport region that the toolbar, the sidebar
-    and the header do not cover (they overlap the viewport when Region Overlap is on)."""
-    left, bottom, right, top = 0.0, 0.0, float(region.width), float(region.height)
-    for r in area.regions:
-        if r.width <= 1 or r.height <= 1 or r.type == "WINDOW":
-            continue
-        overlaps_x = region.x <= r.x < region.x + region.width
-        overlaps_y = region.y <= r.y < region.y + region.height
-        if r.type == "UI" and overlaps_x and overlaps_y:
-            right = min(right, r.x - region.x)
-        if r.type == "TOOLS" and overlaps_y and r.x <= region.x + 2:
-            left = max(left, r.x + r.width - region.x)
-        if r.type in ("HEADER", "TOOL_HEADER") and overlaps_y and r.y > region.y + region.height / 2:
-            top = min(top, r.y - region.y)
-    return left, bottom, right, top
+class Placement:
+    """Where the panel sits (rule R9): the free viewport, gizmo avoidance, corners, snapping and clamping.
 
+    Positions are stored as a corner plus an offset in design units, so the
+    panel keeps its place when the viewport is resized or the UI scale changes."""
 
-def gizmo_shown(area):
-    try:
-        space = area.spaces.active
-        return bool(space.show_gizmo and space.show_gizmo_navigate)
-    except Exception:
-        return False
+    @staticmethod
+    def free_area(area, region):
+        """(left, bottom, right, top) of the viewport region that the toolbar, the sidebar
+        and the header do not cover (they overlap the viewport when Region Overlap is on)."""
+        left, bottom, right, top = 0.0, 0.0, float(region.width), float(region.height)
+        for r in area.regions:
+            if r.width <= 1 or r.height <= 1 or r.type == "WINDOW":
+                continue
+            overlaps_x = region.x <= r.x < region.x + region.width
+            overlaps_y = region.y <= r.y < region.y + region.height
+            if r.type == "UI" and overlaps_x and overlaps_y:
+                right = min(right, r.x - region.x)
+            if r.type == "TOOLS" and overlaps_y and r.x <= region.x + 2:
+                left = max(left, r.x + r.width - region.x)
+            if r.type in ("HEADER", "TOOL_HEADER") and overlaps_y and r.y > region.y + region.height / 2:
+                top = min(top, r.y - region.y)
+        return left, bottom, right, top
 
+    @staticmethod
+    def gizmo_shown(area):
+        """True when the viewport shows its navigation gizmo."""
+        try:
+            space = area.spaces.active
+            return bool(space.show_gizmo and space.show_gizmo_navigate)
+        except Exception:
+            return False
 
-def gizmo_rect(area, region):
-    """The navigation gizmo and its buttons in the top right of the viewport, or None."""
-    p = _prefs()
-    if (p is not None and not p.avoid_gizmo) or not gizmo_shown(area):
-        return None
-    left, bottom, right, top = free_area(area, region)
-    s = d.system_scale()
-    try:
-        size = bpy.context.preferences.view.gizmo_size_navigate_v3d
-    except Exception:
-        size = 80
-    w = round((size + 24) * s)
-    h = round((size + 24 + 4 * 30) * s)      # the ball and the zoom, pan, camera and ortho buttons
-    return right - w, top - h, right, top
+    @staticmethod
+    def gizmo_rect(area, region):
+        """The navigation gizmo and its buttons in the top right of the viewport, or None."""
+        p = _prefs()
+        if (p is not None and not p.avoid_gizmo) or not gizmo_shown(area):
+            return None
+        left, bottom, right, top = free_area(area, region)
+        s = d.system_scale()
+        try:
+            size = bpy.context.preferences.view.gizmo_size_navigate_v3d
+        except Exception:
+            size = 80
+        w = round((size + 24) * s)
+        h = round((size + 24 + 4 * 30) * s)      # the ball and the zoom, pan, camera and ortho buttons
+        return right - w, top - h, right, top
 
+    @staticmethod
+    def usable(area, region):
+        """The safe area minus the edge gap and room for the hard shadow (right and down)."""
+        s = scale()
+        left, bottom, right, top = free_area(area, region)
+        edge = round(EDGE * s)
+        shadow = round(theme.SHADOW_PANEL * s)
+        return left + edge, bottom + edge + shadow, right - edge - shadow, top - edge
 
-def usable(area, region):
-    """The safe area minus the edge gap and room for the hard shadow (right and down)."""
-    s = scale()
-    left, bottom, right, top = free_area(area, region)
-    edge = round(EDGE * s)
-    shadow = round(theme.SHADOW_PANEL * s)
-    return left + edge, bottom + edge + shadow, right - edge - shadow, top - edge
-
-
-def _avoid_gizmo(rect, area, region, bounds):
-    """Move a rectangle out of the gizmo the shortest way: left, or down (shorter if needed)."""
-    g = gizmo_rect(area, region)
-    if g is None:
-        return rect
-    x0, y0, x1, y1 = rect
-    gx0, gy0, gx1, gy1 = g
-    if x1 <= gx0 or x0 >= gx1 or y1 <= gy0 or y0 >= gy1:
-        return rect
-    s = scale()
-    ul, ub, ur, ut = bounds
-    edge = round(EDGE * s) + round(theme.SHADOW_PANEL * s)
-    options = []
-    dx = x1 - (gx0 - edge)
-    if x0 - dx >= ul:
-        options.append((dx, (x0 - dx, y0, x1 - dx, y1)))
-    dy = y1 - (gy0 - round(EDGE * s))
-    if dy > 0:
-        ny0, ny1 = y0 - dy, y1 - dy
-        if ny0 < ub:                       # shorter, never below the minimum
-            ny0 = ub
-        if ny1 - ny0 >= min(MIN_HEIGHT * s, y1 - y0):
-            options.append((dy + (y1 - y0) - (ny1 - ny0), (x0, ny0, x1, ny1)))
-    if not options:
-        return rect
-    return min(options, key=lambda o: o[0])[1]
-
-
-def panel_width(area, region):
-    s = scale()
-    p = _prefs()
-    ul, ub, ur, ut = usable(area, region)
-    width = (p.panel_width if p and p.panel_width else PANEL_WIDTH) * s
-    return round(max(min(MIN_WIDTH * s, ur - ul), min(width, ur - ul)))
-
-
-def placement(area, region, natural=None, width=None):
-    """The panel rectangle (x0, y0, x1, y1) in the 3D Viewport's main region.
-
-    `natural` is the height the content wants (None: as tall as the safe area). The
-    corner grip sets a fixed height; maximize makes it full height. It always stays
-    inside the safe area and keeps its corner and distance from it."""
-    s = scale()
-    p = _prefs()
-    ul, ub, ur, ut = usable(area, region)
-    w = width if width is not None else panel_width(area, region)
-    avail = max(1.0, ut - ub)
-    if p and p.panel_max:
-        h = avail
-    elif p and p.panel_height:
-        h = p.panel_height * s
-    elif natural is not None:
-        h = natural
-    else:
-        h = avail
-    h = round(max(min(MIN_HEIGHT * s, avail), min(h, avail)))
-    corner = p.panel_corner if p else "TR"
-    ox = round((p.panel_off_x if p else 0.0) * s)
-    oy = round((p.panel_off_y if p else 0.0) * s)
-    if corner in ("TR", "BR"):
-        x1 = ur - ox
-        x0 = x1 - w
-    else:
-        x0 = ul + ox
-        x1 = x0 + w
-    if corner in ("TR", "TL"):
-        y1 = ut - oy
-        y0 = y1 - h
-    else:
-        y0 = ub + oy
-        y1 = y0 + h
-    # Inside the safe area, however far the offsets say.
-    shift_x = max(0, ul - x0) - max(0, x1 - ur)
-    shift_y = max(0, ub - y0) - max(0, y1 - ut)
-    rect = (x0 + shift_x, y0 + shift_y, x1 + shift_x, y1 + shift_y)
-    rect = _avoid_gizmo(rect, area, region, (ul, ub, ur, ut))
-    return tuple(round(v) for v in rect)
-
-
-def bar_rect(area, region, w, h):
-    """The minimized bar: at the panel's corner, the size of its content."""
-    x0, y0, x1, y1 = placement(area, region, natural=h, width=w)
-    p = _prefs()
-    corner = p.panel_corner if p else "TR"
-    if corner in ("TR", "TL"):
-        return x0, y1 - h, x1, y1
-    return x0, y0, x1, y0 + h
-
-
-def to_corner(rect, bounds):
-    """(corner, off_x, off_y) in pixels for a rectangle: the nearest corner of the safe area."""
-    x0, y0, x1, y1 = rect
-    ul, ub, ur, ut = bounds
-    right = (x0 + x1) / 2 > (ul + ur) / 2
-    top = (y0 + y1) / 2 > (ub + ut) / 2
-    corner = ("T" if top else "B") + ("R" if right else "L")
-    ox = (ur - x1) if right else (x0 - ul)
-    oy = (ut - y1) if top else (y0 - ub)
-    return corner, max(0.0, ox), max(0.0, oy)
-
-
-def snap_rect(rect, bounds, area, region, s):
-    """Magnetic snap to the safe area's edges and corners (and the gizmo's edges)."""
-    x0, y0, x1, y1 = rect
-    w, h = x1 - x0, y1 - y0
-    dist = SNAP * s
-    ul, ub, ur, ut = bounds
-    xs = [(ul, "x0"), (ur, "x1")]
-    ys = [(ub, "y0"), (ut, "y1")]
-    g = gizmo_rect(area, region)
-    if g is not None:
+    @staticmethod
+    def _avoid_gizmo(rect, area, region, bounds):
+        """Move a rectangle out of the gizmo the shortest way: left, or down (shorter if needed)."""
+        g = gizmo_rect(area, region)
+        if g is None:
+            return rect
+        x0, y0, x1, y1 = rect
+        gx0, gy0, gx1, gy1 = g
+        if x1 <= gx0 or x0 >= gx1 or y1 <= gy0 or y0 >= gy1:
+            return rect
+        s = scale()
+        ul, ub, ur, ut = bounds
         edge = round(EDGE * s) + round(theme.SHADOW_PANEL * s)
-        xs.append((g[0] - edge, "x1"))
-        ys.append((g[1] - round(EDGE * s), "y1"))
-    best_x = min(((abs((x0 if k == "x0" else x1) - v), v, k) for v, k in xs), default=None)
-    if best_x and best_x[0] < dist:
-        x0 = best_x[1] if best_x[2] == "x0" else best_x[1] - w
-    best_y = min(((abs((y0 if k == "y0" else y1) - v), v, k) for v, k in ys), default=None)
-    if best_y and best_y[0] < dist:
-        y0 = best_y[1] if best_y[2] == "y0" else best_y[1] - h
-    return x0, y0, x0 + w, y0 + h
+        options = []
+        dx = x1 - (gx0 - edge)
+        if x0 - dx >= ul:
+            options.append((dx, (x0 - dx, y0, x1 - dx, y1)))
+        dy = y1 - (gy0 - round(EDGE * s))
+        if dy > 0:
+            ny0, ny1 = y0 - dy, y1 - dy
+            if ny0 < ub:                       # shorter, never below the minimum
+                ny0 = ub
+            if ny1 - ny0 >= min(MIN_HEIGHT * s, y1 - y0):
+                options.append((dy + (y1 - y0) - (ny1 - ny0), (x0, ny0, x1, ny1)))
+        if not options:
+            return rect
+        return min(options, key=lambda o: o[0])[1]
+
+    @staticmethod
+    def panel_width(area, region):
+        """The panel width in pixels: the stored width on an 8-unit grid, within the usable area."""
+        s = scale()
+        p = _prefs()
+        ul, ub, ur, ut = usable(area, region)
+        width = (p.panel_width if p and p.panel_width else PANEL_WIDTH) * s
+        return round(max(min(MIN_WIDTH * s, ur - ul), min(width, ur - ul)))
+
+    @staticmethod
+    def placement(area, region, natural=None, width=None):
+        """The panel rectangle (x0, y0, x1, y1) in the 3D Viewport's main region.
+
+        `natural` is the height the content wants (None: as tall as the safe area). The
+        corner grip sets a fixed height; maximize makes it full height. It always stays
+        inside the safe area and keeps its corner and distance from it."""
+        s = scale()
+        p = _prefs()
+        ul, ub, ur, ut = usable(area, region)
+        w = width if width is not None else panel_width(area, region)
+        avail = max(1.0, ut - ub)
+        if p and p.panel_max:
+            h = avail
+        elif p and p.panel_height:
+            h = p.panel_height * s
+        elif natural is not None:
+            h = natural
+        else:
+            h = avail
+        h = round(max(min(MIN_HEIGHT * s, avail), min(h, avail)))
+        corner = p.panel_corner if p else "TR"
+        ox = round((p.panel_off_x if p else 0.0) * s)
+        oy = round((p.panel_off_y if p else 0.0) * s)
+        if corner in ("TR", "BR"):
+            x1 = ur - ox
+            x0 = x1 - w
+        else:
+            x0 = ul + ox
+            x1 = x0 + w
+        if corner in ("TR", "TL"):
+            y1 = ut - oy
+            y0 = y1 - h
+        else:
+            y0 = ub + oy
+            y1 = y0 + h
+        # Inside the safe area, however far the offsets say.
+        shift_x = max(0, ul - x0) - max(0, x1 - ur)
+        shift_y = max(0, ub - y0) - max(0, y1 - ut)
+        rect = (x0 + shift_x, y0 + shift_y, x1 + shift_x, y1 + shift_y)
+        rect = _avoid_gizmo(rect, area, region, (ul, ub, ur, ut))
+        return tuple(round(v) for v in rect)
+
+    @staticmethod
+    def bar_rect(area, region, w, h):
+        """The minimized bar: at the panel's corner, the size of its content."""
+        x0, y0, x1, y1 = placement(area, region, natural=h, width=w)
+        p = _prefs()
+        corner = p.panel_corner if p else "TR"
+        if corner in ("TR", "TL"):
+            return x0, y1 - h, x1, y1
+        return x0, y0, x1, y0 + h
+
+    @staticmethod
+    def to_corner(rect, bounds):
+        """(corner, off_x, off_y) in pixels for a rectangle: the nearest corner of the safe area."""
+        x0, y0, x1, y1 = rect
+        ul, ub, ur, ut = bounds
+        right = (x0 + x1) / 2 > (ul + ur) / 2
+        top = (y0 + y1) / 2 > (ub + ut) / 2
+        corner = ("T" if top else "B") + ("R" if right else "L")
+        ox = (ur - x1) if right else (x0 - ul)
+        oy = (ut - y1) if top else (y0 - ub)
+        return corner, max(0.0, ox), max(0.0, oy)
+
+    @staticmethod
+    def snap_rect(rect, bounds, area, region, s):
+        """Magnetic snap to the safe area's edges and corners (and the gizmo's edges)."""
+        x0, y0, x1, y1 = rect
+        w, h = x1 - x0, y1 - y0
+        dist = SNAP * s
+        ul, ub, ur, ut = bounds
+        xs = [(ul, "x0"), (ur, "x1")]
+        ys = [(ub, "y0"), (ut, "y1")]
+        g = gizmo_rect(area, region)
+        if g is not None:
+            edge = round(EDGE * s) + round(theme.SHADOW_PANEL * s)
+            xs.append((g[0] - edge, "x1"))
+            ys.append((g[1] - round(EDGE * s), "y1"))
+        best_x = min(((abs((x0 if k == "x0" else x1) - v), v, k) for v, k in xs), default=None)
+        if best_x and best_x[0] < dist:
+            x0 = best_x[1] if best_x[2] == "x0" else best_x[1] - w
+        best_y = min(((abs((y0 if k == "y0" else y1) - v), v, k) for v, k in ys), default=None)
+        if best_y and best_y[0] < dist:
+            y0 = best_y[1] if best_y[2] == "y0" else best_y[1] - h
+        return x0, y0, x0 + w, y0 + h
+
+    @staticmethod
+    def clamp_rect(rect, bounds):
+        """Move a rectangle so it lies inside bounds, keeping its size."""
+        x0, y0, x1, y1 = rect
+        ul, ub, ur, ut = bounds
+        w, h = x1 - x0, y1 - y0
+        x0 = max(ul, min(x0, ur - w))
+        y0 = max(ub, min(y0, ut - h))
+        return x0, y0, x0 + w, y0 + h
 
 
-def clamp_rect(rect, bounds):
-    x0, y0, x1, y1 = rect
-    ul, ub, ur, ut = bounds
-    w, h = x1 - x0, y1 - y0
-    x0 = max(ul, min(x0, ur - w))
-    y0 = max(ub, min(y0, ut - h))
-    return x0, y0, x0 + w, y0 + h
+free_area = Placement.free_area
+gizmo_shown = Placement.gizmo_shown
+gizmo_rect = Placement.gizmo_rect
+usable = Placement.usable
+_avoid_gizmo = Placement._avoid_gizmo
+panel_width = Placement.panel_width
+placement = Placement.placement
+bar_rect = Placement.bar_rect
+to_corner = Placement.to_corner
+snap_rect = Placement.snap_rect
+clamp_rect = Placement.clamp_rect
 
 
-def smooth_view_on():
-    """Blender's own "Smooth View" time: 0 means the user turned view animation off."""
-    try:
-        return bpy.context.preferences.view.smooth_view > 0 and not theme.reduce_motion()
-    except Exception:
-        return True
+class Motion:
+    """The frame animation's timing: whether it runs at all, and its easing curves (rule R10)."""
+
+    @staticmethod
+    def smooth_view_on():
+        """Blender's own "Smooth View" time: 0 means the user turned view animation off."""
+        try:
+            return bpy.context.preferences.view.smooth_view > 0 and not theme.reduce_motion()
+        except Exception:
+            return True
+
+    @staticmethod
+    def ease_out(t):
+        """Cubic ease-out for t in 0..1 (expanding)."""
+        return 1 - (1 - t) ** 3
+
+    @staticmethod
+    def ease_in(t):
+        """Cubic ease-in for t in 0..1 (collapsing)."""
+        return t * t
 
 
-def ease_out(t):
-    return 1 - (1 - t) ** 3
-
-
-def ease_in(t):
-    return t * t
+smooth_view_on = Motion.smooth_view_on
+ease_out = Motion.ease_out
+ease_in = Motion.ease_in
 
 
 # ----------------------------------------------------------------------
@@ -425,6 +476,7 @@ class Painter:
     """Draws one frame of the panel and records where the buttons are."""
 
     def __init__(self, area, region):
+        """Prepare one redraw: sizes, palette, scale and an empty hit list."""
         self.area, self.region = area, region
         self.zoom, self.text_scale, self.icon_scale = sizes()
         self.s = d.system_scale() * self.zoom
@@ -445,6 +497,7 @@ class Painter:
         return max(1, round(v * self.s)) if v > 0 else -max(1, round(-v * self.s))
 
     def hit(self, x, y, w, h, action):
+        """Record a click target (later targets are on top)."""
         self.hits.append((x, y, x + w, y + h, action))
 
     def blink(self, period=1.0):
@@ -454,6 +507,7 @@ class Painter:
         return (self.now % (2 * period)) < period
 
     def card_box(self, x, y, w, h, fill=None, border=None, width=theme.BORDER_CARD, dashed=False):
+        """A card: fill, border and rounded corners, optionally dashed."""
         p = self.p
         if dashed:
             d.box(x, y, w, h, fill=fill or p.card, border=None, radius=theme.RADIUS)
@@ -464,6 +518,7 @@ class Painter:
             d.box(x, y, w, h, fill=fill or p.card, border=border or p.ink, width=width, radius=theme.RADIUS)
 
     def label_caps(self, x, y, value, color=None, size=11, max_width=None):
+        """A letter-spaced capital label that fits max_width."""
         value = value.upper()
         if max_width is not None:
             value = d.tracked_fit("BLACK", self.px(size), value, max_width)
@@ -476,6 +531,7 @@ class Painter:
         d.text(key, size, x + (w - tw) / 2, y + (h - size * cap) / 2, value, color)
 
     def button(self, x, y, w, h, value, action, primary=False, hot=False, size=14):
+        """A button with a hard shadow; primary uses the accent, hot the 'your turn' colour."""
         p = self.p
         fill = p.hot if hot else (p.accent if primary else p.card)
         ink = p.on_accent if (primary or hot) else p.ink
@@ -485,18 +541,21 @@ class Painter:
         self.hit(x, y, w, h, action)
 
     def chip(self, x, y, w, h, value, action):
+        """A small suggestion chip that sends its action."""
         p = self.p
         d.box(x, y, w, h, fill=p.card, border=p.ink, width=theme.BORDER_CARD, radius=h / 2 / self.s)
         self.centered("HAND", self.px(18), x, y, w, h, value, p.ink, cap=0.62)
         self.hit(x, y, w, h, action)
 
     def close_x(self, x1, y1, action="close_card"):
+        """The X in a card's top-right corner."""
         size = self.px(10)
         cx, cy = x1 - self.px(16), y1 - self.px(16)
         d.cross(cx, cy, size, self.p.muted, self.px(2))
         self.hit(cx - self.px(12), cy - self.px(12), self.px(24), self.px(24), action)
 
     def mark(self, brain, cx, cy, r, color=None):
+        """The brain's small mark: Claude a wavy line, Codex a zigzag."""
         color = color or self.p.ink
         if brain == "codex":
             d.diamond(cx, cy, r * 1.15, color, self.px(2))          # diamond() applies the icon size
@@ -514,6 +573,7 @@ class Painter:
 
     # -- the whole panel -----------------------------------------------
     def draw(self):
+        """Draw the whole panel for this redraw and publish its click targets."""
         import gpu
         gpu.state.blend_set("ALPHA")
         try:
@@ -549,6 +609,7 @@ class Painter:
         return ut - ub >= self.full_minimum(inner_w) + 2 * self.px(PAD) and ur - ul >= MIN_WIDTH * self.s * 0.8
 
     def draw_views(self):
+        """Draw the current view, animating only the frame while it changes size (R10)."""
         state.auto_compact = not state.minimized and not state.compact and not self.fits_full()
         view = state.view()
         anim = state.anim
@@ -587,6 +648,7 @@ class Painter:
         self.hits = []
 
     def frame_and(self, rect, draw_content, view):
+        """Draw a frame and its content without animation."""
         state.frame = rect
         draw_content(rect)
         state.last_view = view
@@ -594,6 +656,7 @@ class Painter:
         state.last_content = draw_content
 
     def full(self, x0, y0, x1, y1, compact=False):
+        """The Full or Compact panel: frame, header, then the main or journal screen."""
         s_sh = self.px(theme.SHADOW_PANEL)
         state.rect = (x0, y0 - s_sh, x1 + s_sh, y1)
         p = self.p
@@ -625,6 +688,7 @@ class Painter:
         d.rect(x0 + b, y1 - h - b, x1 - x0 - 2 * b, b, p.ink)
 
     def ink_on_band(self):
+        """The ink colour on the header (the band ink in the 2000s theme)."""
         return self.p.band_ink if self.p.band is not None else self.p.ink
 
     def grip(self, x0, y0, x1, y1):
@@ -647,6 +711,7 @@ class Painter:
         self.hit(hx - inset, hy - inset, size + self.px(8), size + self.px(8), "grip")
 
     def bar_size(self):
+        """(width, height) of the minimized bar."""
         words, icon = self.status_words()
         size = self.px(16)
         logo_w = d.width_of("BLACK", self.px(15), "BlendWMe")
@@ -705,6 +770,7 @@ class Painter:
         angle = -0.044          # -2.5 degrees, like a sticker
 
         def rotated(pts, cx, cy_):
+            """Points rotated around (cx, cy_) by the tag's tilt."""
             ca, sa = math.cos(angle), math.sin(angle)
             return [(cx + (px_ - cx) * ca - (py - cy_) * sa, cy_ + (px_ - cx) * sa + (py - cy_) * ca) for px_, py in pts]
         cx = bx + w / 2
@@ -748,16 +814,19 @@ class Painter:
         return "Ready", "none"
 
     def logo_width(self, size):
+        """Width of the BlendWMe logo at a font size."""
         fs = self.px(size)
         tag = d.width_of("BLACK", fs * 0.92, "WMe") + self.px(14)
         return d.width_of("BLACK", fs, "Blend") + self.px(4) + tag + self.px(4) + round(fs * 0.24)
 
     def pill_width(self, words, icon):
+        """Width of the status pill for these words (0 when Ready)."""
         if words == "Ready":
             return 0
         return d.width_of("HAND", self.px(17), words) + (self.px(26) if icon != "none" else 0) + self.px(24)
 
     def status_pill(self, x1, top, room=None):
+        """The status pill in the header (thinking, your turn, paused ...)."""
         p = self.p
         words, icon = self.status_words()
         if words == "Ready":
@@ -826,11 +895,13 @@ class Painter:
         return x
 
     def small_button(self, x, y, size, action):
+        """A square header button with its click target."""
         p = self.p
         d.box(x, y, size, size, fill=p.card, border=p.ink, width=theme.BORDER_CARD, radius=6)
         self.hit(x, y, size, size, action)
 
     def back_pill(self, x1, top):
+        """The Back pill on the journal screen."""
         p = self.p
         size = self.px(17)
         h = self.px(32)
@@ -883,6 +954,7 @@ class Painter:
         return top + max(self.px(110), middle) + gap + self.bottom_stack(w)
 
     def compact_height(self, w):
+        """The natural height of the Compact view at this width."""
         gap = self.px(GAP)
         h = self.px(HEADER_H) + gap
         if self.strip_text():
@@ -898,6 +970,7 @@ class Painter:
         return 0
 
     def limit_buttons(self, x, y, w):
+        """The buttons on a usage-limit card: hand over, or wait."""
         card = session.card
         target = card.get("target") or self.relay.other(card.get("brain") or self.relay.active)
         h = self.px(48)
@@ -910,6 +983,7 @@ class Painter:
 
     # -- main screen ------------------------------------------------------
     def main_screen(self, x0, y0, x1, y1):
+        """The main screen: brain and mode on top, conversation and plan in the middle, fixed slots below."""
         w = x1 - x0
         gap = self.px(GAP)
         top = y1
@@ -1006,6 +1080,7 @@ class Painter:
         return None
 
     def cue_strip(self, x, y, w, h, head, words, yours):
+        """The one-line cue above the input while it is the user's turn."""
         p = self.p
         self.card_box(x, y, w, h, border=p.hot if yours else None)
         block = self.px(16)
@@ -1024,6 +1099,7 @@ class Painter:
         self.hit(x, y, w, h, "expand")
 
     def brain_card(self, x, top, w):
+        """The card showing which brain works, and the Hand over button."""
         p = self.p
         props = self.props
         brain = (self.relay.running or self.relay.active or (props.brain if props else "claude"))
@@ -1065,6 +1141,7 @@ class Painter:
         return h
 
     def mode_tabs(self, x, top, w):
+        """The Auto / Teach tabs."""
         p = self.p
         h = self.px(46)
         y = top - h
@@ -1085,6 +1162,7 @@ class Painter:
         return h
 
     def footer(self, x, y, w):
+        """The footer: New task or New lesson, journal, export and Settings."""
         p = self.p
         size = self.px(17)
         h = self.px(24)
@@ -1105,6 +1183,7 @@ class Painter:
 
     # -- input and chips ----------------------------------------------------
     def placeholder(self):
+        """The input's placeholder text for the current situation."""
         brain = label(self.relay.active)
         if session.status == ASKING:
             return "Type your answer..."
@@ -1119,10 +1198,12 @@ class Painter:
         return input_layout(state.text, self.px(20), w - self.px(28))
 
     def input_height(self, w, max_lines=6):
+        """The input's height for the draft (up to max_lines lines)."""
         lines = len(self.input_lines(w)) if state.text else 1
         return self.px(26) + d.line_height("HAND", self.px(20)) * min(max(1, lines), max_lines)
 
     def text_input(self, x, y, w, h, max_lines=6):
+        """The drawn text field: wrapped draft, selection, caret and placeholder."""
         p = self.p
         size = self.px(20)
         focused = state.focused
@@ -1169,11 +1250,12 @@ class Painter:
         state.input_layout = (tx, top, lh, size, first, lines, advances)
 
     def chips_row(self, x, y, w):
+        """The suggestion chips for the current mode (or the Auto pace slider)."""
         mode = self.props.mode if self.props else session.mode
         h = self.px(42)
         if mode == "AUTO":
             return self.pace_slider(x, y, w, h)
-        chips = CHIPS.get(mode, CHIPS["WATCH"])
+        chips = CHIPS.get(mode, CHIPS["AUTO"])
         gap = self.px(10)
         cw = round((w - gap * 2) / 3)
         for i, (name, action) in enumerate(chips):
@@ -1182,6 +1264,7 @@ class Painter:
         return h
 
     def pace_slider(self, x, y, w, h):
+        """The Auto pace slider."""
         p = self.p
         prefs = self.prefs
         pace = prefs.pace if prefs else 1.0
@@ -1213,6 +1296,7 @@ class Painter:
         return 0
 
     def action_buttons(self, x, y, w):
+        """Pause / Resume / Stop / Done / Hint / Show me / Skip, depending on the status."""
         status = session.status
         card = session.card or {}
         running = self.relay.is_running()
@@ -1260,6 +1344,7 @@ class Painter:
         return total + h
 
     def card_label(self, card):
+        """The capital label of a card (Your turn, Step 3, Question ...)."""
         kind = card.get("kind")
         progress = card.get("progress") or ""
         step = card.get("step")
@@ -1272,6 +1357,7 @@ class Painter:
         return text
 
     def cue_card(self, x, y, w, card, height=None, measure=False):
+        """A card that asks the user to act; returns its height when measure is True."""
         p = self.p
         kind = card.get("kind")
         yours = kind in ("watch", "teach", "ask", "pause")
@@ -1315,6 +1401,7 @@ class Painter:
         return h
 
     def pointer_row(self, x, y, w, h):
+        """The row that explains where the red pointer is."""
         p = self.p
         self.card_box(x, y, w, h)
         cx, cy = x + self.px(32), y + h / 2
@@ -1401,6 +1488,7 @@ class Painter:
         return total
 
     def baton_rows(self):
+        """(label, value) rows of a hand-over card."""
         from .journal import journal
         data = journal.data
         rows = []
@@ -1425,6 +1513,7 @@ class Painter:
         return rows
 
     def checkbox(self, x, y, size, on):
+        """A checkbox, sized by the Icon size setting."""
         p = self.p
         grown = round(size * d.ICON_SCALE)            # the Icon size setting, around the box's centre
         bx, by = x - (grown - size) / 2, y - (grown - size) / 2
@@ -1434,6 +1523,7 @@ class Painter:
 
     # -- plan (Auto) ---------------------------------------------------------
     def plan_items(self):
+        """The plan parts to show, with their state."""
         from .journal import journal
         items = [dict(item) for item in session.plan]
         jplan = journal.data.get("plan") or []
@@ -1443,6 +1533,7 @@ class Painter:
         return items
 
     def plan_card(self, x, top, w, items, height=None, measure=False):
+        """The plan checklist card; returns its height when measure is True."""
         p = self.p
         row = self.px(30)
         header = self.px(84)
@@ -1526,12 +1617,14 @@ class Painter:
 
     # -- the conversation -------------------------------------------------------
     def entry_id(self, entry):
+        """A stable id for a conversation entry (for Read more and scrolling)."""
         if "_id" not in entry:
             entry["_id"] = state.next_id
             state.next_id += 1
         return entry["_id"]
 
     def visible_log(self):
+        """The conversation entries to show (after a view clear)."""
         log = [e for e in session.log if e.get("t", 0) >= state.cleared_at]
         running = self.relay.is_running() and session.status in (THINKING, WORKING)
         if running:
@@ -1658,6 +1751,7 @@ class Painter:
         return h
 
     def conversation_height(self, w):
+        """The conversation's natural height at this width."""
         inner_w = w - 2 * self.px(16) - self.px(6)
         log = self.visible_log()
         gap = self.px(14)
@@ -1667,6 +1761,7 @@ class Painter:
         return sum(heights) + gap * max(0, len(heights) - 1) + (think_h + gap if thinking else 0)
 
     def conversation(self, x, y, w, h):
+        """The scrolling conversation with formatted text, YOU and BLENDWME distinct."""
         p = self.p
         self.card_box(x, y, w, h)
         pad = self.px(16)
@@ -1720,6 +1815,7 @@ class Painter:
 
     # -- the baton journal (screen 25) ------------------------------------------
     def journal_screen(self, x0, y0, x1, y1):
+        """The journal ('the baton') screen."""
         w = x1 - x0
         gap = self.px(GAP)
         top = y1 - self.header(x0, y1, x1, back=True) - gap
@@ -1733,6 +1829,7 @@ class Painter:
         self.scroll_body(x0, bottom, w, top - bottom, self.journal_blocks(w))
 
     def journal_blocks(self, w):
+        """The journal screen's blocks as (height, draw function) pairs."""
         from .journal import journal
         p = self.p
         data = journal.data
@@ -1740,6 +1837,7 @@ class Painter:
         name = os.path.basename(bpy.data.filepath) if bpy.data.filepath else "Unsaved file"
 
         def title(x, top, w):
+            """The journal title block."""
             self.label_caps(x, top - self.px(14), "The baton", size=12)
             d.text("BLACK", self.px(24), x, top - self.px(46), d.fit("BLACK", self.px(24), name, w), p.ink)
             d.text("HAND", self.px(18), x, top - self.px(72),
@@ -1750,6 +1848,7 @@ class Painter:
         brief_h = self.px(48) + d.paragraph_height("HAND", self.px(19), brief, tw) + self.px(10)
 
         def brief_card(x, top, w):
+            """The brief card."""
             self.card_box(x, top - brief_h, w, brief_h)
             with d.clip(x, top - brief_h, w, brief_h):
                 self.label_caps(x + self.px(18), top - self.px(28), "Brief")
@@ -1772,6 +1871,7 @@ class Painter:
             for r in rows) + (self.px(24) if not rows else 0)
 
         def steps_card(x, top, w):
+            """The signed steps card."""
             self.card_box(x, top - steps_h, w, steps_h)
             with d.clip(x, top - steps_h, w, steps_h):
                 self.label_caps(x + self.px(18), top - self.px(28), "Steps, signed")
@@ -1805,6 +1905,7 @@ class Painter:
         total = sum(counts.values())
         if total:
             def who_card(x, top, w):
+                """Who made each object."""
                 h = self.px(112)
                 self.card_box(x, top - h, w, h)
                 self.label_caps(x + self.px(18), top - self.px(28), f"Who made what · {total} objects",
@@ -1848,6 +1949,7 @@ class Painter:
             ph += self.px(10)
 
             def problems_card(x, top, w):
+                """Open struggles."""
                 self.card_box(x, top - ph, w, ph)
                 with d.clip(x, top - ph, w, ph):
                     self.label_caps(x + self.px(18), top - self.px(28), "Problems")
@@ -1873,6 +1975,7 @@ class Painter:
     _makers_cache = {"t": 0.0, "value": {}}
 
     def _who_made_what(self):
+        """{maker: [object names]} from the scene's authorship tags."""
         cache = Painter._makers_cache
         if self.now - cache["t"] > 1.0:
             from . import scene_info
@@ -1910,6 +2013,7 @@ def input_layout(text, size, width):
 
 
 def _input_layout(text, size, width):
+    """Wrap the draft into lines and return [(start, end)] indices into the text."""
     lines = []
     if not text:
         return [(0, 0)]

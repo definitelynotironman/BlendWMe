@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """The five themes and "reduce motion".
 
 Four themes are drawn by BlendWMe in the viewport (docs/design/UI_SPEC.md, section 2):
@@ -11,6 +13,8 @@ working. The AI's own indicators are never hot.
 """
 
 import sys
+
+__author__ = "definitelynotironman"
 
 # The exact tokens, as hex.
 #   band / band_ink  an optional title band behind the header (the 2000s window bar)
@@ -56,6 +60,7 @@ def _blender_tokens():
         tip, reg = ui.wcol_tooltip, ui.wcol_regular
 
         def hexof(c):
+            """'RRGGBB' from a Blender colour (0..1 floats)."""
             return "".join(f"{max(0, min(255, round(v * 255))):02X}" for v in c[:3])
         return {"bg": hexof(tip.inner), "panel": hexof(tip.inner), "card": hexof(tip.inner),
                 "ink": hexof(tip.text), "accent": hexof(reg.inner_sel), "on_accent": hexof(reg.text_sel),
@@ -69,6 +74,7 @@ class Palette:
     """The current theme's colours as RGBA tuples: palette.ink, palette.hot ..."""
 
     def __init__(self, name):
+        """Resolve a theme name (unknown names fall back to Graphite) into RGBA attributes."""
         self.name = name if (name in TOKENS or name == "NATIVE") else "GRAPHITE"
         tokens = _blender_tokens() if self.name in {"NATIVE", "BLENDER"} else TOKENS[self.name]
         for key, value in tokens.items():
@@ -80,10 +86,12 @@ class Palette:
         self.roles = FONT_ROLES.get(self.name, {})
 
     def with_alpha(self, colour, alpha):
+        """The same colour with another opacity."""
         return colour[:3] + (alpha,)
 
 
 def current_name():
+    """The theme chosen in the add-on preferences (Graphite before they exist)."""
     from . import prefs
     p = None
     try:
@@ -94,6 +102,7 @@ def current_name():
 
 
 def current():
+    """The Palette of the current theme."""
     return Palette(current_name())
 
 
