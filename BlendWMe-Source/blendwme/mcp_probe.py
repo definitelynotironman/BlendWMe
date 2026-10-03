@@ -1,3 +1,5 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """A tiny MCP client (standard library only) to check the BlendWMe MCP server.
 
 Blender's Python has no `mcp` package, so the setup check speaks the MCP
@@ -13,19 +15,30 @@ import queue
 import subprocess
 import threading
 
+__author__ = "definitelynotironman"
+
 PROTOCOL_VERSION = "2025-06-18"
 
 
 class ProbeError(Exception):
-    pass
+    """The server could not be started, stopped early, or answered with an error."""
 
 
 def _no_window():
+    """Popen creation flags that keep a console window from flashing up on Windows."""
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 class Probe:
+    """A running MCP server process and a minimal JSON-RPC conversation with it.
+
+    Two daemon threads drain stdout (protocol lines, into a queue) and stderr
+    (kept as a short tail for error messages), so the server can never block on
+    a full pipe while the probe waits for a reply.
+    """
+
     def __init__(self, command, cwd=None, env=None):
+        """Start ``command`` with pipes. Raises ProbeError when it cannot start."""
         try:
             self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, cwd=cwd, env=env,
@@ -40,16 +53,19 @@ class Probe:
 
     @staticmethod
     def _read(stream, out):
+        """Copy every stdout line into ``out``; None marks the end of the stream."""
         for line in iter(stream.readline, b""):
             out.put(line)
         out.put(None)
 
     def _read_err(self):
+        """Keep the last 40 stderr lines for diagnostics."""
         for line in iter(self.proc.stderr.readline, b""):
             self.errors.append(line.decode("utf-8", "replace").rstrip())
             del self.errors[:-40]
 
     def _send(self, message):
+        """Write one JSON-RPC message as a line."""
         try:
             self.proc.stdin.write(json.dumps(message).encode("utf-8") + b"\n")
             self.proc.stdin.flush()
@@ -57,6 +73,7 @@ class Probe:
             raise ProbeError("The MCP server stopped. " + self.stderr_tail()) from None
 
     def request(self, method, params=None, timeout=20):
+        """Send a request and return its result, skipping notifications and other replies."""
         self.next_id += 1
         rid = self.next_id
         self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
@@ -78,21 +95,26 @@ class Probe:
             return message.get("result") or {}
 
     def initialize(self):
+        """The MCP handshake: initialize, then the initialized notification."""
         result = self.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
                                              "clientInfo": {"name": "blendwme-setup-check", "version": "2.0.0"}})
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         return result
 
     def list_tools(self):
+        """The server's tool descriptions."""
         return self.request("tools/list").get("tools", [])
 
     def call_tool(self, name, arguments=None, timeout=120):
+        """Call one tool and return the raw MCP result."""
         return self.request("tools/call", {"name": name, "arguments": arguments or {}}, timeout=timeout)
 
     def stderr_tail(self):
+        """The last few stderr lines joined for a message."""
         return " | ".join(self.errors[-4:])
 
     def close(self):
+        """Close stdin (the server's signal to exit) and wait; kill after 5 seconds."""
         try:
             self.proc.stdin.close()
         except OSError:

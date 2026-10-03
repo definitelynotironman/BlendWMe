@@ -147,7 +147,7 @@ check("the brain is told to stop", session.stop_flag.is_set())
 check("cards and pointers are cleared", session.card is None and not session.pointers)
 check("the user is told in plain words", any("opened another file" in e["text"] for e in session.log))
 check("the handlers are still there after the load", handler_count() == first, handler_count())
-check("the bridge runs again after the load", not bridge._held)
+check("the bridge runs again after the load", not bridge.dispatcher.held)
 
 # Repeated loads must invalidate old modal ownership and interaction geometry.
 for load_number in range(2):

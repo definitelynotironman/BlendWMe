@@ -1,7 +1,16 @@
-"""The tool list the model sees. Few tools, each powerful (the MCP lesson)."""
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
+"""The tool list the model sees. Few tools, each powerful (the MCP lesson).
+
+Each tool is described once, as a JSON-schema function; ToolCatalog decides
+which tools a mode offers and converts them to the MCP form the server lists.
+"""
+
+__author__ = "definitelynotironman"
 
 
 def _fn(name, description, properties, required=()):
+    """One tool in function-calling form: name, description and a JSON-schema object."""
     return {"type": "function", "function": {
         "name": name, "description": description,
         "parameters": {"type": "object", "properties": properties,
@@ -25,7 +34,7 @@ RUN_PYTHON = _fn(
     "saved first. Returns printed output and a list of scene changes. If it fails you get the line, "
     "the error and a hint, and everything the step created is removed, so fix it and run the whole step again.",
     {"title": {"type": "string", "description": "Short stage title, 2-6 words, naming the plan part it builds"},
-     "explain": {"type": "string", "description": "What this step does and why, 1-2 short sentences. In Watch mode include the shortcut or menu a person would use."},
+     "explain": {"type": "string", "description": "What this step does and why, 1-2 short sentences. When demonstrating in Teach mode include the shortcut or menu a person would use."},
      "code": {"type": "string", "description": "Python code to run"},
      "part": {"type": "integer", "description": "Number of the plan part this step builds (1 = first)"}},
     ["title", "explain", "code"])
@@ -112,12 +121,6 @@ FINISH = _fn(
 _COMMON = [PLAN, GET_SCENE_INFO, GET_OBJECT_INFO, LOOK, INSPECT_API, LOAD_SKILL, ASK_USER, FINISH]
 
 
-def for_mode(mode):
-    if mode == "TEACH":
-        return _COMMON + [TEACH_STEP, POINT_AT, RUN_PYTHON]
-    return _COMMON + [RUN_PYTHON]
-
-
 ALL = _COMMON + [RUN_PYTHON, TEACH_STEP, POINT_AT]
 
 
@@ -157,18 +160,50 @@ _MCP_DESCRIPTIONS = {
 READ_ONLY = {"get_scene_info", "get_object_info", "inspect_api", "load_skill", "look", "read_journal"}
 
 
-def mcp_tools():
-    """Every tool in MCP form: [{"name", "description", "inputSchema", "readOnly"}]."""
-    out = []
-    for tool in ALL + BRAIN_ONLY:
-        fn = tool["function"]
-        out.append({"name": fn["name"],
-                    "description": _MCP_DESCRIPTIONS.get(fn["name"], fn["description"]),
-                    "inputSchema": fn["parameters"],
-                    "readOnly": fn["name"] in READ_ONLY})
-    return out
+class ToolCatalog:
+    """Which tools exist, which a mode allows, and how the MCP server lists them.
+
+    Teach adds teach_step and point_at (run_python stays, but the tool host only
+    lets it run right after the learner presses "Do it for me"). The outside
+    brains always also get the journal tools.
+    """
+
+    def __init__(self, common=_COMMON, run_python=RUN_PYTHON, teach=(TEACH_STEP, POINT_AT), brain_only=BRAIN_ONLY):
+        """Group the tool definitions (the module constants by default)."""
+        self.common = list(common)
+        self.run_python = run_python
+        self.teach = list(teach)
+        self.brain_only = list(brain_only)
+
+    @property
+    def all(self):
+        """Every in-Blender tool, in the order brains see them."""
+        return self.common + [self.run_python] + self.teach
+
+    def for_mode(self, mode):
+        """The tool definitions for a mode (anything but TEACH means AUTO)."""
+        if mode == "TEACH":
+            return self.common + self.teach + [self.run_python]
+        return self.common + [self.run_python]
+
+    def mcp_tools(self):
+        """Every tool in MCP form: [{"name", "description", "inputSchema", "readOnly"}]."""
+        out = []
+        for tool in self.all + self.brain_only:
+            fn = tool["function"]
+            out.append({"name": fn["name"],
+                        "description": _MCP_DESCRIPTIONS.get(fn["name"], fn["description"]),
+                        "inputSchema": fn["parameters"],
+                        "readOnly": fn["name"] in READ_ONLY})
+        return out
+
+    def names_for_mode(self, mode):
+        """Tool names a brain may use in this mode (the MCP server lists them all)."""
+        return {t["function"]["name"] for t in self.for_mode(mode)} | {t["function"]["name"] for t in self.brain_only}
 
 
-def names_for_mode(mode):
-    """Tool names a brain may use in this mode (the MCP server lists them all)."""
-    return {t["function"]["name"] for t in for_mode(mode)} | {t["function"]["name"] for t in BRAIN_ONLY}
+# The tool host, socket bridge and tests use these module names.
+catalog = ToolCatalog()
+for_mode = catalog.for_mode
+mcp_tools = catalog.mcp_tools
+names_for_mode = catalog.names_for_mode

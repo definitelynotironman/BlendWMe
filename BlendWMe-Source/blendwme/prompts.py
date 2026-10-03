@@ -1,9 +1,17 @@
+# BlendWMe by definitelynotironman
+# SPDX-License-Identifier: MIT
 """What the brains are told. Short, practical, and about craft.
 
 brain_instructions() becomes CLAUDE.md and AGENTS.md in the workspace folder,
 so Claude Code and Codex read the same text. Each message starts with
 turn_header(). Skill cards hold the detailed technique.
+
+The texts are module constants (they are long literal prose); PromptBook
+assembles them. Note: the texts go through str.format, so literal braces in
+CORE are doubled.
 """
+
+__author__ = "definitelynotironman"
 
 CORE = """You are BlendWMe, an experienced 3D artist and Blender teacher working INSIDE the user's live Blender {blender} scene through tools.
 You can model, shade, light, rig, animate and set up cameras. You build real, editable work, and you can slow down to show or teach how it is done.
@@ -61,7 +69,7 @@ run_python(title="Main body", explain="The main block", part=1,
   Materials: material(name, colour, roughness, metallic, emission=None) | assign(obj, material_or_colour) | collection(name) | move_to(obj, col)
   Other: select(*objs) | ground(obj, z=0) | apply_transforms(obj) | shade_smooth(obj, angle) | frame(obj)
 - Each run_python step runs on its own: define the materials and collection you need in that step (bwm.material / bwm.collection return the existing one if it is already there).
-- Use operators (bpy.ops) in Watch mode, where the user learns the human way.
+- When you demonstrate in Teach mode, prefer operators (bpy.ops), so the user sees the human way.
 - API facts: the active object is C.active_object (NOT bpy.active_object). bmesh: bm = bmesh.new(); v = bm.verts.new(co); bm.faces.new((v1, v2, v3)); bm.to_mesh(me); bm.free() (there is no bm.new). Operators live in bpy.ops.<group>.<name>, e.g. bpy.ops.mesh.primitive_cube_add.
 - Before running, your code is checked against the real API. Unknown names come back with suggestions and nothing runs.
 - bpy.ops calls already run with a 3D Viewport context. Switch back to Object Mode at the end of a step that used Edit Mode.
@@ -146,32 +154,55 @@ Blender; your text replies appear there, so keep them short and in simple words.
 """
 
 
-def brain_instructions(blender_version, skills):
-    """The shared instructions every brain reads (written as CLAUDE.md and AGENTS.md in the workspace)."""
-    core = CORE.format(blender=blender_version, level="given in each message",
-                       level_note="Beginner: explain the idea and give exact menus, shortcuts and values. "
-                                  "Intermediate: short technique cues. Expert: be direct, focus on advanced "
-                                  "techniques.")
-    text = "# BlendWMe\n\n" + core + "\n" + BRAINS + "\n## The modes\n"
-    for mode in ("AUTO", "TEACH"):
-        text += "\n" + MODES[mode] + "\n"
-    text += "\n## Build styles (Auto mode)\n"
-    for style in ("PIECE", "FULL"):
-        text += "\n" + BUILD_STYLES[style] + "\n"
-    if skills:
-        text += "\n## Skill cards (load_skill name)\n" + "\n".join(f"- {n}: {d}" for n, d in skills) + "\n"
-    return text
+class PromptBook:
+    """Builds the texts a brain receives from the constants above.
 
+    ``brain_instructions`` is the long-lived workspace file (CLAUDE.md /
+    AGENTS.md); ``turn_header`` is the short per-message header that tells the
+    brain which mode, level and build style apply to this turn. Keeping the
+    mode in every message (not only in the file) means a stale file can never
+    quietly govern a new task.
+    """
 
-def turn_header(mode, level, build_style):
-    """The [BlendWMe] lines at the start of every message to a brain."""
-    mode = "TEACH" if mode == "TEACH" else "AUTO"
-    lines = [f"[BlendWMe] Mode: {mode}. User level: {level}. {LEVEL_NOTES.get(level, '')}"]
-    if mode == "AUTO":
-        lines.append(f"[BlendWMe] Build style: {'PIECE BY PIECE' if build_style == 'PIECE' else 'FULL BUILD'}.")
-    return "\n".join(lines)
+    def __init__(self, core=CORE, brains=BRAINS, modes=MODES, build_styles=BUILD_STYLES, level_notes=LEVEL_NOTES):
+        """Use the given text blocks (the module constants by default)."""
+        self.core = core
+        self.brains = brains
+        self.modes = modes
+        self.build_styles = build_styles
+        self.level_notes = level_notes
+
+    def brain_instructions(self, blender_version, skills):
+        """The shared instructions every brain reads (written as CLAUDE.md and AGENTS.md in the workspace)."""
+        core = self.core.format(blender=blender_version, level="given in each message",
+                                level_note="Beginner: explain the idea and give exact menus, shortcuts and values. "
+                                           "Intermediate: short technique cues. Expert: be direct, focus on advanced "
+                                           "techniques.")
+        text = "# BlendWMe\n\n" + core + "\n" + self.brains + "\n## The modes\n"
+        for mode in ("AUTO", "TEACH"):
+            text += "\n" + self.modes[mode] + "\n"
+        text += "\n## Build styles (Auto mode)\n"
+        for style in ("PIECE", "FULL"):
+            text += "\n" + self.build_styles[style] + "\n"
+        if skills:
+            text += "\n## Skill cards (load_skill name)\n" + "\n".join(f"- {n}: {d}" for n, d in skills) + "\n"
+        return text
+
+    def turn_header(self, mode, level, build_style):
+        """The [BlendWMe] lines at the start of every message to a brain. Legacy modes become AUTO."""
+        mode = "TEACH" if mode == "TEACH" else "AUTO"
+        lines = [f"[BlendWMe] Mode: {mode}. User level: {level}. {self.level_notes.get(level, '')}"]
+        if mode == "AUTO":
+            lines.append(f"[BlendWMe] Build style: {'PIECE BY PIECE' if build_style == 'PIECE' else 'FULL BUILD'}.")
+        return "\n".join(lines)
 
 
 HANDOFF_REQUEST = """[BlendWMe] The user is handing this project to {target} now. Do not build or change anything more.
 Call handoff_note once: a short summary of what you did, the next steps in order, and anything you struggled
 with or could not solve. Then end your turn."""
+
+
+# The relay, socket bridge and tests use these module names.
+prompt_book = PromptBook()
+brain_instructions = prompt_book.brain_instructions
+turn_header = prompt_book.turn_header
