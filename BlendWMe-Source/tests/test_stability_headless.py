@@ -27,7 +27,7 @@ os.environ["BLENDWME_LOG_FOLDER"] = LOGDIR      # never the real logs folder
 import bpy  # noqa: E402
 
 import blendwme  # noqa: E402
-from blendwme import bridge, journal, lifecycle, logs, overlay  # noqa: E402
+from blendwme import bridge, journal, lifecycle, logs, overlay, panel  # noqa: E402
 from blendwme.relay import relay  # noqa: E402
 from blendwme.state import session  # noqa: E402
 
@@ -148,6 +148,24 @@ check("cards and pointers are cleared", session.card is None and not session.poi
 check("the user is told in plain words", any("opened another file" in e["text"] for e in session.log))
 check("the handlers are still there after the load", handler_count() == first, handler_count())
 check("the bridge runs again after the load", not bridge._held)
+
+# Repeated loads must invalidate old modal ownership and interaction geometry.
+for load_number in range(2):
+    previous_epoch = getattr(panel.state, "lifecycle_epoch", 0)
+    panel.state.open = True
+    panel.state.hits = [(1, 2, 3, 4, "settings")]
+    panel.state.settings_click = ("obsolete",)
+    panel.state.input_layout = ("obsolete",)
+    panel.state.drag = {"obsolete": True}
+    panel.state.anim = {"obsolete": True}
+    bpy.ops.wm.read_homefile(use_empty=True)
+    check(f"load {load_number + 1} invalidates the old modal epoch",
+          panel.state.lifecycle_epoch == previous_epoch + 1)
+    check(f"load {load_number + 1} clears stale interaction state",
+          not panel.state.hits and panel.state.settings_click is None and
+          panel.state.input_layout is None and panel.state.drag is None and panel.state.anim is None)
+    check(f"load {load_number + 1} retains the requested panel visibility", panel.state.open)
+panel.state.open = False
 session.stop_flag.clear()
 done = {}
 threading.Thread(target=lambda: done.update(r=bridge.call(lambda: len(bpy.data.objects), timeout=10))).start()

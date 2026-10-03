@@ -678,6 +678,36 @@ check("Export writes the journal to the logs folder", any(n.startswith("journal_
 check("the panel operators are registered", hasattr(bpy.types, "BLENDWME_OT_panel") and
       hasattr(bpy.types, "BLENDWME_OT_panel_key"))
 check("the panel has a draw handler", len(panel._handles) == 1)
+
+# Settings opens after a complete click, and stale presses never open it.
+rect = (10, 20, 90, 50)
+panel.state.open = True
+panel.state.area_ptr = 123
+panel.state.hits = [(*rect, "settings")]
+window_id = bpy.context.window.as_pointer()
+epoch = getattr(panel.state, "lifecycle_epoch", 0)
+
+
+def arm_settings():
+    panel.state.settings_click = (rect, window_id, 123, epoch)
+
+
+arm_settings()
+check("Settings accepts a release inside the pressed button", panel_ops.release_settings(bpy.context, 50, 30))
+check("Settings consumes the pending click exactly once", not panel_ops.release_settings(bpy.context, 50, 30))
+arm_settings()
+check("Settings cancels a dragged-away release", not panel_ops.release_settings(bpy.context, 200, 30))
+arm_settings()
+panel.state.lifecycle_epoch = epoch + 1
+check("Settings rejects a press from a previous file", not panel_ops.release_settings(bpy.context, 50, 30))
+panel.state.lifecycle_epoch = epoch
+arm_settings()
+panel.state.area_ptr = 456
+check("Settings rejects a changed viewport", not panel_ops.release_settings(bpy.context, 50, 30))
+panel.state.area_ptr = 123
+arm_settings()
+panel_ops.close_panel()
+check("closing the panel cancels Settings", panel.state.settings_click is None)
 addon_utils.disable("blendwme", default_set=True)
 check("unregister removes the panel", not panel._handles and not hasattr(bpy.types, "BLENDWME_OT_panel"))
 

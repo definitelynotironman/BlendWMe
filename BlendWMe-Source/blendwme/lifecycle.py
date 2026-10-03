@@ -29,6 +29,7 @@ from .state import session
 problems = []            # [(part, message)] parts that failed to start
 _trace_file = None       # the open python-crash-trace.txt
 _load_note = ""          # said after a file load that stopped the brain
+_panel_was_open = False
 
 
 # ----------------------------------------------------------------------
@@ -59,6 +60,10 @@ def safe_unregister(part, fn):
 # ----------------------------------------------------------------------
 @persistent
 def on_load_pre(*_args):
+    global _panel_was_open
+    from . import panel
+    _panel_was_open = panel.state.open
+    panel.state.lifecycle_epoch = getattr(panel.state, "lifecycle_epoch", 0) + 1
     bridge.hold(True)
     try:
         from .relay import relay
@@ -88,6 +93,14 @@ def on_load_post(*_args):
         _load_note = ""
     # Blender ends modal operators when a file loads: start the panel again.
     from . import panel, panel_ops
+    panel.state.open = _panel_was_open
+    panel.state.hits = []
+    panel.state.input_layout = None
+    panel.state.drag = None
+    panel.state.settings_click = None
+    panel.state.anim = None
+    panel.state.error_shown = False
+    panel.state.window_ptr = 0
     if panel.state.open and not bpy.app.background:
         bpy.app.timers.register(panel_ops.reopen_after_load, first_interval=0.3)
 

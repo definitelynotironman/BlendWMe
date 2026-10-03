@@ -107,6 +107,7 @@ class PanelState:
         self.last_content = None
         self.input_layout = None       # (text x, top, line height, size, first line, lines)
         self.hover_cursor = False      # the hand cursor is showing over the header
+        self.settings_click = None    # armed settings button; opens on matching release
 
     def view(self):
         if self.minimized:
@@ -144,6 +145,22 @@ def unregister():
 
 
 _handles = []
+
+
+def refresh_drawing():
+    """Rebind GPU/font resources after New File without re-registering operators."""
+    for handle in _handles:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(handle, "WINDOW")
+        except (ValueError, ReferenceError, RuntimeError):
+            pass
+    _handles.clear()
+    d.unload_fonts()
+    d.load_fonts()
+    _input_cache.clear()
+    d._BOX.update(shader=None, failed=False)
+    d._batches.clear()
+    _handles.append(bpy.types.SpaceView3D.draw_handler_add(draw_callback, (), "WINDOW", "POST_PIXEL"))
 
 
 def is_open_in(area):

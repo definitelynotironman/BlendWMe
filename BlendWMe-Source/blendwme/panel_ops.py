@@ -35,7 +35,6 @@ import time
 
 import bpy
 
-from . import draw2d as d
 from . import panel
 from .panel import EXAMPLE_PROMPTS, MIN_HEIGHT, MIN_WIDTH, MODES, WIDTH_GRID, state
 from .state import PAUSED, THINKING, WORKING, session
@@ -107,7 +106,8 @@ def panel_alive():
         for window in bpy.context.window_manager.windows:
             for op in window.modal_operators:
                 if "BLENDWME_OT_panel" in op.bl_idname or op.bl_idname == "blendwme.panel":
-                    return True
+                    if getattr(op, "epoch", -1) == getattr(state, "lifecycle_epoch", 0):
+                        return True
     except Exception:
         pass
     return False
@@ -783,22 +783,40 @@ def _in(rect, x, y):
     return rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]
 
 
+def release_settings(context, x, y):
+    """Consume an armed click once; a changed owner/layout cancels it."""
+    pending = state.settings_click
+    state.settings_click = None
+    if pending is None:
+        return False
+    rect, window, area, epoch = pending
+    return (state.open and context.window.as_pointer() == window and
+            state.area_ptr == area and getattr(state, "lifecycle_epoch", 0) == epoch and
+            any(tuple(hit[:4]) == rect and hit[-1] == "settings" for hit in state.hits) and
+            _in(rect, x, y))
+
+
 class BWM_OT_panel(bpy.types.Operator):
     bl_idname = "blendwme.panel"
     bl_label = "BlendWMe Panel"
     bl_description = "The BlendWMe panel in the 3D Viewport"
     bl_options = {"INTERNAL"}
+    epoch: bpy.props.IntProperty(default=0, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):
         if panel_alive():
             return {"CANCELLED"}
+        self.epoch = getattr(state, "lifecycle_epoch", 0)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
+        if self.epoch != getattr(state, "lifecycle_epoch", 0):
+            return {"FINISHED"}
         from . import theme
         if not state.open or theme.native():
             state.open = False
+            state.settings_click = None
             _restore_cursor(context)
             _redraw()
             return {"FINISHED"}
@@ -808,6 +826,15 @@ class BWM_OT_panel(bpy.types.Operator):
         x = event.mouse_x - region.x
         y = event.mouse_y - region.y
         inside = _in(state.rect, x, y) and 0 <= x <= region.width and 0 <= y <= region.height
+
+        if state.settings_click is not None:
+            if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+                if release_settings(context, x, y):
+                    do_action(context, "settings", event)
+                _redraw()
+                return {"RUNNING_MODAL"}
+            if event.type in ("ESC", "RIGHTMOUSE", "WINDOW_DEACTIVATE"):
+                state.settings_click = None
 
         # Moving or resizing the panel
         if state.drag:
@@ -859,7 +886,12 @@ class BWM_OT_panel(bpy.types.Operator):
                 for hx0, hy0, hx1, hy1, action in reversed(state.hits):
                     if hx0 <= x <= hx1 and hy0 <= y <= hy1:
                         try:
-                            if action in ("drag", "mini", "grip") and event.value == "DOUBLE_CLICK":
+                            if action == "settings":
+                                # A popover opened on press can close on that same
+                                # click's release. Invoke after the click completes.
+                                state.settings_click = ((hx0, hy0, hx1, hy1), context.window.as_pointer(),
+                                                        state.area_ptr, self.epoch)
+                            elif action in ("drag", "mini", "grip") and event.value == "DOUBLE_CLICK":
                                 double_click(context, action)
                             elif action in ("drag", "mini", "grip"):
                                 start_drag(context, action, event)
@@ -992,6 +1024,11 @@ class BWM_OT_panel_key(bpy.types.Operator):
 
 def open_panel(context, area=None):
     """Open the panel in a 3D Viewport (the one under the mouse, or the first) and start the modal."""
+    owner = getattr(state, "window_ptr", 0)
+    if panel_alive() and owner and owner != context.window.as_pointer():
+        session.add("info", "BlendWMe is open in another window. Close that panel before opening it here.")
+        return False
+    state.window_ptr = context.window.as_pointer()
     if area is None or area.type != "VIEW_3D":
         area = context.area if context.area and context.area.type == "VIEW_3D" else None
     if area is None:
@@ -1011,6 +1048,7 @@ def open_panel(context, area=None):
 
 def close_panel():
     state.open = False
+    state.settings_click = None
     state.focused = False
     state.minimized = False
     state.compact = False
@@ -1024,6 +1062,11 @@ def reopen_after_load():
     if not state.open:
         return None
     try:
+        # Blender clears screen draw callbacks after load_post returns. Rebind
+        # here, once the new screen exists, rather than during the load handler.
+        panel.refresh_drawing()
+        from . import overlay
+        overlay.register()
         context = bpy.context
         window = context.window_manager.windows[0]
         area = next((a for a in window.screen.areas if a.type == "VIEW_3D"), None)
@@ -1031,10 +1074,14 @@ def reopen_after_load():
             state.open = False
             return None
         state.area_ptr = area.as_pointer()
+        state.window_ptr = window.as_pointer()
         region = next((r for r in area.regions if r.type == "WINDOW"), None)
         if not panel_alive():
             with context.temp_override(window=window, area=area, region=region):
                 bpy.ops.blendwme.panel("INVOKE_DEFAULT")
+        # The new screen may already have painted before this delayed rebind.
+        # An idle panel has no animation tick to request its first new layout.
+        area.tag_redraw()
     except Exception as e:
         print("BlendWMe: could not reopen the panel:", e)
     return None
