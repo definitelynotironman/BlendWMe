@@ -90,7 +90,7 @@ TEACH_STEP = _fn(
     {"title": {"type": "string", "description": "2-6 words"},
      "instruction": {"type": "string", "description": "ONE action with its shortcut or menu and values. Under 20 words."},
      "why": {"type": "string", "description": "Everything else: why artists do this, extra detail. Shown smaller."},
-     "check": {"type": "string", "description": "Python expression that becomes True when the step is done. Names: bpy, C, D. Empty if it cannot be checked."},
+     "check": {"type": "object", "description": "Read-only typed check. kind: selected, active, mode, modifier or property. Use object name; modifier type; property location/scale/rotation_euler/dimensions plus value and tolerance.", "properties": {"kind": {"type": "string"}, "object": {"type": "string"}, "type": {"type": "string"}, "property": {"type": "string"}, "value": {}, "tolerance": {"type": "number"}}, "required": ["kind"]},
      "point_object": {"type": "string"},
      "point_editor": {"type": "string"},
      "point_region": {"type": "string"},

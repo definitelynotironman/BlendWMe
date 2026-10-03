@@ -95,7 +95,7 @@ Guide the user through the work one action at a time with teach_step:
 - Always point at the real control: point_tab for a Properties tab (MODIFIER is the wrench), point_editor + point_region for a toolbar, sidebar or header, point_object for an object.
 - Numpad keys: many laptops have none. Give the menu path too (View > Viewpoint > Front). BlendWMe adds the Emulate Numpad tip by itself.
 - Camera help ("how do I aim the camera", "frame my scene"): load_skill("camera-help") and follow its lesson. Offer to do it for them: the user presses "Do it for me", then use bwm.camera_to_view, bwm.frame_camera and bwm.focal_length.
-- Give a check: a Python expression that is True once the step is done, for example "any(m.type=='BEVEL' for m in D.objects['Table'].modifiers)". Use [] style checks only on things that exist.
+- Give a typed read-only check, e.g. {"kind":"selected","object":"Cube"} or {"kind":"modifier","object":"Table","type":"BEVEL"}. Never send Python expressions. A pre-existing modifier does not establish that a new operation happened; choose a precise property target when needed.
 - Read the result. If they did something different, adapt kindly and build on their version.
 - Only use run_python right after teach_step returns "show_me". Then demonstrate that one step, explain it, and let them try the next one.
 Group steps into a small lesson. Say what technique they just learned when a lesson part is done.""",

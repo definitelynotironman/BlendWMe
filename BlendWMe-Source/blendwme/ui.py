@@ -107,20 +107,15 @@ class BWM_OT_teach(bpy.types.Operator):
     bl_label = "Teach Answer"
 
     choice: bpy.props.EnumProperty(items=[("done", "I did it", ""), ("show_me", "Do it for me", ""),
-                                          ("skip", "Skip", "")])
+                                          ("skip", "Skip this step", ""), ("hint", "Hint", "")])
 
     @classmethod
     def description(cls, context, properties):
         return {"done": "Tell BlendWMe you finished this step",
                 "show_me": "Let BlendWMe demonstrate this step for you",
-                "skip": "Skip this step"}[properties.choice]
+                "skip": "Skip this step; its action remains unpractised", "hint": "Request a hint without marking the step done"}[properties.choice]
 
     def execute(self, context):
-        if context.mode != "OBJECT" and self.choice == "done":
-            try:
-                bpy.ops.object.mode_set(mode="OBJECT")
-            except Exception:
-                pass
         session.wake(self.choice)
         return {"FINISHED"}
 
@@ -740,6 +735,9 @@ def draw_actions(layout):
     if status == WAIT_USER:
         row.operator("blendwme.teach", text="Check my work", icon="CHECKMARK").choice = "done"
         row.operator("blendwme.teach", text="Do it for me", icon="HIDE_OFF").choice = "show_me"
+        hints = layout.row(align=True)
+        hints.operator("blendwme.teach", text="Hint").choice = "hint"
+        hints.operator("blendwme.teach", text="Skip this step").choice = "skip"
     elif status == WAIT_NEXT:
         row.operator("blendwme.next", text="Next", icon="PLAY")
         row.operator("blendwme.take_control", icon="HAND")

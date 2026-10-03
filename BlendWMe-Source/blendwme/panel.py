@@ -54,7 +54,7 @@ EXAMPLE_PROMPTS = {
 }
 CHIPS = {
     "WATCH": (("Look again", "/look"), ("Undo step", "/undo"), ("Explain", "Explain what you just did and why.")),
-    "TEACH": (("Hint", "Give me a hint for this step."), ("Skip", "teach:skip"), ("Do it for me", "teach:show_me")),
+    "TEACH": (("Hint", "teach:hint"), ("Skip this step", "teach:skip"), ("Do it for me", "teach:show_me")),
 }
 MODES = (("AUTO", "Auto"), ("TEACH", "Teach"))
 

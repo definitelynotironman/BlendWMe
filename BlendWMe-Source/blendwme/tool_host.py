@@ -31,8 +31,8 @@ import uuid
 
 import bpy
 
-from . import bridge, executor, helpers, knowledge, look, prompts, scene_info, tools
-from .state import ASKING, DONE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, normalize_mode, session
+from . import bridge, executor, helpers, knowledge, lesson, look, prompts, scene_info, tools
+from .state import ASKING, DONE, PAUSED, THINKING, WAIT_USER, WORKING, normalize_mode, session
 
 WAIT_CAP = 45 * 60        # seconds one tool call may wait for the user (tool timeouts are 60 min)
 REVIEW_FIRST = 3          # successful build steps before the first art director review
@@ -210,7 +210,6 @@ class ToolHost:
 
     def _wait_signal(self, timeout=None):
         """Wait for Next / Done / an answer. Returns False when `timeout` passed first."""
-        session.signal.clear()
         end = time.time() + min(timeout or WAIT_CAP, WAIT_CAP)
         while True:
             self._check_stop()
@@ -506,10 +505,19 @@ class ToolHost:
             pointer["editor"] = "PROPERTIES"
         if pointer.get("editor") == "PROPERTIES" and pointer.get("tab"):
             pointer["region"] = "NAVIGATION_BAR"
+            pointer["label"] = "Properties > " + pointer.pop("tab").replace("_", " ").title() + " (tab region)"
         session.set_pointers([pointer] if pointer else [])
-        return {"ok": True}, []
+        return {"ok": True, "precision": "object" if pointer.get("object") else "editor region",
+                "note": "Region highlights do not identify an exact button or cover popups."}, []
 
     def _tool_teach_step(self, args, brain):
+        try:
+            check = bridge.call(lesson.prepare, args.get("check")) if args.get("check") else None
+        except ValueError as error:
+            return {"error": str(error)}, []
+        if check and bridge.call(lesson.evaluate, check)[0] == "correct":
+            return {"result": "already_satisfied", "check_passed": True,
+                    "note": "This state existed before the instruction. Choose the next useful action; do not claim the user just performed it."}, []
         title = str(args.get("title") or "Your turn")
         instruction = str(args.get("instruction") or "").strip()
         why = str(args.get("why") or "").strip()
@@ -530,13 +538,14 @@ class ToolHost:
             pointer = {"editor": args.get("point_editor") or "PROPERTIES",
                        "region": args.get("point_region") or "WINDOW"}
             if args.get("point_tab"):
-                pointer.update(tab=args["point_tab"], region="NAVIGATION_BAR")
+                pointer.update(label="Properties > " + args["point_tab"].replace("_", " ").title() + " (tab region)",
+                               region="NAVIGATION_BAR")
             pointers.append(pointer)
         session.set_pointers(pointers)
         session.add("step", "Your turn: " + title, detail=args.get("instruction", ""), brain=brain)
         session.teach_choice = None
         session.set_status(WAIT_USER)
-        check = str(args.get("check") or "").strip()
+
         passes = 0
         outcome = None
         end = time.time() + WAIT_CAP
@@ -547,10 +556,23 @@ class ToolHost:
                                    "step to keep waiting, or end your turn.")
             if self._wait_signal(timeout=0.5):
                 outcome = {"done": "user_said_done", "show_me": "show_me",
-                           "skip": "skipped", "mode_changed": "mode_changed"}.get(session.teach_choice, "user_said_done")
+                           "skip": "skipped", "hint": "hint_requested", "mode_changed": "mode_changed"}.get(session.teach_choice)
+                if outcome is None:
+                    continue       # an inbox wake is steering, never evidence of completion
+                if outcome == "user_said_done" and check:
+                    state, feedback = bridge.call(lesson.evaluate, check)
+                    if state != "correct":
+                        session.add("info", feedback)
+                        outcome = None
+                        continue
                 break
             if check:
-                ok = bridge.call(_eval_check, check)
+                state, feedback = bridge.call(lesson.evaluate, check)
+                ok = state == "correct"
+                if state == "unavailable":
+                    session.add("info", feedback)
+                    outcome = "unavailable"
+                    break
                 passes = passes + 1 if ok else 0
                 if passes >= 2:   # stable for about a second
                     outcome = "completed"
@@ -559,12 +581,14 @@ class ToolHost:
         if outcome == "show_me":
             self.show_me_allowed = True
         session.add("info", {"completed": "Nice, step done.", "user_said_done": "Marked done.",
-                             "show_me": "Showing you how.", "skipped": "Skipped.",
-                             "mode_changed": "Lesson stopped because the mode changed."}[outcome])
+                             "show_me": "Showing you how.", "skipped": "Skipped; this action remains unpractised.",
+                             "hint_requested": "A hint is requested; this step is still open.",
+                             "mode_changed": "Lesson stopped because the mode changed.",
+                             "unavailable": "The lesson context is unavailable. Return to its window or start a new lesson."}[outcome])
         session.set_status(THINKING)
         result = {"result": outcome, "user_changes_in_this_step": lines[:30] or ["(no object-level changes)"]}
         if check:
-            result["check_passed"] = bool(bridge.call(_eval_check, check))
+            result["check_passed"] = bridge.call(lesson.evaluate, check)[0] == "correct"
         return result, []
 
     def _tool_ask_user(self, args, brain):
@@ -764,15 +788,13 @@ def _coerce_types(name, args):
     return fixed
 
 
-def _eval_check(expression):
-    import bpy
+def _eval_check(check):
+    """Compatibility entry point; generated expressions are never executed."""
+    if not isinstance(check, dict):
+        return False
     try:
-        return bool(eval(expression, {"bpy": bpy, "C": bpy.context, "D": bpy.data,
-                                      "__builtins__": {"any": any, "all": all, "len": len,
-                                                       "abs": abs, "round": round, "min": min,
-                                                       "max": max, "sum": sum, "next": next,
-                                                       "True": True, "False": False}}))
-    except Exception:
+        return lesson.evaluate(lesson.prepare(check))[0] == "correct"
+    except ValueError:
         return False
 
 

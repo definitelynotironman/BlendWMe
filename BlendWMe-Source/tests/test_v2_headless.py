@@ -210,7 +210,7 @@ session.set_card(None)
 reset_session("TEACH")
 box = in_thread(raw, {"op": "call", "tool": "teach_step", "brain": "claude", "args": {
     "title": "Bevel the base", "instruction": "Add a Bevel modifier", "point_tab": "MODIFIER",
-    "check": "any(m.type=='BEVEL' for m in D.objects['Base'].modifiers)"}})
+    "check": {"kind": "modifier", "object": "Base", "type": "BEVEL"}}})
 pump_until(lambda: session.status == state.WAIT_USER)
 bpy.data.objects["Base"].modifiers.new("Bevel", "BEVEL")
 reply = wait(box)
