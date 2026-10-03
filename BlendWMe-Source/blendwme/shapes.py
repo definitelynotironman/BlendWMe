@@ -876,6 +876,10 @@ def forgiving(fn):
                 target = MATERIAL_MEANS[fn.__name__]
             elif key == "diameter" and "radius" in params:
                 target, value = "radius", num(value) / 2
+            elif key in {"diameter", "diameter1", "diameter2"} and "radius_bottom" in params:
+                target, value = ("radius_top" if key == "diameter2" else "radius_bottom"), num(value) / 2
+                if key == "diameter" and "radius_top" not in kwargs:
+                    kwargs["radius_top"] = value
             elif OWN_ALIASES.get(fn.__name__, {}).get(key) in params:
                 target = OWN_ALIASES[fn.__name__][key]
             elif ALIASES.get(key) in params:
@@ -887,8 +891,8 @@ def forgiving(fn):
                 kwargs[target] = value
                 _h.NOTES.append(f"bwm.{fn.__name__}: read {key!r} as {target!r}.")
             else:
-                _h.NOTES.append(f"bwm.{fn.__name__}: ignored unknown argument {key!r} "
-                                f"(it takes {', '.join(names[:12])}).")
+                raise TypeError(f"bwm.{fn.__name__}: unsupported or conflicting argument {key!r}; "
+                                f"supported: {', '.join(names)}")
         return fn(*args, **kwargs)
 
     wrapper._forgiving = True

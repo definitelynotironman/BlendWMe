@@ -318,11 +318,10 @@ r = executor.run("col = bwm.collection('Live')\nstem = bwm.material('Stem', (0.2
 check("live: name, sizes, location, collection, material works for every shape", r["ok"] and "Stem" in D_.objects, r)
 r = executor.run("bwm.box('LiveWall', (4, 3, 2.4), (20, 0, 1.2))\n"
                  "bwm.window('LiveWin', 0.8, 1.0, (20, -1.5, 1.5), wall='LiveWall', material=(1, 1, 1))\n"
-                 "bwm.duplicate('Stem', 'Stem2', collection='Live')\nbwm.box('Red', (1, 1, 1), (25, 0, 0.5), color='red')\n"
+                 "bwm.duplicate('Stem', 'Stem2')\nbwm.box('Red', (1, 1, 1), (25, 0, 0.5), color='red')\n"
                  "bwm.gable_roof('LiveRoof', 4, 3, height=1.2, location=(20, 0, 2.4))")
-check("live: alias arguments are read, unknown extras ignored with a note", r["ok"]
+check("live: supported alias arguments are read", r["ok"]
       and any("frame_material" in n for n in r.get("helper_notes", []))
-      and any("ignored unknown argument 'collection'" in n for n in r.get("helper_notes", []))
       and D_.objects["Red"].material_slots[0].material.diffuse_color[0] > 0.5
       and abs(bwm_h.bounds("LiveRoof_Gables").size.z - 1.2) < 0.01, r)
 from blendwme import prompts as prompts_mod, tools as tools_mod  # noqa: E402

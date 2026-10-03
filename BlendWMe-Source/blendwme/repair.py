@@ -323,6 +323,14 @@ def _fix_keywords(call, parts, valid, src, edits, notes, statement, is_op):
             edits.append((a, b, f"radius=({value_text}) / 2"))
             notes.append(f"{label}: diameter -> radius (half of it)")
             continue
+        if kw.arg in {"diameter", "diameter1", "diameter2"} and "radius1" in valid:
+            target = "radius2" if kw.arg == "diameter2" else "radius1"
+            replacement = f"{target}=({value_text}) / 2"
+            if kw.arg == "diameter":
+                replacement += f", radius2=({value_text}) / 2"
+            edits.append((a, b, replacement))
+            notes.append(f"{label}: {kw.arg} -> radius (half of it)")
+            continue
         if new_name and new_name in valid and new_name not in {k.arg for k in call.keywords}:
             edits.append((a, b, f"{new_name}={value_text}"))
             notes.append(f"{label}: argument {kw.arg!r} -> {new_name!r}")
@@ -341,8 +349,8 @@ def _fix_keywords(call, parts, valid, src, edits, notes, statement, is_op):
             edits.append((end, end, f"; bpy.context.active_object.name = {value_text}"))
             notes.append(f"{label}: has no 'name' argument, so the new object is renamed after it is made")
             continue
-        edits.append(_drop_keyword(call, kw, src))
-        notes.append(f"{label}: ignored unknown argument {kw.arg!r} (valid: {', '.join(sorted(valid)[:10])})")
+        # Preserve meaningful intent. An unsupported argument should fail with
+        # Blender's diagnostic instead of silently changing the requested result.
 
 
 def _drop_keyword(call, kw, src):
