@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """The five themes and "reduce motion".
 
-Four themes are drawn by BlendWMe in the viewport (docs/design/UI_SPEC.md, section 2):
+Four themes are drawn by BlendWMe in the viewport:
 Graphite Paper, Red on Paper, Blender Grey and 2000s (made to sit with Blender's
 "Theme 2000": Luna blue, a navy hard shadow and orange for "your turn"). The fifth,
 "Blender UI", draws nothing of its own: BlendWMe lives in the sidebar with Blender's

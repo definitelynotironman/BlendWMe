@@ -1,6 +1,6 @@
 # BlendWMe by definitelynotironman
 # SPDX-License-Identifier: MIT
-"""BlendWMe's indicators inside Blender (docs/design/UI_SPEC.md, section 6).
+"""BlendWMe's indicators inside Blender.
 
 Colour rule: hot (red, orange in Blender Grey) means YOU: look here, do this.
 Ink means the AI is working.
