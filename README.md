@@ -72,7 +72,7 @@ you use it in a way that gets the most out of you.
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Privacy and security](#privacy-and-security)
-- [Project status and versions](#project-status-and-versions)
+- [Project status](#project-status)
 - [Contributing and feedback](#contributing-and-feedback)
 - [Licence and credits](#licence-and-credits)
 
@@ -94,9 +94,6 @@ you feel like it.
   Okay, a little.
   <!-- SCREENSHOT: Teach mode with the cue card and the radar ring on the Modifier tab. Path: docs/media/teach.png -->
 
-(If you used 2.2: the old Together mode is now part of Auto. Pausing and taking over does the same
-job without the AI stopping after every step.)
-
 Two brains, one project:
 
 - Use **Claude** (Claude Code on your Claude plan) or **Codex** (Codex CLI on your ChatGPT plan).
@@ -107,21 +104,16 @@ Two brains, one project:
 
 ## How it works
 
-```mermaid
-flowchart LR
-  U[You, in the BlendWMe panel] --> B[BlendWMe add-on in Blender]
-  B -- starts --> C[Claude Code or Codex on your computer]
-  C -- uses tools --> M[BlendWMe tools server]
-  M -- local connection, this computer only --> B
-  B --> J[(Project journal, saved with your .blend)]
-```
+<p align="center">
+  <img src="assets/readme/how-it-works.svg" alt="How BlendWMe works: you type in the panel, BlendWMe starts Claude or Codex, the AI uses only BlendWMe's tools over a local link, and every step goes into the project journal" width="820">
+</p>
 
 When you send a message, the add-on starts Claude Code (`claude -p`) or Codex (`codex exec`) in a
 workspace folder on your computer. The brain can only work through BlendWMe's tools: run a Python
 step on the live scene, look at the viewport, read the scene, write a plan, teach a step, point at
 a control. The tools server hands each call to Blender over a local connection, and Blender runs it
 with its own undo step. Before each step Blender also saves a backup copy of the scene, so a step
-that goes wrong can be put back. Every step and every hand-over goes into the project journal.
+that goes wrong can be put back. Every step and every handover goes into the project journal.
 
 You sign in inside Claude Code and Codex themselves. BlendWMe never sees your login. Everything runs
 on your computer except the AI's thinking.
@@ -130,10 +122,10 @@ on your computer except the AI's thinking.
 
 | You need | Notes |
 |---|---|
-| Blender 4.2 LTS or newer | 2.3 is tested with 5.2.2. 2.2 was also tested with 4.2.3. |
+| Blender 4.2 LTS or newer | Tested with 5.2.2. |
 | Windows 10 or 11 | Tested on Windows 11. macOS and Linux are untested (brave souls welcome). |
-| Claude Code, signed in with a Claude plan **or** Codex CLI, signed in with a ChatGPT plan | One is enough. Both lets you use the relay. Claude Code needs a Pro, Max, Team or Enterprise plan. |
-| Python 3.10 or newer for the tools server | Optional. BlendWMe installs the tools server into its own environment with any Python it finds, or with Blender's own Python. It needs the internet once to download the `mcp` package. |
+| Claude Code, signed in with a Claude plan **or** Codex CLI, signed in with a ChatGPT plan | One is enough. Both lets you use handover. Claude Code needs a Pro, Max, Team or Enterprise plan. |
+| Python 3.10 or newer for the tools server | Optional. BlendWMe installs the tools server into its own environment with any Python it finds, or with Blender's own Python. |
 
 ## Install
 
@@ -160,8 +152,8 @@ on your computer except the AI's thinking.
    choose **Install from Disk**, and pick the zip.
 5. **Save Preferences** (the menu at the bottom left of the Preferences window > Save Preferences).
    Skip this and Blender forgets BlendWMe the next time it starts. Ask me how I know.
-6. Open BlendWMe: press **Ctrl+Alt+M** with the mouse over the 3D Viewport, or click the
-   **BlendWMe** button in the viewport's header (top right, next to the overlays).
+6. Open BlendWMe: click the **BlendWMe** button in the 3D Viewport's header (top right, next to the
+   overlays).
 7. Click **Settings** at the bottom of the panel. The checks run by themselves. If the tools server
    is missing, press **Install the tools server**. You want a ✓ on every line.
 
@@ -189,7 +181,7 @@ Your journal, logs and settings stay where they are.
 
 ## Quick start
 
-1. Open BlendWMe (**Ctrl+Alt+M**). You get one input, three example ideas and the mode tabs.
+1. Open BlendWMe with the **BlendWMe** button in the viewport header. You get one input, three example ideas and the mode tabs.
 2. Stay on **Auto**. Type `Model me a simple ice cream cone`, press **Enter**, lean back, and watch
    the plan tick off.
 3. Press **New task** at the bottom of the panel and try `Make a cosy cottage with a red tiled roof`.
@@ -285,17 +277,17 @@ Your own work is protected: when the AI changes one of your materials or a mesh 
 share, it works on a copy, and when it rebuilds its own parts it keeps anything you attached to
 them. Very heavy geometry and runaway scripts are stopped before they freeze Blender.
 
-### Hand over (the relay)
+### Handover
 
 The brain card has a **Hand over** button. The working brain writes a short handoff note, then the
 other brain starts with the journal brief and a fresh look at the scene. When a brain hits its usage
-limit, a card offers the hand-over. In Auto, BlendWMe can hand over by itself (Settings > Relay and
-pace).
+limit, a card offers the handover. In Auto, BlendWMe can hand over by itself (an option in
+Settings).
 
 ### The journal
 
 Open it from the panel footer (**Journal**). It shows the brief, every step signed by whoever made
-it, the hand-overs, who made which objects, the problems (open and solved), and what's next.
+it, the handovers, who made which objects, the problems (open and solved), and what's next.
 **Open as Blender text** shows the raw journal; **Export** saves a copy to the logs folder.
 
 The journal follows the file you saved. Save, let the AI build more, close without saving, reopen:
@@ -321,19 +313,18 @@ and the panel stops animating too). You can force them on or off in Settings > A
 
 Pick the **Blender UI** theme and BlendWMe drops its own panel and moves into the sidebar (**N** >
 **BlendWMe** tab), built from Blender's normal buttons like any other add-on. Same modes, same
-brains, same journal, same hand-over: the status, the card for your turn, the plan, the conversation
+brains, same journal, same handover: the status, the card for your turn, the plan, the conversation
 and the settings, all in Blender's look and your Blender theme. Typing uses Blender's own text field,
 so input methods for other languages work there too.
 
 The pointers in the viewport stay (radar rings, pencil circles, notes), drawn in your theme's
-colours. **Ctrl+Alt+M** and the header button open and close the sidebar tab. Switch back to any
+colours. The header button opens and closes the sidebar tab. Switch back to any
 other theme and the floating panel returns where you left it.
 
 ## Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| Ctrl+Alt+M | Open BlendWMe (mouse over a 3D Viewport). Press again: focus the input. Again: minimize. In Blender UI mode: show or hide the sidebar tab |
 | Enter | Send |
 | Shift+Enter | New line |
 | Esc | Pause the AI while it works. Otherwise close the top card |
@@ -346,8 +337,7 @@ other theme and the floating panel returns where you left it.
 
 Blender already uses most of these keys somewhere else, so they only act while the BlendWMe panel
 has focus. Esc while the AI works also pauses it from the viewport, except while an animation plays.
-Change the keys in **Edit > Preferences > Keymap > Window**: "BlendWMe" (the one that opens it)
-and the "BlendWMe Panel Key" items.
+Change the keys in **Edit > Preferences > Keymap > Window**, under the "BlendWMe Panel Key" items.
 
 ## Where things are saved
 
@@ -370,7 +360,7 @@ changed in Settings > Advanced.
 | "Claude is not signed in" or "Codex is not signed in" | Open a terminal, run `claude` or `codex`, and sign in. Then run the checks again |
 | A program is not found | See [Make Blender find Claude Code and Codex](#install) |
 | "Claude's limit is reached" | Press **Hand over to Codex**, or wait for the reset time shown on the card |
-| The tools server check fails | Settings > **Install the tools server**. It needs the internet once |
+| The tools server check fails | Settings > **Install the tools server** |
 | The AI's result looks wrong | **Undo step**, or ask it to look again (`/look`) and fix it. Or pause and fix it yourself; it keeps your version |
 | Blender crashed | Settings > Advanced > **Make Crash Report**. It zips BlendWMe's latest logs, the Python crash trace and Blender's crash log. For a detailed run, start `blender_debug_log.cmd` from the Blender install folder and repeat the steps |
 
@@ -384,10 +374,8 @@ Honest list, because you'll find out anyway:
 
 - The AI makes mistakes. It's good at scenes and props. Complex characters, rigging, simulation and
   detailed sculpting are still weak, and that's where most of my work is going next.
-- It uses your plan's usage limits. Long Auto sessions eat them faster.
-- It needs an internet connection for the AI.
-- Version 2.3 is tested on Blender 5.2.2 and Windows 11 only (2.2 also ran on 4.2.3 LTS).
-- Version 2.3 was tested end to end with stand-in programs in place of Claude Code and Codex (the
+- Tested on Blender 5.2.2 and Windows 11 only.
+- BlendWMe is tested end to end with stand-in programs in place of Claude Code and Codex (the
   real tools server, the real Blender, the real journal). Full runs on real Claude and ChatGPT
   accounts are in progress. Codex's command-line flags follow its official documentation.
 - Only four technique cards are switched on for now: the cottage, the room, the ice cream cone and
@@ -409,12 +397,12 @@ Honest list, because you'll find out anyway:
 - What the AI receives: your messages, scene information, and the viewport pictures it asks for.
 - No telemetry. The journal and the logs stay on your computer.
 
-## Project status and versions
+## Project status
 
-- Current version: **2.3.0**. See [CHANGELOG.md](CHANGELOG.md).
-- Branches: `main` (this version), `v2.0.0-full` (2.0.0, which also had a pay-per-token API engine),
-  `nebius-nemotron` (the original Nemotron build from the Nebius x NVIDIA hackathon, where this all
-  started).
+- **2.3.0 is where BlendWMe starts.** Two modes, two brains with handover, a project journal that
+  lives with your .blend, and a panel that sits inside Blender. Everything from here builds on it.
+- How it began: 2.0.0 was the first version where Claude Code and Codex could work inside Blender
+  through BlendWMe's tools and pass a project to each other. 2.3.0 grew out of that.
 - What's next:
   - A character pipeline: references, blockout, refinement, materials, rig and pose.
   - Measured checks against your reference image (silhouette comparison), so "looks like the

@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="500" viewBox="0 0 1000 500" role="img" aria-labelledby="title desc">
+  <title id="title">How BlendWMe works</title>
+  <desc id="desc">You type in the BlendWMe panel. BlendWMe in Blender starts Claude Code or Codex on your computer. The AI can only use BlendWMe's tools, which talk to Blender over a local link on this computer. Every step is saved in the project journal with your .blend file.</desc>
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.4" fill="#e7dcc4"/>
+    </pattern>
+    <marker id="head" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11 Z" fill="#2b2b2b"/>
+    </marker>
+    <style>
+      .t { font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; fill: #1f1f1f; }
+      .title { font-size: 21px; font-weight: 700; }
+      .sub { font-size: 15px; }
+      .tag { font-size: 13px; font-weight: 600; }
+      .num { font-size: 15px; font-weight: 800; fill: #ffffff; }
+      .card { stroke: #2b2b2b; stroke-width: 3; }
+      .shadow { fill: #2b2b2b; }
+      .arrow { fill: none; stroke: #2b2b2b; stroke-width: 3; stroke-linecap: round; }
+      .pill { fill: #ffffff; stroke: #2b2b2b; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <!-- paper -->
+  <rect x="4" y="4" width="992" height="492" rx="26" fill="#fffaf0" stroke="#2b2b2b" stroke-width="3"/>
+  <rect x="4" y="4" width="992" height="492" rx="26" fill="url(#dots)"/>
+
+  <!-- arrows (drawn first, so cards sit on top) -->
+  <path class="arrow" d="M262 250 C 300 250, 290 125, 322 125" marker-end="url(#head)"/>
+  <path class="arrow" d="M632 110 L 682 110" marker-end="url(#head)"/>
+  <path class="arrow" d="M830 182 L 830 300" marker-end="url(#head)"/>
+  <path class="arrow" d="M700 330 C 655 300, 650 230, 612 186" marker-end="url(#head)"/>
+  <path class="arrow" d="M477 186 L 477 302" marker-end="url(#head)"/>
+
+  <!-- arrow labels -->
+  <rect class="pill" x="214" y="146" width="104" height="28" rx="14"/>
+  <text class="t tag" x="266" y="165" text-anchor="middle">your brief</text>
+  <rect class="pill" x="633" y="58" width="54" height="28" rx="14"/>
+  <text class="t tag" x="660" y="77" text-anchor="middle">starts</text>
+  <rect class="pill" x="842" y="226" width="110" height="28" rx="14"/>
+  <text class="t tag" x="897" y="245" text-anchor="middle">uses tools</text>
+  <rect class="pill" x="560" y="232" width="138" height="46" rx="14"/>
+  <text class="t tag" x="629" y="251" text-anchor="middle">local link,</text>
+  <text class="t tag" x="629" y="269" text-anchor="middle">this computer only</text>
+  <rect class="pill" x="352" y="230" width="112" height="28" rx="14"/>
+  <text class="t tag" x="408" y="249" text-anchor="middle">every step</text>
+
+  <!-- 1. You -->
+  <rect class="shadow" x="40" y="194" width="220" height="124" rx="16"/>
+  <rect class="card" x="32" y="186" width="220" height="124" rx="16" fill="#ffd45c"/>
+  <circle cx="58" cy="212" r="15" fill="#2b2b2b"/><text class="t num" x="58" y="217" text-anchor="middle">1</text>
+  <text class="t title" x="84" y="219">You</text>
+  <text class="t sub" x="52" y="256">Type what you want</text>
+  <text class="t sub" x="52" y="280">in the BlendWMe panel</text>
+
+  <!-- 2. BlendWMe in Blender -->
+  <rect class="shadow" x="330" y="48" width="300" height="136" rx="16"/>
+  <rect class="card" x="322" y="40" width="300" height="136" rx="16" fill="#7ec8ff"/>
+  <circle cx="348" cy="66" r="15" fill="#2b2b2b"/><text class="t num" x="348" y="71" text-anchor="middle">2</text>
+  <text class="t title" x="374" y="73">BlendWMe in Blender</text>
+  <text class="t sub" x="342" y="112">Runs every step on your scene</text>
+  <text class="t sub" x="342" y="136">with an undo step and a backup</text>
+
+  <!-- 3. Claude Code or Codex -->
+  <rect class="shadow" x="698" y="48" width="270" height="136" rx="16"/>
+  <rect class="card" x="690" y="40" width="270" height="136" rx="16" fill="#c4a8ff"/>
+  <circle cx="716" cy="66" r="15" fill="#2b2b2b"/><text class="t num" x="716" y="71" text-anchor="middle">3</text>
+  <text class="t title" x="740" y="73">Claude or Codex</text>
+  <text class="t sub" x="710" y="112">The AI on your own plan,</text>
+  <text class="t sub" x="710" y="136">running on your computer</text>
+
+  <!-- 4. BlendWMe tools -->
+  <rect class="shadow" x="698" y="318" width="270" height="136" rx="16"/>
+  <rect class="card" x="690" y="310" width="270" height="136" rx="16" fill="#6ee7b7"/>
+  <circle cx="716" cy="336" r="15" fill="#2b2b2b"/><text class="t num" x="716" y="341" text-anchor="middle">4</text>
+  <text class="t title" x="740" y="343">BlendWMe tools</text>
+  <text class="t sub" x="710" y="382">Build, look, plan, teach</text>
+  <text class="t sub" x="710" y="406">and point. Nothing else.</text>
+
+  <!-- 5. Project journal -->
+  <rect class="shadow" x="330" y="318" width="300" height="136" rx="16"/>
+  <rect class="card" x="322" y="310" width="300" height="136" rx="16" fill="#ffb3c7"/>
+  <circle cx="348" cy="336" r="15" fill="#2b2b2b"/><text class="t num" x="348" y="341" text-anchor="middle">5</text>
+  <text class="t title" x="374" y="343">Project journal</text>
+  <text class="t sub" x="342" y="382">Saved with your .blend:</text>
+  <text class="t sub" x="342" y="406">the brief, plan and every step</text>
+</svg>
