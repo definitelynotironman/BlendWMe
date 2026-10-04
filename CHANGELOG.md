@@ -2,6 +2,50 @@
 
 All notable changes to BlendWMe. Versions follow the add-on's `blender_manifest.toml`.
 
+## 2.3.0
+
+### Added
+- **New task** / **New lesson** at the bottom of the panel and in the sidebar (also `/new`): start
+  fresh without touching the scene. The old task stays in the journal's history.
+- Formatted replies in the panel: **bold**, bullet lists and `code`. The Blender UI sidebar can't
+  mix font weights, so it shows them as clean plain text and opens the reader for the full version.
+- A full-text reader (**Full text**, **Draft**): scroll, select with the mouse, Ctrl+A, Ctrl+C, and
+  Shift+Ctrl+C for the original text with its formatting marks.
+- Teach: **Hint** and **Skip this step** next to **Check my work** and **Do it for me**. Lesson
+  checks read the scene directly (selection, active object, mode, modifiers, properties) and work in
+  Edit Mode. When the step was already done before you started, it says so instead of praising you.
+- A backup copy of the scene before every AI step. A failed step restores what it changed; when it
+  can't, the result says where the backup is.
+- Limits on very heavy geometry and on scripts that run too long, so a step can't freeze Blender.
+
+### Changed
+- Two modes: **Auto** and **Teach**. Together (Watch) is part of Auto now: pause, take over and
+  resume instead of pressing Next after every step. Old files and settings open in Auto.
+- Finishing needs evidence: a fresh look at the result, every plan part settled, and no open "needs
+  work" review. A look only counts when a picture actually arrived, and a step that changed nothing
+  doesn't tick a plan part.
+- Your materials and shared meshes are copied before the AI changes them, and parts you attached to
+  the AI's objects survive when it rebuilds them.
+- The journal recognises objects after a rename, tracks more kinds of edits (shape, modifiers,
+  materials, shape keys, animation), follows the saved file instead of discarded work, and notices
+  moved or missing reference pictures.
+- Only the tested technique cards are offered: the cottage, the room, the ice cream cone and camera
+  help.
+- Each Blender has its own tools-server folder, so two Blender windows on one computer don't mix up
+  their work.
+- The 2000s theme uses Patrick Hand for writing again, the caret lines up with the letters at every
+  text size, and box and badge edges are smooth.
+- The code is reorganised into documented classes. Nothing changes for the AI's modelling kit.
+
+### Fixed
+- File > New (or opening a file) no longer leaves the panel without working buttons until Blender
+  restarts.
+- The Settings popover no longer closes as soon as you let go of the button.
+- Size settings like `diameter` are halved correctly, and arguments the kit can't use are refused
+  instead of silently dropped.
+- A tool request from an old task or a stopped session can no longer change the scene.
+- The MCP server reported version 2.0.0; it now reports the add-on's version.
+
 ## 2.2.0
 
 ### Added

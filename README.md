@@ -38,9 +38,9 @@ a beginner for as long as I've known Blender. So I wanted to make something that
 app, actually doing stuff, making things and learning Blender inside out from an AI that is
 without a doubt far ahead of me.
 
-So that's what BlendWMe is: an experienced Blender artist that lives inside Blender. It can build
-with you, teach you one step at a time, or take the wheel while you watch, and you can grab the
-wheel back whenever you like. It runs on the Claude or ChatGPT plan you already pay for, through the
+So that's what BlendWMe is: an experienced Blender artist that lives inside Blender. It can take
+the wheel and build while you watch, or teach you one step at a time, and you can grab the wheel
+back whenever you like. It runs on the Claude or ChatGPT plan you already pay for, through the
 official Claude Code and Codex programs. No extra API bill sneaking up on you.
 
 The trap, of course, is getting stuck in AI hell with Blender instead. Which is likely if it's used
@@ -78,22 +78,24 @@ you use it in a way that gets the most out of you.
 
 ## What it does
 
-There are three ways to work. Pick one with the tabs at the top of the panel, and switch whenever
+There are two ways to work. Pick one with the tabs at the top of the panel, and switch whenever
 you feel like it.
 
-- **Together.** You and the AI build the same scene. It does one step, then waits for **Next**, so
-  you can actually follow what's going on. If you move or reshape something in between, it notices
-  and builds on your version instead of "fixing" it back.
-  <!-- SCREENSHOT: Together mode, the thinking box and a step card. Path: docs/media/together.png -->
+- **Auto.** It writes a plan, builds it part by part, and looks at the result from a few angles
+  before calling anything done. The plan shows up as a checklist. Press **Pause** or **Take control**
+  any time, move or reshape whatever you like, then **Resume**: it notices your changes and builds
+  on your version instead of "fixing" it back.
+  <!-- SCREENSHOT: Auto mode with the plan card. Path: docs/media/auto.png -->
 - **Teach.** You drive, it coaches. One action at a time, under 20 words, with the "why" underneath
   for when you're curious. A blinking red block means "your move", a radar ring circles the tab or
   object to look at, and a pencil circle marks the part of the window. Press **Check my work** when
-  you're done, or **Show me** if you'd rather it did that one for you. No judgement. Okay, a little.
+  you're done. Stuck? **Hint** gives you a nudge, **Skip this step** moves on (it remembers you
+  haven't practised that one yet), and **Do it for me** does it while you watch. No judgement.
+  Okay, a little.
   <!-- SCREENSHOT: Teach mode with the cue card and the radar ring on the Modifier tab. Path: docs/media/teach.png -->
-- **Auto.** It writes a plan, builds it part by part, and looks at the result from a few angles
-  before calling anything done. The plan shows up as a checklist. Press **Pause** or **Take control**
-  any time.
-  <!-- SCREENSHOT: Auto mode with the plan card. Path: docs/media/auto.png -->
+
+(If you used 2.2: the old Together mode is now part of Auto. Pausing and taking over does the same
+job without the AI stopping after every step.)
 
 Two brains, one project:
 
@@ -118,7 +120,8 @@ When you send a message, the add-on starts Claude Code (`claude -p`) or Codex (`
 workspace folder on your computer. The brain can only work through BlendWMe's tools: run a Python
 step on the live scene, look at the viewport, read the scene, write a plan, teach a step, point at
 a control. The tools server hands each call to Blender over a local connection, and Blender runs it
-with its own undo step. Every step and every hand-over goes into the project journal.
+with its own undo step. Before each step Blender also saves a backup copy of the scene, so a step
+that goes wrong can be put back. Every step and every hand-over goes into the project journal.
 
 You sign in inside Claude Code and Codex themselves. BlendWMe never sees your login. Everything runs
 on your computer except the AI's thinking.
@@ -127,7 +130,7 @@ on your computer except the AI's thinking.
 
 | You need | Notes |
 |---|---|
-| Blender 4.2 LTS or newer | Tested with 4.2.3 and 5.2.2. |
+| Blender 4.2 LTS or newer | 2.3 is tested with 5.2.2. 2.2 was also tested with 4.2.3. |
 | Windows 10 or 11 | Tested on Windows 11. macOS and Linux are untested (brave souls welcome). |
 | Claude Code, signed in with a Claude plan **or** Codex CLI, signed in with a ChatGPT plan | One is enough. Both lets you use the relay. Claude Code needs a Pro, Max, Team or Enterprise plan. |
 | Python 3.10 or newer for the tools server | Optional. BlendWMe installs the tools server into its own environment with any Python it finds, or with Blender's own Python. It needs the internet once to download the `mcp` package. |
@@ -151,7 +154,7 @@ on your computer except the AI's thinking.
 
    Or, if you have Node.js: `npm install -g @openai/codex`. Then run `codex` and choose
    **Sign in with ChatGPT**.
-3. Download `blendwme-2.2.0.zip` from [Releases](../../releases). Don't unzip it. Blender wants
+3. Download `blendwme-2.3.0.zip` from [Releases](../../releases). Don't unzip it. Blender wants
    the zip.
 4. In Blender: **Edit > Preferences > Get Extensions**, open the drop-down menu in the top right,
    choose **Install from Disk**, and pick the zip.
@@ -187,12 +190,13 @@ Your journal, logs and settings stay where they are.
 ## Quick start
 
 1. Open BlendWMe (**Ctrl+Alt+M**). You get one input, three example ideas and the mode tabs.
-2. Stay on **Together**. Type `Make a cosy cottage with a red tiled roof` and press **Enter**.
-3. Watch the first step land, then press **Next**. Move or reshape something yourself between steps.
-   BlendWMe notices and keeps your change. Yes, even if your chimney is crooked. It's *your* chimney.
+2. Stay on **Auto**. Type `Model me a simple ice cream cone`, press **Enter**, lean back, and watch
+   the plan tick off.
+3. Press **New task** at the bottom of the panel and try `Make a cosy cottage with a red tiled roof`.
+   Halfway through, press **Pause**, move or reshape something yourself, then **Resume**. BlendWMe
+   notices and keeps your change. Yes, even if your chimney is crooked. It's *your* chimney.
 4. Switch to **Teach** and type `Teach me to bevel the table edges` (on a scene with a table or a
    box). Follow the card and press **Check my work** when you've done it.
-5. Try **Auto** with `Model me a simple ice cream cone`, lean back, and watch the plan tick off.
 
 ## Using BlendWMe
 
@@ -200,9 +204,12 @@ Your journal, logs and settings stay where they are.
 
 | Mode | Who does the work | Try saying |
 |---|---|---|
-| Together | The AI, one step at a time, waiting for Next | `Add a chimney on the left of the roof` |
+| Auto | The AI, part by part, checking as it goes. You can pause and take over any time | `A cosy low poly cottage with a stone base and a small path` |
 | Teach | You, guided one action at a time | `Teach me to bevel the table edges` |
-| Auto | The AI, part by part, checking as it goes | `A cosy low poly cottage with a stone base and a small path` |
+
+Done with one thing and starting another? Press **New task** (in Teach: **New lesson**) at the
+bottom of the panel, or type `/new`. It starts fresh and leaves your scene alone. The journal keeps
+the old task in its history.
 
 Got a reference picture? Add it in Settings > **References for this task** before you send the
 brief. BlendWMe shows it to the brain and checks the build against it.
@@ -216,7 +223,7 @@ or sets the lens.
 
 | Tool | What it's for |
 |---|---|
-| `run_python` | Run one Python step on the live scene, with an undo step. A failed step is rolled back |
+| `run_python` | Run one Python step on the live scene, with an undo step and a backup copy. A failed step is rolled back |
 | `look` | Pictures of the scene: several angles, the viewport, or through the camera |
 | `get_scene_info`, `get_object_info` | Exact facts: sizes, positions, modifiers, materials |
 | `plan` | The build checklist, and marking parts done or skipped with a reason |
@@ -224,7 +231,7 @@ or sets the lens.
 | `point_at` | A radar ring or pencil circle on an object, a tab or a part of the window |
 | `ask_user` | A short question when a wrong guess would waste work |
 | `load_skill`, `inspect_api` | Technique cards and Blender API lookups |
-| `finish` | End the task. Refused while plan parts are still open |
+| `finish` | End the task. Refused while plan parts are still open, before a fresh look at the result, or after a "needs work" review |
 | `handoff_note`, `read_journal` | The baton between Claude and Codex |
 
 </details>
@@ -251,18 +258,32 @@ and is only as tall as what it has to show. If it's still in the way:
 Typing works like a Blender text field: Shift+arrows select, Ctrl+arrows jump words, Ctrl+C / X / V,
 Ctrl+Z / Ctrl+Shift+Z. Click to put the caret where you want it.
 
+### Reading long answers
+
+Replies show **bold**, bullet lists and `code`. Long ones fold behind **Read more**, and **Full
+text** at the bottom of the panel opens a reader with the whole conversation. **Draft** opens the
+message you're typing. In the reader you can scroll, select with the mouse, Ctrl+A to select all,
+Ctrl+C to copy, and Shift+Ctrl+C to copy the original text with its formatting marks.
+
 ### The plan
 
 In Auto the brain writes a plan first. Each part ticks off when it's built. A part can also be
-marked done after the brain has actually looked at it, or skipped with a reason you can read. The
-task can only finish when every part is settled, so no more "Done! ✓" with half the house missing.
-A finished, stopped or new task closes the plan card.
+marked done after the brain has actually looked at it, or skipped with a reason you can read. A
+step that changed nothing doesn't tick anything off. The task can only finish when every part is
+settled and the brain has taken a fresh look at the finished result. If the art director review
+says the work still needs work, it has to fix it first. So no more "Done! ✓" with half the house
+missing. A finished, stopped or new task closes the plan card.
 
 ### Pausing and taking control
 
 **Pause** (or **Esc**) stops the AI before its next action. Move, edit or delete anything you like,
-then press **Resume**. The AI is told what you changed and keeps it. **Esc** twice stops the task.
-Everything already built stays in your scene, and **Undo step** removes the last AI step.
+then press **Resume**. The AI is told what you changed and keeps it, even if you renamed things.
+**Esc** twice stops the task. Everything already built stays in your scene, and **Undo step**
+removes the last AI step.
+
+Your own work is protected: when the AI changes one of your materials or a mesh that other objects
+share, it works on a copy, and when it rebuilds its own parts it keeps anything you attached to
+them. Very heavy geometry and runaway scripts are stopped before they freeze Blender.
 
 ### Hand over (the relay)
 
@@ -276,6 +297,10 @@ pace).
 Open it from the panel footer (**Journal**). It shows the brief, every step signed by whoever made
 it, the hand-overs, who made which objects, the problems (open and solved), and what's next.
 **Open as Blender text** shows the raw journal; **Export** saves a copy to the logs folder.
+
+The journal follows the file you saved. Save, let the AI build more, close without saving, reopen:
+it remembers the saved version, not the work you threw away. It also notices when a reference
+picture has moved or gone missing.
 
 ### Themes
 
@@ -314,7 +339,7 @@ other theme and the floating panel returns where you left it.
 | Esc | Pause the AI while it works. Otherwise close the top card |
 | Esc twice | Stop |
 | Up / Down | Previous / next message you sent |
-| Shift+Tab | Next mode: Together, Teach, Auto |
+| Shift+Tab | Next mode: Auto, Teach |
 | Ctrl+L | Clear the conversation view (the journal keeps everything) |
 | `/` | Commands: `/handover`, `/look`, `/undo`, `/journal`, `/logs`, `/settings`, `/new`, `/stop`, `/help` |
 | `?` | Show all shortcuts (in an empty input) |
@@ -352,8 +377,8 @@ changed in Settings > Advanced.
 ## Limitations
 
 > [!WARNING]
-> The AI runs Python in your Blender. Save your work often. Every AI step has its own undo step,
-> and a failed step is rolled back, but a wrong step can still change your scene.
+> The AI runs Python in your Blender. Save your work often. Every AI step has its own undo step and
+> a backup copy, and a failed step is rolled back, but a wrong step can still change your scene.
 
 Honest list, because you'll find out anyway:
 
@@ -361,10 +386,15 @@ Honest list, because you'll find out anyway:
   detailed sculpting are still weak, and that's where most of my work is going next.
 - It uses your plan's usage limits. Long Auto sessions eat them faster.
 - It needs an internet connection for the AI.
-- Tested on Blender 4.2.3 LTS, Blender 5.2.2 and Windows 11 only.
-- Version 2.2 was tested end to end with stand-in programs in place of Claude Code and Codex (the
+- Version 2.3 is tested on Blender 5.2.2 and Windows 11 only (2.2 also ran on 4.2.3 LTS).
+- Version 2.3 was tested end to end with stand-in programs in place of Claude Code and Codex (the
   real tools server, the real Blender, the real journal). Full runs on real Claude and ChatGPT
   accounts are in progress. Codex's command-line flags follow its official documentation.
+- Only four technique cards are switched on for now: the cottage, the room, the ice cream cone and
+  camera help. The others stay off until their steps have been tested in Blender.
+- The backup copy before each step costs a moment on big scenes. It hasn't been measured on very
+  large files yet.
+- Teach pointers to the Properties tabs mark the tab column, not one exact button.
 - Some laptops have no numpad. Teach steps that use numpad keys also give the menu path.
 - Not affiliated with Blender, Anthropic or OpenAI. Just a fan of all three.
 
@@ -381,7 +411,7 @@ Honest list, because you'll find out anyway:
 
 ## Project status and versions
 
-- Current version: **2.2.0**. See [CHANGELOG.md](CHANGELOG.md).
+- Current version: **2.3.0**. See [CHANGELOG.md](CHANGELOG.md).
 - Branches: `main` (this version), `v2.0.0-full` (2.0.0, which also had a pay-per-token API engine),
   `nebius-nemotron` (the original Nemotron build from the Nebius x NVIDIA hackathon, where this all
   started).
