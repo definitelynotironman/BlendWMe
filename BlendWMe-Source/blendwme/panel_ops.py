@@ -562,6 +562,11 @@ class PanelActions:
             open_settings(context)
         elif kind == "reader":
             bpy.ops.blendwme.reader("INVOKE_DEFAULT", kind=arg or "all")
+        elif kind == "refs":
+            if arg == "add":
+                bpy.ops.blendwme.add_references("INVOKE_DEFAULT")
+            elif arg.startswith("remove:"):
+                bpy.ops.blendwme.remove_reference(index=int(arg.split(":", 1)[1]))
         elif kind == "example":
             set_text(EXAMPLE_PROMPTS.get(arg, arg))
             state.focused = True

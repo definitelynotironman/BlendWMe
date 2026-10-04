@@ -31,7 +31,8 @@ import bpy
 
 from . import draw2d as d
 from . import theme
-from .state import ASKING, DONE, ERROR, IDLE, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING, session
+from .state import (ASKING, DONE, ERROR, IDLE, MAX_REFERENCES, PAUSED, THINKING, WAIT_NEXT, WAIT_USER, WORKING,
+                    session)
 
 __author__ = "definitelynotironman"
 
@@ -924,14 +925,16 @@ class Painter:
         gap = self.px(GAP)
         limit = (session.card or {}).get("kind") == "limit"
         card_h = self.current_cards(0, 0, w, measure=True)
-        return (self.px(24) + gap + (0 if limit else self.px(42) + gap) + self.input_height(w) + gap
+        return (self.px(24) + gap + (0 if limit else self.px(42) + gap) + self.references_height(w) + gap
+                + self.input_height(w) + gap
                 + self.action_height() + (card_h + gap if card_h else 0))
 
     def full_minimum(self, w):
         """The smallest height that shows Full without squeezing anything."""
         gap = self.px(GAP)
         if self.first_view():
-            return self.px(HEADER_H) + gap + self.px(46) + gap + self.input_height(w) + gap + 3 * self.px(50)
+            return (self.px(HEADER_H) + gap + self.px(46) + gap + self.input_height(w) + gap
+                    + self.references_height(w) + gap + 3 * self.px(50) + self.px(24) + gap)
         middle = self.px(110)
         if session.mode == "AUTO" and self.plan_items():
             middle += self.px(90)
@@ -945,7 +948,8 @@ class Painter:
             return 10 ** 6                     # the journal uses the whole height
         if self.first_view():
             return (self.px(HEADER_H) + gap + self.px(46) + gap + self.input_height(w) + gap
-                    + 3 * (self.px(40) + self.px(10)) + self.px(4))
+                    + self.references_height(w) + gap + 3 * (self.px(40) + self.px(10)) + self.px(4)
+                    + self.px(24) + gap)          # the footer
         top = self.px(HEADER_H) + gap + self.px(60) + gap + self.px(46) + gap
         middle = self.conversation_height(w) + 2 * self.px(16)
         plan = self.plan_items()
@@ -960,7 +964,7 @@ class Painter:
         if self.strip_text():
             h += self.px(44) + gap
         h += self.action_height() + self.limit_height()
-        h += self.input_height(w, max_lines=3) + self.px(30)
+        h += self.input_height(w, max_lines=3) + self.references_height(w) + gap + self.px(30)
         return h
 
     def limit_height(self):
@@ -1008,6 +1012,9 @@ class Painter:
             input_h = self.input_height(w)
             self.text_input(x0, top - input_h, w, input_h)
             top -= input_h + gap
+            refs_h = self.references_height(w)
+            self.references_row(x0, top - refs_h, w)
+            top -= refs_h + gap
             for name in EXAMPLES:
                 h = self.px(40)
                 if top - h < bottom:
@@ -1017,6 +1024,7 @@ class Painter:
             return
         if not limit:
             bottom += self.chips_row(x0, bottom, w) + gap
+        bottom += self.references_row(x0, bottom, w) + gap
         input_h = self.input_height(w)
         self.text_input(x0, bottom, w, input_h)
         bottom += input_h + gap
@@ -1059,8 +1067,11 @@ class Painter:
             self.limit_buttons(x0, top - limit + self.px(GAP), w)
             top -= limit
         input_h = self.input_height(w, max_lines=3)
+        refs_h = self.references_height(w)
         self.footer(x0, y0, w)
-        self.text_input(x0, max(y0 + self.px(30), top - input_h), w, input_h, max_lines=3)
+        input_y = max(y0 + self.px(30) + refs_h + gap, top - input_h)
+        self.text_input(x0, input_y, w, input_h, max_lines=3)
+        self.references_row(x0, input_y - gap - refs_h, w)
 
     def strip_text(self):
         """(label, words, yours) for the Compact strip, or None."""
@@ -1262,6 +1273,73 @@ class Painter:
             cx = x + i * (cw + gap)
             self.chip(cx, y, cw if i < 2 else x + w - cx, h, name, "chip:" + action)
         return h
+
+    def references_layout(self, w):
+        """([(kind, index, x, row, width, words)], rows) for the picture row at width w.
+
+        The first item is the paperclip button; each attached picture follows as a
+        chip, wrapping onto a new row when it does not fit, so every name stays visible.
+        """
+        size = self.px(16)
+        gap = self.px(8)
+        refs = [r.path for r in self.props.references] if self.props else []
+        words = "Add pictures" if not refs else "Full" if len(refs) >= MAX_REFERENCES else "Add"
+        items = [("add", -1, 0, 0, self.px(40) + d.width_of("HAND", size, words), words)]
+        x, row = items[0][4] + gap, 0
+        for i, path in enumerate(refs):
+            name = os.path.basename(path) or "picture"
+            cw = min(self.px(150), self.px(40) + d.width_of("HAND", size, name), w)
+            if x + cw > w:
+                row, x = row + 1, 0
+            items.append(("ref", i, x, row, cw, name))
+            x += cw + gap
+        return items, row + 1
+
+    def references_height(self, w):
+        """The height of the picture rows under the input at width w."""
+        _, rows = self.references_layout(w)
+        return rows * self.px(32) + (rows - 1) * self.px(6)
+
+    def paperclip(self, cx, cy, size, color):
+        """A tilted paperclip in pencil lines, size tall, centred on (cx, cy)."""
+        import math
+        u = size / 8.5
+
+        def arc(ox, oy, r, start, end):
+            """Points along an arc (degrees) around (ox, oy) with radius r."""
+            return [(ox + r * math.cos(math.radians(start + (end - start) * i / 10)),
+                     oy + r * math.sin(math.radians(start + (end - start) * i / 10))) for i in range(1, 11)]
+
+        points = [(0.0, -2.0), (0.0, 2.5)] + arc(0.75, 2.5, 0.75, 180, 0) + [(1.5, -2.5)]
+        points += arc(0.0, -2.5, 1.5, 0, -180) + [(-1.5, 3.2)]
+        turn = math.radians(-35)
+        c, s = math.cos(turn), math.sin(turn)
+        d.polyline([(cx + (px * c - py * s) * u, cy + (px * s + py * c) * u) for px, py in points],
+                   color, max(1, round(self.px(1.3))))
+
+    def references_row(self, x, y, w):
+        """The paperclip button and one chip per attached picture (each with an X to remove it)."""
+        p = self.p
+        size = self.px(16)
+        h = self.px(32)
+        items, rows = self.references_layout(w)
+        top = y + self.references_height(w)
+        for kind, index, ix, row, iw, words in items:
+            cx, cy = x + ix, top - (row + 1) * h - row * self.px(6)
+            ty = cy + (h - size * 0.62) / 2
+            if kind == "add":
+                d.box(cx, cy, iw, h, fill=p.card, border=p.ink, width=theme.BORDER_CARD, radius=h / 2 / self.s)
+                self.paperclip(cx + self.px(17), cy + h / 2, self.px(21), p.ink)
+                d.text("HAND", size, cx + self.px(30), ty, words, p.ink)
+                self.hit(cx, cy, iw, h, "refs:add")
+                continue
+            d.box(cx, cy, iw, h, fill=p.panel, border=p.ink, width=theme.BORDER_CARD, radius=h / 2 / self.s)
+            with d.clip(cx, cy, iw - self.px(26), h):
+                d.text("HAND", size, cx + self.px(12), ty, d.fit("HAND", size, words, iw - self.px(40)), p.ink)
+            xx = cx + iw - self.px(15)
+            d.cross(xx, cy + h / 2, self.px(8), p.muted, self.px(2))
+            self.hit(xx - self.px(12), cy, self.px(26), h, f"refs:remove:{index}")
+        return self.references_height(w)
 
     def pace_slider(self, x, y, w, h):
         """The Auto pace slider."""

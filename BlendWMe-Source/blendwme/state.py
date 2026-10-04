@@ -19,6 +19,8 @@ PAUSED = "PAUSED"            # you have the wheel
 DONE = "DONE"
 ERROR = "ERROR"
 
+MAX_REFERENCES = 8          # reference pictures one task can carry
+
 
 def normalize_mode(value):
     """Legacy Together sessions become Auto; Teach retains its identity."""

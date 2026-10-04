@@ -20,7 +20,7 @@ import os
 
 import bpy
 
-from .state import session
+from .state import MAX_REFERENCES, session
 
 __author__ = "definitelynotironman"
 
@@ -226,14 +226,22 @@ class SettingsForm:
 
     @staticmethod
     def draw_references(layout, context):
-        """The two reference image fields for the current task."""
+        """The attached reference pictures under the prompt: Add pictures, then one row each with remove."""
         s = getattr(context.window_manager, "blendwme", None)
         if s is None:
             return
         col = layout.column(align=True)
-        _heading(col, "References for this task", "IMAGE_REFERENCE")
-        col.prop(s, "reference_1", text="")
-        col.prop(s, "reference_2", text="")
+        row = col.row(align=True)
+        count = len(s.references)
+        add = row.operator("blendwme.add_references", icon="LINKED",
+                           text="Add pictures" if not count else f"Pictures ({count} of {MAX_REFERENCES})")
+        if count:
+            row.operator("blendwme.remove_reference", text="", icon="X").index = -1
+        for i, ref in enumerate(s.references):
+            item = col.row(align=True)
+            item.label(text=os.path.basename(ref.path) or "picture", icon="IMAGE_DATA")
+            item.operator("blendwme.remove_reference", text="", icon="REMOVE").index = i
+        return add
 
     @staticmethod
     def draw_theme(layout, p):
@@ -288,7 +296,6 @@ class SettingsForm:
         context = context or bpy.context
         col = layout.column()
         draw_brains(col.box(), context)
-        draw_references(col.box(), context)
         draw_theme(col.box(), p)
         draw_panel_options(col.box(), p)
         draw_relay(col.box(), p)
@@ -365,6 +372,11 @@ def _sync(self, context):
     session.changed_flag = True
 
 
+class BWM_Reference(bpy.types.PropertyGroup):
+    """One reference picture attached to the current task."""
+    path: bpy.props.StringProperty(name="Picture", subtype="FILE_PATH")
+
+
 class BWM_Session(bpy.types.PropertyGroup):
     """Per-session options on the window manager (never saved into the .blend)."""
     prompt: bpy.props.StringProperty(name="", description="Tell BlendWMe what to make, or ask it something")
@@ -374,8 +386,7 @@ class BWM_Session(bpy.types.PropertyGroup):
                ("codex", "Codex", "Codex CLI with your ChatGPT plan")],
         default="claude", update=_redraw)
     mode: bpy.props.EnumProperty(name="Mode", items=MODES, default="AUTO", update=_sync)
-    reference_1: bpy.props.StringProperty(name="Reference 1", subtype="FILE_PATH")
-    reference_2: bpy.props.StringProperty(name="Reference 2", subtype="FILE_PATH")
+    references: bpy.props.CollectionProperty(type=BWM_Reference, name="Reference pictures")
 
 
 def sync_session(context=None):
@@ -398,7 +409,7 @@ def gather_config(context=None):
     p = addon_prefs(context)
     s = context.window_manager.blendwme
     sync_session(context)
-    refs = [bpy.path.abspath(r) for r in (s.reference_1, s.reference_2) if r.strip()]
+    refs = [bpy.path.abspath(r.path) for r in s.references if r.path.strip()]
 
     def path(value):
         """An absolute path for a non-empty setting, else ''."""
@@ -427,7 +438,7 @@ def gather_config(context=None):
     }
 
 
-classes = (BWM_Preferences, BWM_Session)
+classes = (BWM_Preferences, BWM_Reference, BWM_Session)
 
 
 def register():

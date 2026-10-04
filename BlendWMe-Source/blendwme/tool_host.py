@@ -36,7 +36,8 @@ import uuid
 import bpy
 
 from . import bridge, executor, helpers, knowledge, lesson, look, prompts, scene_info, tools
-from .state import ASKING, DONE, PAUSED, THINKING, WAIT_USER, WORKING, normalize_mode, session
+from .state import (ASKING, DONE, MAX_REFERENCES, PAUSED, THINKING, WAIT_USER, WORKING, normalize_mode,
+                    session)
 
 __author__ = "definitelynotironman"
 
@@ -47,7 +48,10 @@ REVIEW_EVERY = 4
 REVIEW_MAX = 3
 STUCK_FAILS = 4           # failures of the SAME step before the user gets the wheel
 STUCK_PRECHECK = 6
-MAX_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024     # the most one delivered picture may weigh
+MAX_SOURCE_BYTES = 64 * 1024 * 1024   # the largest file BlendWMe opens as a picture
+MAX_SIDE = 1568                       # the longer side of a delivered picture; larger ones are shrunk
+MAX_PIXELS = 50_000_000               # the most pixels Blender may decode for one picture
 
 BRAIN_LABELS = {"claude": "Claude", "codex": "Codex", "api": "API", "user": "You", "ai": "BlendWMe"}
 
@@ -77,62 +81,114 @@ class NullJournal:
 class ImagePayload:
     """Turns an image file into a bounded payload a brain can see, or refuses it.
 
-    The type is identified by content (PNG / JPEG / WebP signatures), the size
-    is bounded, the image must decode in Blender on the main thread, and the
-    file must not change while it is being decoded. A temporary Image
-    datablock made for the check is always removed again.
+    The type is identified by content (PNG / JPEG / WebP signatures), the image
+    must decode in Blender on the main thread, and the file must not change
+    while it is being decoded. A picture that is too heavy or larger than
+    MAX_SIDE (a phone photo, a big screenshot) is shrunk to a copy the brains
+    can read instead of being refused. Temporary Image datablocks and files
+    made for the check are always removed again.
     """
+
+    @staticmethod
+    def kind(data):
+        """The MIME type of PNG / JPEG / WebP bytes by their signature, else None."""
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            if len(data) < 33 or data[12:16] != b"IHDR":
+                return None
+            width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            return "image/png" if 0 < width * height <= MAX_PIXELS else None
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return "image/webp"
+        return None
 
     @staticmethod
     def encode(path):
         """{'data': base64, 'mime': ...} for a decodable, bounded image, else None."""
         try:
-            if not path or not os.path.isfile(path) or os.path.getsize(path) > MAX_IMAGE_BYTES:
+            if not path or not os.path.isfile(path) or os.path.getsize(path) > MAX_SOURCE_BYTES:
                 return None
             with open(path, "rb") as f:
-                data = f.read(MAX_IMAGE_BYTES + 1)
-            if len(data) > MAX_IMAGE_BYTES:
-                return None
-            if data.startswith(b"\x89PNG\r\n\x1a\n"):
-                mime = "image/png"
-                if len(data) < 33 or data[12:16] != b"IHDR":
-                    return None
-                width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
-                if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
-                    return None
-            elif data.startswith(b"\xff\xd8\xff"):
-                mime = "image/jpeg"
-            elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-                mime = "image/webp"
-            else:
+                data = f.read(MAX_SOURCE_BYTES + 1)
+            mime = ImagePayload.kind(data)
+            if len(data) > MAX_SOURCE_BYTES or mime is None:
                 return None
             # Through the module name, so tests can substitute the decoder.
-            if not bridge.call(_decodable_image, path):
+            size = bridge.call(_decodable_image, path)
+            if not size:
                 return None
             with open(path, "rb") as f:
-                if f.read(MAX_IMAGE_BYTES + 1) != data:
+                if f.read(MAX_SOURCE_BYTES + 1) != data:
                     return None     # a reference changed while being decoded
+            longest = max(size) if isinstance(size, tuple) else 0
+            if len(data) > MAX_IMAGE_BYTES or longest > MAX_SIDE:
+                shrunk = bridge.call(_shrunk_image, path)
+                if not shrunk or len(shrunk[0]) > MAX_IMAGE_BYTES:
+                    return None
+                data, mime = shrunk
             return {"data": base64.b64encode(data).decode("ascii"), "mime": mime}
         except (OSError, RuntimeError, ValueError):
             return None
 
     @staticmethod
     def decodable(path):
-        """True when Blender decodes the file into a bounded image with pixels. Main thread."""
+        """(width, height) when Blender decodes the file into a bounded image, else False. Main thread."""
         image = None
         try:
             image = bpy.data.images.load(path, check_existing=False)
-            width, height = image.size
-            if not 0 < width * height <= 16_777_216 or max(width, height) > 8192:
+            width, height = image.size      # reading the size loads the picture
+            if not 0 < width * height <= MAX_PIXELS or not image.has_data:
                 return False
-            return bool(image.has_data and len(image.pixels) and image.pixels[0] >= 0)
+            return (width, height)
         finally:
             if image is not None:
                 bpy.data.images.remove(image)
 
+    @staticmethod
+    def shrunk(path):
+        """(bytes, mime) of a copy at most MAX_SIDE on its longer side, or None. Main thread.
+
+        Pictures with transparency stay PNG so their background is kept; the rest
+        become JPEG, which keeps photos small. A copy still heavier than
+        MAX_IMAGE_BYTES is made smaller again, down to 640 px.
+        """
+        import tempfile
+        image = None
+        handle, out = tempfile.mkstemp(suffix=".img", prefix="blendwme-ref-")
+        os.close(handle)
+        try:
+            image = bpy.data.images.load(path, check_existing=False)
+            width, height = image.size
+            if not 0 < width * height <= MAX_PIXELS:
+                return None
+            keep_alpha = image.depth in (32, 64, 128)
+            image.file_format = "PNG" if keep_alpha else "JPEG"
+            image.filepath_raw = out
+            data = b""
+            for side in (MAX_SIDE, 1200, 900, 640):
+                scale = min(1.0, side / max(width, height))
+                new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+                if new_size != tuple(image.size):
+                    image.scale(*new_size)
+                image.save()
+                with open(out, "rb") as f:
+                    data = f.read(MAX_IMAGE_BYTES + 1)
+                if len(data) <= MAX_IMAGE_BYTES:
+                    break
+            return (data, "image/png" if keep_alpha else "image/jpeg") if data else None
+        finally:
+            if image is not None:
+                bpy.data.images.remove(image)
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+
 
 _image = ImagePayload.encode
 _decodable_image = ImagePayload.decodable
+_shrunk_image = ImagePayload.shrunk
 
 
 class ToolHost:
@@ -154,11 +210,24 @@ class ToolHost:
     # ------------------------------------------------------------------
     # Called by the relay (engines) around each brain turn
     # ------------------------------------------------------------------
+    def set_references(self, paths):
+        """Use these reference pictures from now on (existing files, no repeats, at most
+        MAX_REFERENCES). Returns True when the list changed, so the brain can be told."""
+        chosen = []
+        for path in paths or []:
+            if path and os.path.isfile(path) and path not in chosen:
+                chosen.append(path)
+        chosen = chosen[:MAX_REFERENCES]
+        changed = chosen != self.references
+        self.references = chosen
+        return changed
+
     def reset_task(self, brief, references):
         """A new task: forget per-task counters (the journal keeps the history)."""
         self.task_id = str(uuid.uuid4())
         self.brief = brief or ""
-        self.references = [p for p in references or [] if os.path.isfile(p)][:2]
+        self.references = []
+        self.set_references(references)
         self.show_me_allowed = False
         self.review_pending = False
         self.ok_steps = self.reviewed_at = self.reviews = 0

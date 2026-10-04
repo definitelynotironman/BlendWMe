@@ -79,6 +79,8 @@ class Relay:
         self.entry = None            # the conversation entry being streamed into
         self.limit = None            # {"brain", "text", "resets"} after limit_reached
         self.told = set()            # brains that already got the scene summary in this task
+        self.refs_told = set()       # brains told about the current reference pictures
+        self.refs_changed = False    # the pictures changed during this task (removal is news too)
         self.task_started = False
         self.resumed_project = False  # a reopened .blend: the first turn of each brain gets the brief
         self.handing_over = False
@@ -127,6 +129,9 @@ class Relay:
         if self.is_running():
             # Steering or answering: the tool host hands it to the brain with its next tool result.
             session.add("you", text)
+            if self._update_references(config.get("references", [])):
+                text += "\n" + self._references_note()
+                self.refs_told = {self.running or self.active}
             session.inbox.put(text)
             session.wake()
             return
@@ -140,8 +145,30 @@ class Relay:
             self._new_task(text)
         else:
             journal.record_user_message(text)
+            self._update_references(self.config.get("references", []))
         session.add("you", text)
         self._start(brain, text)
+
+    def _update_references(self, paths):
+        """Pick up pictures attached or removed since the task started. True when they changed."""
+        if not host.set_references(paths):
+            return False
+        journal.record_references(host.references, bridge.call(_current_filepath))
+        self.refs_told = set()
+        self.refs_changed = True
+        count = len(host.references)
+        session.add("info", f"{count} reference picture{'s' if count != 1 else ''} attached."
+                    if count else "Reference pictures removed.")
+        return True
+
+    @staticmethod
+    def _references_note():
+        """What a brain is told about the attached reference pictures."""
+        count = len(host.references)
+        if not count:
+            return "[The user removed the reference pictures. Work from the brief alone.]"
+        return (f"[The user attached {count} reference picture{'s' if count != 1 else ''}. Call look with "
+                "compare_reference=true to see them before you build, and follow them closely.]")
 
     def stop(self):
         """Stop the running brain now and cancel pending scene work."""
@@ -173,6 +200,8 @@ class Relay:
         self.task_started = False
         self.resumed_project = False
         self.told = set()
+        self.refs_told = set()
+        self.refs_changed = False
         self.limit = None
         self.transcript, self.trace = [], []
 
@@ -292,6 +321,8 @@ class Relay:
         for e in self.engines.values():
             e.reset()
         self.told = set()
+        self.refs_told = set()
+        self.refs_changed = False
         self.brief = text
         self.transcript, self.trace = [], []
         self.task_started = True
@@ -327,10 +358,10 @@ class Relay:
             if len(scene) > MAX_SCENE_CHARS:
                 scene = scene[:MAX_SCENE_CHARS] + " ...(call get_scene_info for the rest)"
             parts.append("[Current scene]\n" + scene)
-            refs = host.references
-            if refs:
-                parts.append(f"[The user attached {len(refs)} reference image(s). Call look with "
-                             "compare_reference=true to see them before you build.]")
+        if brain not in self.refs_told and (host.references or self.refs_changed):
+            # Each brain hears once about the current pictures, and again whenever they change.
+            parts.append(self._references_note())
+            self.refs_told.add(brain)
         changes = bridge.call(host.user_changes)
         if changes:
             parts.append("[The user changed the scene since your last turn. These are intentional creative "

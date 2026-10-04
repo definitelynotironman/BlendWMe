@@ -11,7 +11,7 @@ import bpy
 from . import prefs, setup_checks, socket_bridge, workspace
 from .relay import relay
 from .tool_host import label as brain_label
-from .state import (ASKING, DONE, ERROR, IDLE, PAUSED, STATUS_TEXT, THINKING,
+from .state import (ASKING, DONE, ERROR, IDLE, MAX_REFERENCES, PAUSED, STATUS_TEXT, THINKING,
                     WAIT_NEXT, WAIT_USER, WORKING, session)
 
 __author__ = "definitelynotironman"
@@ -55,6 +55,81 @@ class BWM_OT_paste(bpy.types.Operator):
     def execute(self, context):
         """Copy the clipboard text into the prompt."""
         context.window_manager.blendwme.prompt = context.window_manager.clipboard[:12000]
+        return {"FINISHED"}
+
+
+REFERENCE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def _redraw_viewports(context):
+    """Redraw the 3D Viewports so the panel and the sidebar show the new pictures."""
+    for window in getattr(context.window_manager, "windows", []):
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+
+
+class BWM_OT_add_references(bpy.types.Operator):
+    """Attach reference pictures for BlendWMe to follow, from Blender's file browser."""
+    bl_idname = "blendwme.add_references"
+    bl_label = "Add Pictures"
+    bl_description = f"Attach up to {MAX_REFERENCES} reference pictures (PNG, JPEG or WebP) for BlendWMe to follow"
+
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH", options={"SKIP_SAVE"})
+    directory: bpy.props.StringProperty(subtype="DIR_PATH", options={"SKIP_SAVE"})
+    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
+    filter_image: bpy.props.BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+    filter_folder: bpy.props.BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        """Open the file browser; several pictures can be picked at once."""
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        """Add the chosen pictures to the list (no repeats, only images, at most MAX_REFERENCES)."""
+        names = [f.name for f in self.files if f.name]
+        paths = [os.path.join(self.directory, n) for n in names] if names else [self.filepath]
+        refs = context.window_manager.blendwme.references
+        have = {bpy.path.abspath(r.path) for r in refs}
+        added, skipped, full = 0, 0, False
+        for path in paths:
+            path = bpy.path.abspath(path) if path else ""
+            if not path or not os.path.isfile(path) or not path.lower().endswith(REFERENCE_EXTENSIONS):
+                skipped += 1
+                continue
+            if path in have:
+                continue
+            if len(refs) >= MAX_REFERENCES:
+                full = True
+                break
+            refs.add().path = path
+            have.add(path)
+            added += 1
+        if full:
+            self.report({"WARNING"}, f"Up to {MAX_REFERENCES} pictures per task. Remove one to add another.")
+        elif skipped:
+            self.report({"WARNING"}, "Only PNG, JPEG and WebP pictures can be attached.")
+        _redraw_viewports(context)
+        return {"FINISHED"} if added else {"CANCELLED"}
+
+
+class BWM_OT_remove_reference(bpy.types.Operator):
+    """Remove one attached reference picture, or all of them."""
+    bl_idname = "blendwme.remove_reference"
+    bl_label = "Remove Picture"
+    bl_description = "Remove this reference picture (the file itself stays where it is)"
+
+    index: bpy.props.IntProperty(default=-1, description="The picture to remove; -1 removes them all")
+
+    def execute(self, context):
+        """Remove the picture at index, or clear the list when index is -1."""
+        refs = context.window_manager.blendwme.references
+        if self.index < 0:
+            refs.clear()
+        elif self.index < len(refs):
+            refs.remove(self.index)
+        _redraw_viewports(context)
         return {"FINISHED"}
 
 
@@ -183,7 +258,8 @@ class BWM_OT_new(bpy.types.Operator):
         panel.state.screen = "main"
         panel.state.settings_click = None
         props = context.window_manager.blendwme
-        props.prompt = props.reference_1 = props.reference_2 = ""
+        props.prompt = ""
+        props.references.clear()
         return {"FINISHED"}
 
 
@@ -922,6 +998,7 @@ class BWM_PT_main(_Base, bpy.types.Panel):
         row.operator("blendwme.send", text="Send", icon="EXPORT").new_task = False
         if relay.has_conversation() and not relay.is_running():
             row.operator("blendwme.send", text="New Task", icon="ADD").new_task = True
+        prefs.draw_references(col, context)
         if s.mode == "AUTO" and p:
             layout.prop(p, "pace", text="Pace (s a step)")
         if not relay.has_conversation() and not session.log:
@@ -1086,7 +1163,8 @@ from .reader import BWM_OT_reader
 
 classes = (
     BWM_OT_reader,
-    BWM_OT_send, BWM_OT_paste, BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
+    BWM_OT_send, BWM_OT_paste, BWM_OT_add_references, BWM_OT_remove_reference,
+    BWM_OT_pause, BWM_OT_resume, BWM_OT_stop, BWM_OT_next,
     BWM_OT_teach, BWM_OT_undo_step, BWM_OT_new,
     BWM_OT_notebook, BWM_OT_copy_log, BWM_OT_save_log, BWM_OT_open_logs, BWM_OT_show_capture,
     BWM_OT_crash_report, BWM_OT_save_prefs, BWM_OT_dismiss_prefs_note, BWM_OT_open,
