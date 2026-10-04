@@ -681,7 +681,7 @@ check("a minimized panel counts as open but not expanded",
 panel.state.open, panel.state.minimized = False, False
 
 from blendwme.relay import addon_version  # noqa: E402
-check("saved logs carry the manifest's version", addon_version() == "2.2.0", addon_version())
+check("saved logs carry the manifest's version", addon_version() == "2.3.0", addon_version())
 
 # ----------------------------------------------------------------------
 # Export and the launcher

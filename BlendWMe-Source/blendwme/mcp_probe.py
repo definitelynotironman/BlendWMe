@@ -97,7 +97,7 @@ class Probe:
     def initialize(self):
         """The MCP handshake: initialize, then the initialized notification."""
         result = self.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                                             "clientInfo": {"name": "blendwme-setup-check", "version": "2.0.0"}})
+                                             "clientInfo": {"name": "blendwme-setup-check", "version": "2.3.0"}})
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         return result
 

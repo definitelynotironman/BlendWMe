@@ -27,7 +27,7 @@ from .link import BlenderLink, LinkError
 __author__ = "definitelynotironman"
 
 SERVER_NAME = "blendwme"
-VERSION = "2.0.0"
+VERSION = "2.3.0"
 
 INSTRUCTIONS = ("BlendWMe's tools work inside the user's live Blender scene. Build with run_python, see "
                 "with look, teach with teach_step and point_at, and finish with finish. Read the project "
