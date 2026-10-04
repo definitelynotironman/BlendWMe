@@ -203,8 +203,10 @@ Done with one thing and starting another? Press **New task** (in Teach: **New le
 bottom of the panel, or type `/new`. It starts fresh and leaves your scene alone. The journal keeps
 the old task in its history.
 
-Got a reference picture? Add it in Settings > **References for this task** before you send the
-brief. BlendWMe shows it to the brain and checks the build against it.
+Got reference pictures? Press **Add pictures** (the paperclip) under the message box and pick up
+to 8 at once, like front, side and back views. You can add or remove them at any point, even
+halfway through a build. BlendWMe shows them to the brain, checks the build against them, and
+shrinks big photos so they always get through.
 
 Camera giving you grief? Ask "How do I aim the camera at my scene?" in Teach for a short lesson
 with pointers, or press **Do it for me** and it lines the camera up with your view, frames the scene
