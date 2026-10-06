@@ -5,25 +5,28 @@
   </picture>
 </p>
 
-<p align="center"><b>A Blender artist and coach who sits inside your Blender and works with you.</b></p>
+<p align="center"><b>Built in Blender teaching AI</b></p>
 
 <p align="center">
-  Blender 4.2 LTS and 5.x · Windows · Claude Code or Codex · MIT licence
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/badges/python-dark.svg"><img alt="Python 3.10 and newer" src="assets/readme/badges/python-light.svg" height="38"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/badges/blender-dark.svg"><img alt="Blender 4.2 LTS and 5.x" src="assets/readme/badges/blender-light.svg" height="38"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/badges/brains-dark.svg"><img alt="Brains: Claude Code or Codex" src="assets/readme/badges/brains-light.svg" height="38"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/badges/version-dark.svg"><img alt="Version 2.3.0" src="assets/readme/badges/version-light.svg" height="38"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/badges/licence-dark.svg"><img alt="MIT licence" src="assets/readme/badges/licence-light.svg" height="38"></picture>
 </p>
 
-## What is this & Why does it exist
+## Why though?
 
-Let's get one thing out of the way: I never made the donut. The only thing I ever tried to model in
-Blender was a farmhouse, and that project never really got to where I wanted it to be. Blender's
-capabilities are ridiculous, and that was exactly the problem. I found myself stuck in tutorial
+The only thing I ever tried to model in Blender was a farmhouse, and that project never really got to where I wanted it to be. Blender's
+capabilities are ridiculous, and that is kinda a problem.I have too much going on to learn it in nearly as much detail to deem myself confident. I found myself stuck in tutorial
 hell, always having to search for a YouTube video to get any Blender project done.
 
-I'm pretty good with other 3D modelling tools. Fusion 360 is the one I use most often, and
+It's not eve that i can't 3D model, I'm pretty good with other 3D modelling tools. Fusion 360 is the one I use most often, and
 SolidWorks is where I started off. But I think those constructive CAD tools are more intuitive to
 learn, because you usually build things up from simple shapes. Blender, however, seems to have been
-made as a creative tool with a much greater horizon to aim for. Seriously, it's actually crazy what
-it can do. The thing is, it feels "destructive", if I can say that, and that's the major difference
-between it and the tools I mentioned. It made it much harder for me to change my way of thinking:
+made as a creative tool with a much further horizon as a target. Seriously, it's actually crazy what
+it can do. It feels "destructive", if I can say that, and that's the major difference
+between it and the tools I have learned. It made it much harder for me to change my way of thinking:
 from putting squares and patterns together to make gearboxes, to moulding a shape I don't even know
 exists yet from a circle. It's definitely a skill issue, and one I plan to fix.
 
@@ -44,7 +47,7 @@ back whenever you like. It runs on the Claude or ChatGPT plan you already pay fo
 official Claude Code and Codex programs. No extra API bill sneaking up on you.
 
 The trap, of course, is getting stuck in AI hell with Blender instead. Which is likely if it's used
-the way vibe coding is used by people who only learned to code once a computer could do it 100x
+the way vibe coding is used by people who only learned to code in the time a computer could do it 100x
 better and faster than they ever will [I am people. People is in fact me]. But that's not how I intend to use this
 tool. AI exists, and it probably won't go away any time soon. Zoomed out, it hasn't really come to
 make things better for most of us, unless we try to use it that way. The creative space is the
@@ -57,382 +60,314 @@ For the creatives: I feel the people who will get the most out of this tool are 
 most creative with it, and that's something neither I nor any AI can take away from you. So I hope
 you use it in a way that gets the most out of you.
 
-<!-- HERO: a 10 to 20 second GIF of Teach mode with the blinking block and radar ring. The maintainer records this. Path: docs/media/hero.gif -->
+<p align="center">
+  <img src="assets/readme/hero-codex-cottage.png" alt="Blender 4.2 with the BlendWMe panel open on the right. Codex has built a small cottage with a red roof, a fence and a grass plot, and the panel shows its plan with the first parts ticked off." width="900">
+</p>
+
+## The project at a glance
+
+I built BlendWMe on my own in October 2026. It is a Blender add-on written in Python. For version 2.3.0 I rebuilt the code around classes. The table shows the code before (2.2.0) and after (2.3.0).
+
+| Add-on and tools server | 2.2.0, before | 2.3.0, after |
+|---|---:|---:|
+| Classes I designed | 28 | 88 |
+| Functions left loose in files | 493 | 203 |
+| Functions and classes with a short description | 40 % | 100 % |
+| Lines of Python | 14,100 | 17,476 |
+| Public `bwm` names that changed | | 0 of 61 |
+| Automated checks passing | | 610 |
+
+**Terms used in this README**
+
+- <sub><i><b>Brain:</b> the AI doing the thinking. This is Claude Code or Codex.</i></sub>
+- <sub><i><b>MCP:</b> the standard way an AI program uses outside tools.</i></sub>
+- <sub><i><b>bwm:</b> my set of modelling helpers that the AI's code calls, like <code>bwm.sphere</code>.</i></sub>
+- <sub><i><b>Main thread:</b> the only part of Blender that is allowed to change the scene.</i></sub>
+- <sub><i><b>Journal:</b> the project's memory, saved inside the .blend file.</i></sub>
 
 ## Contents
 
-- [What it does](#what-it-does)
-- [How it works](#how-it-works)
-- [Requirements](#requirements)
-- [Install](#install)
-- [Quick start](#quick-start)
-- [Using BlendWMe](#using-blendwme)
-- [Keyboard shortcuts](#keyboard-shortcuts)
-- [Where things are saved](#where-things-are-saved)
-- [Troubleshooting](#troubleshooting)
-- [Limitations](#limitations)
-- [Privacy and security](#privacy-and-security)
-- [Project status](#project-status)
-- [Contributing and feedback](#contributing-and-feedback)
-- [Licence and credits](#licence-and-credits)
+1. [What it does](#what-it-does)
+2. [How it works](#how-it-works)
+3. [How the code is organised](#how-the-code-is-organised)
+4. [Keeping your scene safe](#keeping-your-scene-safe)
+5. [Testing](#testing)
+6. [Results](#results)
+7. [What did not work](#what-did-not-work)
+8. [Limits and next steps](#limits-and-next-steps)
+9. [Repo structure](#repo-structure)
+10. [Install and run](#install-and-run)
+11. [Using BlendWMe](#using-blendwme)
+12. [Privacy](#privacy)
+13. [Credits and licence](#credits-and-licence)
 
 ## What it does
 
-There are two ways to work. Pick one with the tabs at the top of the panel, and switch whenever
-you feel like it.
+BlendWMe has two modes.
 
-- **Auto.** It writes a plan, builds it part by part, and looks at the result from a few angles
-  before calling anything done. The plan shows up as a checklist. Press **Pause** or **Take control**
-  any time, move or reshape whatever you like, then **Resume**: it notices your changes and builds
-  on your version instead of "fixing" it back.
-  <!-- SCREENSHOT: Auto mode with the plan card. Path: docs/media/auto.png -->
-- **Teach.** You drive, it coaches. One action at a time, under 20 words, with the "why" underneath
-  for when you're curious. A blinking red block means "your move", a radar ring circles the tab or
-  object to look at, and a pencil circle marks the part of the window. Press **Check my work** when
-  you're done. Stuck? **Hint** gives you a nudge, **Skip this step** moves on (it remembers you
-  haven't practised that one yet), and **Do it for me** does it while you watch. No judgement.
-  Okay, a little.
-  <!-- SCREENSHOT: Teach mode with the cue card and the radar ring on the Modifier tab. Path: docs/media/teach.png -->
+- **Auto.** The AI makes a plan and builds it one part at a time. It looks at the result before it says it is done. You can pause it, change things yourself and let it carry on from your version.
+- **Teach.** You do the work and the AI coaches you. It gives one short step at a time and points at the real button in Blender. Press **Check my work** when you are done.
 
-Two brains, one project:
-
-- Use **Claude** (Claude Code on your Claude plan) or **Codex** (Codex CLI on your ChatGPT plan).
-- When one of them hits its usage limit, **hand over** to the other. BlendWMe keeps a journal of the
-  project (I call it "the baton"), so the next brain knows the brief, the plan, what you changed,
-  what was giving the last one trouble, and what's left. Think of it as a shift change where
-  someone actually left notes.
+You can use Claude Code or Codex. If one runs out of usage, you can hand the project to the other. The journal tells the new one what has been done and what is left.
 
 ## How it works
 
 <p align="center">
-  <img src="assets/readme/how-it-works.svg" alt="How BlendWMe works: you type in the panel, BlendWMe starts Claude or Codex, the AI uses only BlendWMe's tools over a local link, and every step goes into the project journal" width="820">
+  <img src="assets/readme/how-it-works.svg" alt="How BlendWMe works: you send a message, BlendWMe asks Claude or Codex, the brain uses BlendWMe's tools to build in your scene, every step goes into the journal, and the journal hands the baton to the other brain on a handover." width="860">
 </p>
 
-When you send a message, the add-on starts Claude Code (`claude -p`) or Codex (`codex exec`) in a
-workspace folder on your computer. The brain can only work through BlendWMe's tools: run a Python
-step on the live scene, look at the viewport, read the scene, write a plan, teach a step, point at
-a control. The tools server hands each call to Blender over a local connection, and Blender runs it
-with its own undo step. Before each step Blender also saves a backup copy of the scene, so a step
-that goes wrong can be put back. Every step and every handover goes into the project journal.
+When you send a message, BlendWMe starts Claude Code or Codex on your computer. The AI can only use BlendWMe's tools. It can run a small piece of Python on the scene, take pictures of the scene, read the scene, write a plan or point at a button.
 
-You sign in inside Claude Code and Codex themselves. BlendWMe never sees your login. Everything runs
-on your computer except the AI's thinking.
+Each tool call travels over a private connection on your computer to Blender. Blender runs it and saves an undo step and a backup first. Every step is written into the journal.
 
-## Requirements
+## How the code is organised
 
-| You need | Notes |
+This is the main technical part of the project. Before 2.3, the code was loose functions sharing global values across 40 files. It was hard to tell which code owned which data. In 2.3 I grouped the code into classes. Each class owns its own data and the functions that change it.
+
+### The class map
+
+<p align="center">
+  <img src="assets/readme/class-map.png" alt="A map of the main BlendWMe classes in seven groups: the panel and sidebar, the agent and its engines, the journal, the link into Blender, safe scene work, seeing and knowing, and the bwm modelling kit." width="900">
+</p>
+
+I split big files by job, not by size. For example, the panel became four classes. `PanelState` remembers things between redraws, `Painter` draws one frame, `Placement` decides where the panel sits and `Motion` handles its animation.
+
+### Classes inside, old names outside
+
+A lot of code already used the old names. The AI's own Python calls `bwm.sphere(...)`. Blender needs the exact same timer object every time. The tests swap old names for fake versions. Renaming anything would break all of that.
+
+So I kept every old name and pointed it at one shared object.
+
+<p align="center">
+  <img src="assets/readme/facade.png" alt="Three boxes. Callers that did not change point at module names, and the module names point at the classes that own the data." width="900">
+</p>
+
+```python
+dispatcher = MainThreadDispatcher()   # one shared object
+call = dispatcher.call                # the old name still works
+```
+
+To prove nothing broke, I printed all 61 `bwm` names and their inputs inside Blender before and after the change. They are the same.
+
+### One parent class, two brains
+
+Claude Code and Codex are different programs. The rest of BlendWMe should not care which one is running. So both are child classes of one parent class. This is called inheritance.
+
+```mermaid
+classDiagram
+    class Engine {
+        +start(message)
+        +interrupt()
+        +reset()
+    }
+    class ProcessEngine {
+        +build(message)
+        +parse(line)
+    }
+    class ClaudeCodeEngine
+    class CodexEngine
+    Engine <|-- ProcessEngine
+    ProcessEngine <|-- ClaudeCodeEngine
+    ProcessEngine <|-- CodexEngine
+```
+
+`ProcessEngine` does the shared work. It starts the program, reads its output line by line and handles Stop. Each child only says how to start its program (`build`) and how to read its output (`parse`). Adding a third brain would mean one new child class with two functions.
+
+I used the same idea for furniture. `PieceBuilder` is the parent, and `ArchitectureKit` and `FurnitureKit` are its children. So a door and a bed are built and placed the same way.
+
+### Building objects from smaller parts
+
+Most classes are made from smaller parts that are passed in.
+
+```python
+executor = StepExecutor(StepGuards(), Rollback(), ErrorReport())
+```
+
+`StepGuards` decides what may run and for how long. `Rollback` undoes a failed step. `ErrorReport` explains an error to the AI. `StepExecutor` only decides the order. Small parts are easier to test, because a test can swap one for a fake.
+
+### Keeping data and saving apart
+
+`Journal` only holds the data, like the plan, the steps and the notes. `JournalStore` only saves and loads it. This split helped me fix a real bug. If a new step arrived while the journal was saving, that step could be lost. Now each change gets a number, and the store only marks the journal as saved if the number did not change while it was writing.
+
+### Where I did not use classes
+
+| Area | Why it stays as plain functions |
 |---|---|
-| Blender 4.2 LTS or newer | Tested with 5.2.2. |
-| Windows 10 or 11 | Tested on Windows 11. macOS and Linux are untested (brave souls welcome). |
-| Claude Code, signed in with a Claude plan **or** Codex CLI, signed in with a ChatGPT plan | One is enough. Both lets you use handover. Claude Code needs a Pro, Max, Team or Enterprise plan. |
-| Python 3.10 or newer for the tools server | Optional. BlendWMe installs the tools server into its own environment with any Python it finds, or with Blender's own Python. |
+| Drawing helpers | Blender's drawing settings are global. A class would add nothing. |
+| Blender timers and handlers | Blender needs the exact same object each time it adds or removes one. |
+| Small helpers | They take a value and give one back. They hold no data. |
+| Test files | Blender runs them as scripts. Their fake parts are classes. |
 
-## Install
+## Keeping your scene safe
 
-1. **Install Claude Code and sign in.** Open PowerShell and run the official installer
-   ([docs](https://code.claude.com/docs/en/setup)):
+The AI's code runs inside your open Blender project, so safety matters most.
 
-   ```powershell
-   irm https://claude.ai/install.ps1 | iex
-   ```
+- **One queue.** The AI thinks in the background, but only Blender's main thread may change the scene. Every change waits in a queue. If you start a new task or open another file, old changes in the queue are thrown away.
+- **A backup before every step.** Blender saves an undo step and a backup copy first. If a step fails, the scene is put back.
+- **Time and size limits.** A step stops after 15 seconds, and very heavy shapes are refused before they are made. This stops Blender from freezing.
+- **Small fixes, not rejections.** The AI often uses old Blender names or guesses a setting. BlendWMe fixes small slips and tells the AI the right name. If it cannot tell what was meant, it refuses and lists the real options.
+- **Proof before "done".** In Auto, the AI cannot finish until every part of the plan is done and it has looked at the finished scene.
+- **Teach checks never run code.** A lesson check only reads simple facts, like which object is selected. It never changes your scene.
 
-   Open a new terminal, run `claude`, and follow the browser prompts to sign in with your Claude plan.
-2. **(Optional) Install Codex CLI and sign in.** In PowerShell
-   ([official README](https://github.com/openai/codex)):
+<p align="center">
+  <img src="assets/readme/look-contact-sheet.png" alt="Four views of a small low poly cottage with a red roof and a stone path in a two by two grid." width="420">
+</p>
 
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
-   ```
+## Testing
 
-   Or, if you have Node.js: `npm install -g @openai/codex`. Then run `codex` and choose
-   **Sign in with ChatGPT**.
-3. Download `blendwme-2.3.0.zip` from [Releases](../../releases). Don't unzip it. Blender wants
-   the zip.
-4. In Blender: **Edit > Preferences > Get Extensions**, open the drop-down menu in the top right,
-   choose **Install from Disk**, and pick the zip.
-5. **Save Preferences** (the menu at the bottom left of the Preferences window > Save Preferences).
-   Skip this and Blender forgets BlendWMe the next time it starts. Ask me how I know.
-6. Open BlendWMe: click the **BlendWMe** button in the 3D Viewport's header (top right, next to the
-   overlays).
-7. Click **Settings** at the bottom of the panel. The checks run by themselves. If the tools server
-   is missing, press **Install the tools server**. You want a ✓ on every line.
+<p align="center">
+  <img src="assets/readme/test-checks.png" alt="Bar chart of the 15 test suites and how many checks each one passed, 610 in total." width="760">
+</p>
+
+The tests run inside real Blender with no window. They do not use a real AI. A small fake program plays the part of Claude Code or Codex, so the whole path from the AI to the scene is tested. Tricky timing problems are tested on purpose by holding a step back and then changing the task at an exact moment.
+
+## Results
+
+<p align="center">
+  <img src="assets/readme/panel-2-3.png" alt="The BlendWMe 2.3 panel in Blender 5.2.2 with Auto and Teach tabs, a message box and two example ideas." width="760">
+</p>
+
+Version 2.3.0 has two modes, two brains with handover, a journal saved in the .blend and a panel inside Blender. All 610 checks pass, and every function and class has a short description.
+
+<p align="center">
+  <img src="assets/readme/handover.png" alt="The BlendWMe panel during a lesson. Claude has handed over to Codex, which reads the journal and carries on." width="560">
+</p>
+
+Above, Claude was teaching a lesson and handed it to Codex. Codex read the journal, looked at the scene and carried on from the same step.
+
+## What did not work
+
+| What I tried | What happened |
+|---|---|
+| Version 1 used one AI model paid per use (Nemotron 3 Ultra on Nebius) | Only 8 of 19 test builds finished. Version 2 moved to Claude Code and Codex on plans people already pay for. |
+| A third "Together" mode | It overlapped with Auto. It became Pause and Resume inside Auto. |
+| Teach checks written as Python by the AI | They could change the scene. They became simple read-only facts. |
+| Quietly ignoring unknown settings | The AI thought wrong builds had worked. Now it gets a clear error. |
+| Saving only part of the scene as a backup | It reopened empty. The backup is now a full copy of the file. |
+
+## Limits and next steps
+
+The AI still makes mistakes. It is good at scenes and props, but weak at characters, rigging and sculpting. Only four technique cards are switched on for now. I have only tested on Windows 11 with Blender 5.2.2. Full runs on real Claude and ChatGPT accounts are still in progress.
+
+Next, I want to build characters step by step, from reference pictures to a posed model. I also want to measure how close a build is to the reference picture.
+
+## Repo structure
+
+```text
+BlendWMe/
+├── BlendWMe-Source/
+│   ├── blendwme/          # the Blender add-on
+│   │   ├── engines/       # Claude Code and Codex
+│   │   ├── skills/        # technique cards the AI can read
+│   │   └── *.py           # panel, journal, tools, safety and the bwm kit
+│   ├── blendwme_mcp/      # the tools server the AI talks to
+│   ├── tests/             # 16 test files and the fake AI
+│   └── tools/package.py   # builds the install zip
+├── assets/                # logos and README pictures
+├── CHANGELOG.md
+└── README.md
+```
+
+## Install and run
+
+You need Windows 10 or 11, Blender 4.2 or newer, and Claude Code (Claude plan) or Codex (ChatGPT plan). One is enough. Having both lets you hand over.
+
+```powershell
+# Install Claude Code, then run `claude` once to sign in
+irm https://claude.ai/install.ps1 | iex
+
+# Optional: install Codex, then run `codex` and choose Sign in with ChatGPT
+powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+```
+
+1. Download `blendwme-2.3.0.zip` from [Releases](../../releases). Do not unzip it.
+2. In Blender, open **Edit > Preferences > Get Extensions**, use the menu at the top right, choose **Install from Disk** and pick the zip.
+3. Press **Save Preferences**, or Blender forgets BlendWMe next time.
+4. Click the **BlendWMe** button at the top of the 3D Viewport, then **Settings**. If the tools server is missing, press **Install the tools server**.
+
+Try it with `Model me a simple ice cream cone` in Auto, or `Teach me to bevel the table edges` in Teach.
 
 <details>
-<summary><b>Make Blender find Claude Code and Codex</b></summary>
+<summary><b>Build and test from source</b></summary>
 
-Blender started from the Start menu doesn't always see the same PATH as your terminal. BlendWMe
-looks for `claude` on the PATH and in `%USERPROFILE%\.local\bin`, where the official installer puts
-it. If the check still can't find a program:
-
-1. Open a terminal and run `where claude` (or `where codex`). Copy the path it prints.
-2. In BlendWMe: **Settings > Advanced**. Paste the path into **Claude Code program** (or
-   **Codex program**).
-3. Run the checks again.
+```powershell
+cd BlendWMe-Source
+python tools/package.py      # makes dist/blendwme-<version>.zip
+blender -b --factory-startup --python-exit-code 1 --python tests/test_kit_headless.py
+```
 
 </details>
 
 <details>
-<summary><b>Upgrading</b></summary>
+<summary><b>Blender cannot find Claude Code or Codex</b></summary>
 
-Install the new zip the same way (Install from Disk). It replaces the old version. Restart Blender.
-Your journal, logs and settings stay where they are.
+Run `where claude` (or `where codex`) in a terminal and copy the path. Paste it into **Settings > Advanced > Claude Code program** (or **Codex program**) and run the checks again.
 
 </details>
-
-## Quick start
-
-1. Open BlendWMe with the **BlendWMe** button in the viewport header. You get one input, three example ideas and the mode tabs.
-2. Stay on **Auto**. Type `Model me a simple ice cream cone`, press **Enter**, lean back, and watch
-   the plan tick off.
-3. Press **New task** at the bottom of the panel and try `Make a cosy cottage with a red tiled roof`.
-   Halfway through, press **Pause**, move or reshape something yourself, then **Resume**. BlendWMe
-   notices and keeps your change. Yes, even if your chimney is crooked. It's *your* chimney.
-4. Switch to **Teach** and type `Teach me to bevel the table edges` (on a scene with a table or a
-   box). Follow the card and press **Check my work** when you've done it.
 
 ## Using BlendWMe
 
-### Modes
-
-| Mode | Who does the work | Try saying |
-|---|---|---|
-| Auto | The AI, part by part, checking as it goes. You can pause and take over any time | `A cosy low poly cottage with a stone base and a small path` |
-| Teach | You, guided one action at a time | `Teach me to bevel the table edges` |
-
-Done with one thing and starting another? Press **New task** (in Teach: **New lesson**) at the
-bottom of the panel, or type `/new`. It starts fresh and leaves your scene alone. The journal keeps
-the old task in its history.
-
-Got reference pictures? Press **Add pictures** (the paperclip) under the message box and pick up
-to 8 at once, like front, side and back views. You can add or remove them at any point, even
-halfway through a build. BlendWMe shows them to the brain, checks the build against them, and
-shrinks big photos so they always get through.
-
-Camera giving you grief? Ask "How do I aim the camera at my scene?" in Teach for a short lesson
-with pointers, or press **Do it for me** and it lines the camera up with your view, frames the scene
-or sets the lens.
+- Press **New task** or type `/new` to start fresh. Your scene stays as it is.
+- Press **Add pictures** (the paperclip) to give the AI up to 8 reference pictures.
+- Drag the logo row to move the panel. Double-click it for a smaller view.
+- **Settings > Theme** has five looks. **Blender UI** moves BlendWMe into Blender's own sidebar (**N > BlendWMe**).
+- Open the **Journal** from the bottom of the panel to see every step.
 
 <details>
-<summary><b>The tools the brains use</b></summary>
-
-| Tool | What it's for |
-|---|---|
-| `run_python` | Run one Python step on the live scene, with an undo step and a backup copy. A failed step is rolled back |
-| `look` | Pictures of the scene: several angles, the viewport, or through the camera |
-| `get_scene_info`, `get_object_info` | Exact facts: sizes, positions, modifiers, materials |
-| `plan` | The build checklist, and marking parts done or skipped with a reason |
-| `teach_step` | One action for you to do, with a pointer, and a check that sees when it's done |
-| `point_at` | A radar ring or pencil circle on an object, a tab or a part of the window |
-| `ask_user` | A short question when a wrong guess would waste work |
-| `load_skill`, `inspect_api` | Technique cards and Blender API lookups |
-| `finish` | End the task. Refused while plan parts are still open, before a fresh look at the result, or after a "needs work" review |
-| `handoff_note`, `read_journal` | The baton between Claude and Codex |
-
-</details>
-
-### The panel: move it, shrink it, tuck it away
-
-The panel sits in the top right of the viewport, next to the navigation gizmo (never on top of it),
-and is only as tall as what it has to show. If it's still in the way:
-
-- **Move it.** Drag the logo row anywhere, in any direction. It snaps to the edges and corners of
-  the viewport; hold **Ctrl** to place it freely, press **Esc** to put it back mid-drag. It remembers
-  the nearest corner, so it stays put when you open the sidebar or resize the window.
-- **Resize it.** Drag the little grip in the opposite corner. Double-click the grip for the normal
-  size.
-- **Three views.** Double-click the logo row for **Compact** (just what's happening, the buttons and
-  the input). The square button makes the panel full height, or opens Full from Compact. The line
-  button folds it into a small bar: the AI keeps working, the bar shows what it's doing, and it
-  blinks when it's your turn. **Take control** folds it for you, because if you're taking over, you
-  probably want to see what you're doing. On a small screen the panel goes Compact by itself.
-- **Size things to taste.** Settings > Panel has **Panel size** (everything at once), **Text size**
-  and **Icon size**. The default is 75 %, on top of Blender's own Resolution Scale.
-- **Put the panel back on the right** in Settings > Panel undoes all your moving and resizing.
-
-Typing works like a Blender text field: Shift+arrows select, Ctrl+arrows jump words, Ctrl+C / X / V,
-Ctrl+Z / Ctrl+Shift+Z. Click to put the caret where you want it.
-
-### Reading long answers
-
-Replies show **bold**, bullet lists and `code`. Long ones fold behind **Read more**, and **Full
-text** at the bottom of the panel opens a reader with the whole conversation. **Draft** opens the
-message you're typing. In the reader you can scroll, select with the mouse, Ctrl+A to select all,
-Ctrl+C to copy, and Shift+Ctrl+C to copy the original text with its formatting marks.
-
-### The plan
-
-In Auto the brain writes a plan first. Each part ticks off when it's built. A part can also be
-marked done after the brain has actually looked at it, or skipped with a reason you can read. A
-step that changed nothing doesn't tick anything off. The task can only finish when every part is
-settled and the brain has taken a fresh look at the finished result. If the art director review
-says the work still needs work, it has to fix it first. So no more "Done! ✓" with half the house
-missing. A finished, stopped or new task closes the plan card.
-
-### Pausing and taking control
-
-**Pause** (or **Esc**) stops the AI before its next action. Move, edit or delete anything you like,
-then press **Resume**. The AI is told what you changed and keeps it, even if you renamed things.
-**Esc** twice stops the task. Everything already built stays in your scene, and **Undo step**
-removes the last AI step.
-
-Your own work is protected: when the AI changes one of your materials or a mesh that other objects
-share, it works on a copy, and when it rebuilds its own parts it keeps anything you attached to
-them. Very heavy geometry and runaway scripts are stopped before they freeze Blender.
-
-### Handover
-
-The brain card has a **Hand over** button. The working brain writes a short handoff note, then the
-other brain starts with the journal brief and a fresh look at the scene. When a brain hits its usage
-limit, a card offers the handover. In Auto, BlendWMe can hand over by itself (an option in
-Settings).
-
-### The journal
-
-Open it from the panel footer (**Journal**). It shows the brief, every step signed by whoever made
-it, the handovers, who made which objects, the problems (open and solved), and what's next.
-**Open as Blender text** shows the raw journal; **Export** saves a copy to the logs folder.
-
-The journal follows the file you saved. Save, let the AI build more, close without saving, reopen:
-it remembers the saved version, not the work you threw away. It also notices when a reference
-picture has moved or gone missing.
-
-### Themes
-
-Settings > Theme has five:
-
-| Theme | Looks like |
-|---|---|
-| **Graphite** | White paper and pencil. Red only when it's your turn |
-| **Red** | Red on paper. Bold and warm |
-| **Blender Grey** | Blender's own dark grey, for people who think white panels are an attack |
-| **2000s** | Made for Blender's **Theme 2000**: Luna blue title bar, navy shadow, orange when it's your turn |
-| **Blender UI** | No drawn panel at all. See below |
-
-Animations follow your system's "reduce motion" setting and Blender's **Smooth View** (set it to 0
-and the panel stops animating too). You can force them on or off in Settings > Advanced.
-
-### Blender UI mode
-
-Pick the **Blender UI** theme and BlendWMe drops its own panel and moves into the sidebar (**N** >
-**BlendWMe** tab), built from Blender's normal buttons like any other add-on. Same modes, same
-brains, same journal, same handover: the status, the card for your turn, the plan, the conversation
-and the settings, all in Blender's look and your Blender theme. Typing uses Blender's own text field,
-so input methods for other languages work there too.
-
-The pointers in the viewport stay (radar rings, pencil circles, notes), drawn in your theme's
-colours. The header button opens and closes the sidebar tab. Switch back to any
-other theme and the floating panel returns where you left it.
-
-## Keyboard shortcuts
+<summary><b>Keyboard shortcuts</b></summary>
 
 | Key | Action |
 |---|---|
 | Enter | Send |
 | Shift+Enter | New line |
-| Esc | Pause the AI while it works. Otherwise close the top card |
+| Esc | Pause the AI, or close the top card |
 | Esc twice | Stop |
-| Up / Down | Previous / next message you sent |
-| Shift+Tab | Next mode: Auto, Teach |
-| Ctrl+L | Clear the conversation view (the journal keeps everything) |
-| `/` | Commands: `/handover`, `/look`, `/undo`, `/journal`, `/logs`, `/settings`, `/new`, `/stop`, `/help` |
-| `?` | Show all shortcuts (in an empty input) |
+| Up / Down | Your earlier messages |
+| Shift+Tab | Switch mode |
+| `/` | Commands like `/new`, `/look`, `/undo` and `/help` |
 
-Blender already uses most of these keys somewhere else, so they only act while the BlendWMe panel
-has focus. Esc while the AI works also pauses it from the viewport, except while an animation plays.
-Change the keys in **Edit > Preferences > Keymap > Window**, under the "BlendWMe Panel Key" items.
+The keys only work while the BlendWMe panel is active.
 
-## Where things are saved
+</details>
+
+<details>
+<summary><b>Where things are saved</b></summary>
 
 | What | Where |
 |---|---|
-| Project journal | Inside the .blend as the Text block `BlendWMe Journal`, and as `<file name>_blendwme\journal.json` next to the .blend |
-| BlendWMe logs | `Documents\BlendWMe Logs`: `session_*.log`, one log per task, `python-crash-trace.txt` and crash reports |
-| Workspace for Claude Code and Codex | `Documents\BlendWMe Workspace`: their instructions, the tools server settings and its Python environment |
-| Blender crash log (Windows) | `%TEMP%\blender.crash.txt` |
+| Journal | Inside the .blend, and as a `journal.json` next to it |
+| Logs | `Documents\BlendWMe Logs` |
+| AI workspace | `Documents\BlendWMe Workspace` |
 
-Type `/logs` in the panel, or use Settings > Advanced > **Open Logs Folder**. Both folders can be
-changed in Settings > Advanced.
+</details>
 
-## Troubleshooting
+<details>
+<summary><b>Troubleshooting</b></summary>
 
 | Problem | Fix |
 |---|---|
-| BlendWMe vanished after Blender crashed | Enable it again in Preferences > Add-ons, then **Save Preferences**. BlendWMe's Settings remind you while preferences are unsaved |
-| The panel is in the way | Double-click the logo row for Compact, fold it into the bar (line button), drag it somewhere else, shrink it in Settings > Panel, or switch to the **Blender UI** theme |
-| "Claude is not signed in" or "Codex is not signed in" | Open a terminal, run `claude` or `codex`, and sign in. Then run the checks again |
-| A program is not found | See [Make Blender find Claude Code and Codex](#install) |
-| "Claude's limit is reached" | Press **Hand over to Codex**, or wait for the reset time shown on the card |
-| The tools server check fails | Settings > **Install the tools server** |
-| The AI's result looks wrong | **Undo step**, or ask it to look again (`/look`) and fix it. Or pause and fix it yourself; it keeps your version |
-| Blender crashed | Settings > Advanced > **Make Crash Report**. It zips BlendWMe's latest logs, the Python crash trace and Blender's crash log. For a detailed run, start `blender_debug_log.cmd` from the Blender install folder and repeat the steps |
+| BlendWMe vanished after a crash | Turn it on again in Preferences > Add-ons and press **Save Preferences** |
+| "Not signed in" | Run `claude` or `codex` in a terminal and sign in |
+| "Limit is reached" | Press **Hand over**, or wait for the reset time |
+| The result looks wrong | Press **Undo step**, or pause and fix it yourself |
+| Blender crashed | Use **Settings > Advanced > Make Crash Report** and attach it to an [Issue](../../issues) |
 
-## Limitations
+</details>
 
 > [!WARNING]
-> The AI runs Python in your Blender. Save your work often. Every AI step has its own undo step and
-> a backup copy, and a failed step is rolled back, but a wrong step can still change your scene.
+> The AI runs Python in your Blender. Save your work often. Every step has an undo step and a backup, but a wrong step can still change your scene.
 
-Honest list, because you'll find out anyway:
+## Privacy
 
-- The AI makes mistakes. It's good at scenes and props. Complex characters, rigging, simulation and
-  detailed sculpting are still weak, and that's where most of my work is going next.
-- Tested on Blender 5.2.2 and Windows 11 only.
-- BlendWMe is tested end to end with stand-in programs in place of Claude Code and Codex (the
-  real tools server, the real Blender, the real journal). Full runs on real Claude and ChatGPT
-  accounts are in progress. Codex's command-line flags follow its official documentation.
-- Only four technique cards are switched on for now: the cottage, the room, the ice cream cone and
-  camera help. The others stay off until their steps have been tested in Blender.
-- The backup copy before each step costs a moment on big scenes. It hasn't been measured on very
-  large files yet.
-- Teach pointers to the Properties tabs mark the tab column, not one exact button.
-- Some laptops have no numpad. Teach steps that use numpad keys also give the menu path.
-- Not affiliated with Blender, Anthropic or OpenAI. Just a fan of all three.
+- BlendWMe stores no passwords or keys. You sign in inside Claude Code and Codex.
+- The tools server only talks to Blender on your own computer, with a new secret code each time Blender starts.
+- The AI only gets your messages, facts about the scene and the pictures it asks for.
+- There is no tracking. The journal and logs stay on your computer.
 
-## Privacy and security
+## Credits and licence
 
-- BlendWMe stores no passwords, API keys or logins. It removes API-key environment variables before
-  starting Claude Code or Codex, so they always use your plan sign-in.
-- The tools server only talks to Blender on this computer (`127.0.0.1`), with a random token that
-  changes every time Blender starts.
-- Claude Code runs with its own built-in tools turned off; only BlendWMe's tools are allowed.
-  Codex runs in a read-only sandbox.
-- What the AI receives: your messages, scene information, and the viewport pictures it asks for.
-- No telemetry. The journal and the logs stay on your computer.
-
-## Project status
-
-- **2.3.0 is where BlendWMe starts.** Two modes, two brains with handover, a project journal that
-  lives with your .blend, and a panel that sits inside Blender. Everything from here builds on it.
-- How it began: 2.0.0 was the first version where Claude Code and Codex could work inside Blender
-  through BlendWMe's tools and pass a project to each other. 2.3.0 grew out of that.
-- What's next:
-  - A character pipeline: references, blockout, refinement, materials, rig and pose.
-  - Measured checks against your reference image (silhouette comparison), so "looks like the
-    reference" becomes a number, not a vibe.
-  - More tested technique cards: sculpting, animation, Grease Pencil, geometry nodes.
-  - Teaching replay: turn a finished build into a lesson you can follow.
-
-## Contributing and feedback
-
-Found a bug? Open an [Issue](../../issues). It helps a lot if you attach:
-
-1. The crash report zip (Settings > Advanced > Make Crash Report), or the newest
-   `session_*.log` from the logs folder.
-2. Your Blender version and Windows version.
-3. What you did before it broke, and which brain and mode you were using.
-
-Ideas and "it would be cool if" messages are welcome too.
-
-## Licence and credits
-
-- BlendWMe is released under the [MIT licence](BlendWMe-Source/blendwme/LICENSE).
-- [MCP for Blender](https://github.com/ahujasid/mcp-for-blender) by Siddharth Ahuja (MIT licence)
-  for the local socket pattern and the viewport capture technique. Its notice is in
-  [LICENSE-THIRD-PARTY](BlendWMe-Source/blendwme/LICENSE-THIRD-PARTY).
-- Fonts: Archivo and Archivo Black (Omnibus-Type) and Patrick Hand (Patrick Wagesreiter), SIL Open
-  Font License 1.1.
-- Blender is a registered trademark of the Blender Foundation. Claude and Claude Code are trademarks
-  of Anthropic. ChatGPT and Codex are trademarks of OpenAI. BlendWMe is an independent project and
-  is not affiliated with or endorsed by them.
-- Made by [definitelynotironman](https://github.com/definitelynotironman), whose farmhouse is
-  still not finished.
+- Made by [definitelynotironman](https://github.com/definitelynotironman). MIT licence, see [LICENSE](BlendWMe-Source/blendwme/LICENSE).
+- [MCP for Blender](https://github.com/ahujasid/mcp-for-blender) by Siddharth Ahuja (MIT) for the connection idea and the viewport capture. See [LICENSE-THIRD-PARTY](BlendWMe-Source/blendwme/LICENSE-THIRD-PARTY).
+- Fonts: Archivo and Archivo Black by Omnibus-Type, and Patrick Hand by Patrick Wagesreiter (SIL Open Font License 1.1).
+- Blender, Claude, Claude Code, ChatGPT and Codex belong to their owners. BlendWMe is not linked to or approved by them.
+- Found a bug? Open an [Issue](../../issues) and attach the crash report or the newest log.
