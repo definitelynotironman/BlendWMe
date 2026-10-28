@@ -17,11 +17,10 @@
 
 ## Why though?
 
-The only thing I ever tried to model in Blender was a farmhouse, and that project never really got to where I wanted it to be. Blender's
-capabilities are ridiculous, and that is kinda a problem.I have too much going on to learn it in nearly as much detail to deem myself confident. I found myself stuck in tutorial
-hell, always having to search for a YouTube video to get any Blender project done.
+Blender's learning curve is super steep, this is already well known, and that's something i wanted to fix for myself with this project. I have too much going on with studying and other commitments to learn it in nearly as much detail as I would want. I found myself stuck in tutorial
+hell, always having to search for a YouTube video to get any Blender project done. I wanted a way to stay in the app and learn it as i go on withut being too intimidated.
 
-It's not eve that i can't 3D model, I'm pretty good with other 3D modelling tools. Fusion 360 is the one I use most often, and
+It's not even that i can't 3D model, I'm pretty good with other 3D modelling tools. Fusion 360 is the one I use most often, and
 SolidWorks is where I started off. But I think those constructive CAD tools are more intuitive to
 learn, because you usually build things up from simple shapes. Blender, however, seems to have been
 made as a creative tool with a much further horizon as a target. Seriously, it's actually crazy what
